@@ -1,11 +1,7 @@
 use bevy::prelude::*;
-use wasm_bindgen::prelude::*;
+use dl_jam::GamePlugin;
 
-mod default;
-pub use default::GamePlugin;
-
-#[wasm_bindgen(start)]
-pub fn main() {
+fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(GamePlugin)
