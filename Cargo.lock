@@ -2331,6 +2331,8 @@ name = "dl-jam"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "log",
+ "wasm-bindgen",
 ]
 
 [[package]]
