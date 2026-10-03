@@ -1,4 +1,4 @@
-# Agents.md - dl-jam (Dreamlayer Game Jam)
+# Plan - dl-jam (Dreamlayer Game Jam)
 
 ## 1. Project Overview
 - **Genre**: Farming sim + Boss rush (roguelite day cycle)
@@ -8,7 +8,6 @@
 - **Tech**: Bevy 0.19.1, wasm-bindgen, Rust 2024 edition
 - **Target**: Desktop WASM on itch.io (HTML5)
 - **Assets**: Manual Dreamlayer (art) → `./assets/` + Free audio libraries
-- **Timeline**: 8.5 days (Oct 3 14:12 → Oct 11 21:30)
 - **Solo dev**
 
 ## 2. Architecture
@@ -31,7 +30,7 @@ GameState::LoadingAssets
 | `GearPlugin` | Crafting UI, 4 gear sets (weapon + armor), material requirements |
 | `BossPlugin` | 2 bosses + dual boss, attack patterns, material drops |
 | `DayCyclePlugin` | Day/Night transitions, progression tracking |
-| `PersistencePlugin` | Save/Load architecture (stubbed Day 4, implement Day 8-9) |
+| `PersistencePlugin` | Save/Load architecture (stubbed early, implement late) |
 | `UIPlugin` | HUD, crafting menu, boss select, result screens |
 | `AudioPlugin` | Music/SFX management |
 
@@ -106,46 +105,32 @@ struct BossProgress {
 
 ## 4. Boss Design
 
-| Boss | Access | Patterns | Drops |
-|------|--------|----------|-------|
-| **Boss A** | Day 1 | 3 patterns, 2 phases | Boss A Material, unlocks Boss A Crop |
-| **Boss B** | Day 1 | 3 patterns, 2 phases | Boss B Material, unlocks Boss B Crop |
+| Boss | Access           | Patterns | Drops |
+|------|------------------|----------|-------|
+| **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material, unlocks Boss A Crop |
+| **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material, unlocks Boss B Crop |
 | **Dual Boss** | After A+B beaten | Combined patterns, shared HP | Victory |
 
 ## 5. Development Workflow
 
 ### Commands
 ```bash
-# Native dev (primary iteration)
+# Native dev (primary iteration) - runs src/main.rs
 cargo run
 
-# WASM test build (every 2-3 hours)
-cargo build --target wasm32-unknown-unknown --profile wasm-release
-wasm-bindgen --out-dir dist --target web target/wasm32-unknown-unknown/wasm-release/dl_jam.wasm
-# Test locally: python3 -m http.server 8000 -d dist
+# WASM test build (frequent) - uses src/lib.rs entry point
+trunk serve --open
 
 # Code quality
 cargo check && cargo clippy && cargo fmt --check
 ```
 
-## 6. 9-Day Milestone Plan
+### Entry Points
+- **main.rs** (native): Minimal, creates `App` and adds `GamePlugin` from `default.rs`
+- **lib.rs** (WASM): Minimal, exports `GamePlugin` from `default.rs` for `wasm-bindgen`
+- **default.rs**: Main game plugin (`GamePlugin`) — all plugin registration, systems, resources
 
-| Day | Date | Focus | Exit Criteria |
-|-----|------|-------|---------------|
-| 1 | Oct 3 | **Core: Movement + Pot Grid + Starter Crop** | 9 pots, plant/water/harvest starter crop, 3 growth stages |
-| 2 | Oct 4 | **Gear: Starter Set + Crafting UI** | Craft Wooden Sword + Cloth Tunic from starter crops |
-| 3 | Oct 5 | **Boss A: Arena, Patterns, Drops** | Beatable Boss A, drops material, unlocks Boss A crop |
-| 4 | Oct 6 | **Boss B + Day Cycle** | Boss B beatable, Day/Night loop works, both crops unlock |
-| 5 | Oct 7 | **Gear Sets 2 & 3 + Dual Boss Unlock** | All 4 gear sets craftable, Dual Boss unlocks after A+B |
-| 6 | Oct 8 | **Dual Boss + Assets Integration** | Dual Boss fightable, all Dreamlayer assets loaded |
-| 7 | Oct 9 | **Polish & Juice** | Particles, screen shake, sound, UI transitions, balance |
-| 8 | Oct 10 | **WASM + itch.io + Save/Load** | Clean WASM builds, itch page, SaveManager implemented |
-| 9 | Oct 11 | **Buffer + Submit** | Final build by 21:30 |
-
-### Daily WASM Test (20:00)
-Build and test web version to catch WASM-specific issues early.
-
-## 7. Asset Pipeline
+## 6. Asset Pipeline
 
 ### Directory Structure
 ```
@@ -168,7 +153,7 @@ assets/
 - `TextureAtlasLayout` for animated sprites (crops, bosses)
 - Audio: OGG Vorbis, mono SFX, stereo music, <2MB total
 
-## 8. Input Scheme (Desktop WASM)
+## 7. Input Scheme (Desktop WASM)
 
 | Action | Key/Mouse |
 |--------|-----------|
@@ -179,7 +164,7 @@ assets/
 | Boss Select | Click UI |
 | Pause | Escape |
 
-## 9. Persistence Architecture (Save/Load Ready)
+## 8. Persistence Architecture (Save/Load Ready)
 
 ### SaveManager Trait
 ```rust
@@ -198,30 +183,32 @@ trait SaveBackend {
 - `SaveManager` resource with active backend
 - Auto-save on: `DayAdvanced`, `BossDefeated`, `PlayerDied`, `GearCrafted`
 - Load check in `LoadingAssets` → show "Continue" on main menu if save exists
-- Stub `SaveManager` Day 4, implement backends Day 8-9
+- Stub `SaveManager` early, implement backends late
 
-## 10. Performance (WASM)
+## 9. Performance (WASM)
 - Texture atlases (max 2048×2048, pack crops/gear/UI separately)
 - `FixedTimestep(60Hz)` for game logic
 - `Query` filters: prefer `With<>`/`Without<>` over `Changed<>`
 - Profile: `cargo build --profile wasm-release` + `wasm-opt -Oz`
 - Target: <5MB WASM, <10MB total assets
 
-## 11. Risk Mitigation
+## 10. Risk Mitigation
 
 | Risk | Mitigation |
 |------|------------|
 | Boss patterns too complex | Start with 1 pattern per boss, add incrementally |
 | Dreamlayer assets delayed | Kenney.nl placeholders in `assets/placeholder/` |
-| WASM bugs late | Daily WASM test from Day 1 |
+| WASM bugs late | Frequent WASM testing from start |
 | Scope creep | Hard cap: 3 crops, 4 gear sets, 2+1 bosses |
-| Save/Load time | Stub Day 4, implement Day 8-9 only if time |
+| Save/Load time | Stub early, implement late only if time |
 | Dual boss balance | Test with max gear (Master set) as baseline |
 
-## 12. File Structure (src/)
+## 11. File Structure (src/)
 ```
 src/
-├── main.rs                 # App entry, plugin registration
+├── main.rs                 # Native App entry
+├── lib.rs                  # WASM entry
+├── default.rs              # Main game plugin (GamePlugin) — all plugins, systems, resources
 ├── states.rs               # GameState, DayPhase
 ├── plugins/
 │   ├── farm.rs
@@ -253,10 +240,8 @@ src/
 
 ---
 
-## 13. Git Policy
+## 12. Git Policy
 - **Never** run git commands requiring SSH or GPG (push, commit, tag, etc.)
 - `git commit` is configured to always require signing — do not attempt commits
 - `git add` should also not be used
 - Only safe commands: `git status`, `git diff`, `git log`
-
-*Generated for Dreamlayer Game Jam — Oct 3-11, 2026*
