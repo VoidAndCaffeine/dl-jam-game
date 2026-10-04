@@ -9,7 +9,6 @@ pub fn transition_to_playing(mut next_state: ResMut<NextState<GameState>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
     use bevy::state::app::StatesPlugin;
 
     #[test]

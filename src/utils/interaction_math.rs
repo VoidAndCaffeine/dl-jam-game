@@ -1,6 +1,5 @@
-use crate::components::player::INTERACTION_RANGE;
 use crate::events::InteractionType;
-use crate::plugins::interaction::{BossArenaEntry, CraftingStation, FarmPot, Interactable, NPC};
+use crate::plugins::interaction::{BossArenaEntry, CraftingStation, FarmPot, NPC};
 use bevy::ecs::world::World;
 use bevy::prelude::*;
 
@@ -79,7 +78,8 @@ pub fn resolve_interaction_type_from_queries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
+    use crate::components::player::INTERACTION_RANGE;
+    use crate::plugins::interaction::Interactable;
 
     fn setup_app() -> App {
         App::new()
@@ -96,7 +96,6 @@ mod tests {
 
     #[test]
     fn find_closest_in_range_returns_none_when_empty() {
-        let mut app = setup_app();
         let player_pos = Vec2::ZERO;
         let interactables: Vec<(Entity, Vec2)> = vec![];
         let result = find_closest_in_range(player_pos, &interactables, INTERACTION_RANGE);

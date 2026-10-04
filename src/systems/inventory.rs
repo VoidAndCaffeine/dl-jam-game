@@ -6,8 +6,8 @@ use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::run_data::PlayerGear;
-use crate::states::GameState;
-use crate::systems::crafting::{RowAction, apply};
+use crate::states::{GameState, Phase};
+use crate::systems::crafting::{CraftOutcome, RowAction, apply};
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 use bevy::state::state::State;
@@ -77,6 +77,38 @@ pub fn row_action(row: usize, rows: &[InventoryRow]) -> Option<RowAction> {
     }
 }
 
+/// The resources both equip entry points share.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct EquipWork<'w> {
+    pub panel: ResMut<'w, InventoryPanel>,
+    pub inventory: ResMut<'w, Inventory>,
+    pub gear: ResMut<'w, PlayerGear>,
+    pub unlocks: Res<'w, CropUnlocks>,
+    pub crafted: MessageWriter<'w, GearCrafted>,
+    pub equipped: MessageWriter<'w, GearEquipped>,
+    pub game_state: Res<'w, State<GameState>>,
+}
+
+impl EquipWork<'_> {
+    fn active(&self) -> bool {
+        panel_active(&self.game_state, &self.panel)
+    }
+
+    fn rows(&self) -> Vec<InventoryRow> {
+        inventory_rows(&self.inventory, &self.gear, &self.unlocks)
+    }
+
+    fn apply(&mut self, action: RowAction) -> CraftOutcome {
+        apply(
+            action,
+            &mut self.inventory,
+            &mut self.gear,
+            &mut self.crafted,
+            &mut self.equipped,
+        )
+    }
+}
+
 fn panel_active(game_state: &State<GameState>, panel: &InventoryPanel) -> bool {
     matches!(game_state.get(), GameState::Playing) && panel.open
 }
@@ -87,9 +119,9 @@ pub fn toggle_inventory_panel(
     keys: Res<ButtonInput<KeyCode>>,
     mut panel: ResMut<InventoryPanel>,
     mut menu: ResMut<CraftingMenu>,
-    game_state: Res<State<GameState>>,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) {
+    if !phase.blocks_world() {
         return;
     }
     if keys.just_pressed(KeyCode::KeyI) {
@@ -103,9 +135,9 @@ pub fn toggle_inventory_panel(
 pub fn close_inventory_on_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut panel: ResMut<InventoryPanel>,
-    game_state: Res<State<GameState>>,
+    phase: Phase,
 ) {
-    if !panel_active(&game_state, &panel) {
+    if !panel.open || !phase.blocks_world() {
         return;
     }
     if keys.just_pressed(KeyCode::Escape) {
@@ -113,11 +145,8 @@ pub fn close_inventory_on_input(
     }
 }
 
-pub fn close_inventory_outside_playing(
-    mut panel: ResMut<InventoryPanel>,
-    game_state: Res<State<GameState>>,
-) {
-    if panel.open && !matches!(game_state.get(), GameState::Playing) {
+pub fn close_inventory_outside_playing(mut panel: ResMut<InventoryPanel>, phase: Phase) {
+    if panel.open && !phase.blocks_world() {
         panel.close_panel();
     }
 }
@@ -136,9 +165,9 @@ pub fn move_panel_selection(
     inventory: Res<Inventory>,
     gear: Res<PlayerGear>,
     unlocks: Res<CropUnlocks>,
-    game_state: Res<State<GameState>>,
+    phase: Phase,
 ) {
-    if !panel_active(&game_state, &panel) {
+    if !panel.open || !phase.blocks_world() {
         return;
     }
     let rows = inventory_rows(&inventory, &gear, &unlocks);
@@ -156,48 +185,27 @@ pub fn move_panel_selection(
     panel.selected = next.min(last_row);
 }
 
-pub fn equip_selected_row(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut panel: ResMut<InventoryPanel>,
-    mut inventory: ResMut<Inventory>,
-    mut gear: ResMut<PlayerGear>,
-    unlocks: Res<CropUnlocks>,
-    mut crafted_events: MessageWriter<GearCrafted>,
-    mut equipped_events: MessageWriter<GearEquipped>,
-    game_state: Res<State<GameState>>,
-) {
-    if !panel_active(&game_state, &panel) {
+pub fn equip_selected_row(keys: Res<ButtonInput<KeyCode>>, mut work: EquipWork) {
+    if !work.active() {
         return;
     }
     if !keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
-    let rows = inventory_rows(&inventory, &gear, &unlocks);
-    let Some(action) = row_action(panel.selected, &rows) else {
+    let selected = work.panel.selected;
+    let Some(action) = row_action(selected, &work.rows()) else {
         return;
     };
-    let outcome = apply(
-        action,
-        &mut inventory,
-        &mut gear,
-        &mut crafted_events,
-        &mut equipped_events,
-    );
-    panel.set_notice(outcome.notice());
+    let outcome = work.apply(action);
+    work.panel.set_notice(outcome.notice());
 }
 
 pub fn equip_row_on_click(
     rows: Query<(Entity, &InventorySlot), Changed<Interaction>>,
     interactions: Query<&Interaction>,
-    mut panel: ResMut<InventoryPanel>,
-    mut inventory: ResMut<Inventory>,
-    mut gear: ResMut<PlayerGear>,
-    unlocks: Res<CropUnlocks>,
-    mut crafted_events: MessageWriter<GearCrafted>,
-    mut equipped_events: MessageWriter<GearEquipped>,
-    game_state: Res<State<GameState>>,
+    mut work: EquipWork,
 ) {
-    if !panel_active(&game_state, &panel) {
+    if !work.active() {
         return;
     }
     for (entity, slot) in rows.iter() {
@@ -207,19 +215,13 @@ pub fn equip_row_on_click(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        panel.selected = slot.index;
-        let rows = inventory_rows(&inventory, &gear, &unlocks);
-        let Some(action) = row_action(slot.index, &rows) else {
+        work.panel.selected = slot.index;
+        let index = slot.index;
+        let Some(action) = row_action(index, &work.rows()) else {
             continue;
         };
-        let outcome = apply(
-            action,
-            &mut inventory,
-            &mut gear,
-            &mut crafted_events,
-            &mut equipped_events,
-        );
-        panel.set_notice(outcome.notice());
+        let outcome = work.apply(action);
+        work.panel.set_notice(outcome.notice());
     }
 }
 

@@ -37,7 +37,6 @@ pub fn movement_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
 
     fn setup_app() -> App {
         let mut app = App::new();

@@ -39,8 +39,10 @@ mod tests {
 
     #[test]
     fn open_resets_selection_and_notice() {
-        let mut menu = CraftingMenu::default();
-        menu.selected = 3;
+        let mut menu = CraftingMenu {
+            selected: 3,
+            ..default()
+        };
         menu.set_notice("Crafted Boss A Set");
         menu.close_menu();
         menu.open_menu();

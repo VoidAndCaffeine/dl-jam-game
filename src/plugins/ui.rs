@@ -601,12 +601,21 @@ fn refresh_inventory_panel(
     }
 }
 
-fn style_hovered_item_row(
-    mut rows: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<InventorySlot>),
-    >,
-) {
+type HoveredItemRows<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static mut BackgroundColor),
+    (Changed<Interaction>, With<InventorySlot>),
+>;
+
+type HoveredRecipeRows<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static mut BackgroundColor),
+    (Changed<Interaction>, With<RecipeRow>),
+>;
+
+fn style_hovered_item_row(mut rows: HoveredItemRows) {
     for (interaction, mut background) in rows.iter_mut() {
         background.0 = if *interaction == Interaction::Hovered {
             ROW_BG_HOVER
@@ -705,9 +714,7 @@ fn refresh_crafting_menu(
     }
 }
 
-fn style_hovered_row(
-    mut rows: Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<RecipeRow>)>,
-) {
+fn style_hovered_row(mut rows: HoveredRecipeRows) {
     for (interaction, mut background) in rows.iter_mut() {
         background.0 = if *interaction == Interaction::Hovered {
             ROW_BG_HOVER

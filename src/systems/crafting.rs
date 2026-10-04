@@ -5,7 +5,7 @@ use crate::events::{GearCrafted, GearEquipped, InteractionEvent, InteractionType
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
 use crate::resources::run_data::PlayerGear;
-use crate::states::{DayPhase, GameState};
+use crate::states::{DayPhase, GameState, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 use bevy::state::state::State;
@@ -132,6 +132,34 @@ pub fn apply(
     outcome
 }
 
+/// The resources both craft entry points share.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct CraftingWork<'w> {
+    pub menu: ResMut<'w, CraftingMenu>,
+    pub inventory: ResMut<'w, Inventory>,
+    pub gear: ResMut<'w, PlayerGear>,
+    pub crafted: MessageWriter<'w, GearCrafted>,
+    pub equipped: MessageWriter<'w, GearEquipped>,
+    pub game_state: Res<'w, State<GameState>>,
+    pub day_phase: Res<'w, State<DayPhase>>,
+}
+
+impl CraftingWork<'_> {
+    fn active(&self) -> bool {
+        menu_active(&self.game_state, &self.day_phase, &self.menu)
+    }
+
+    fn apply(&mut self, action: RowAction) -> CraftOutcome {
+        apply(
+            action,
+            &mut self.inventory,
+            &mut self.gear,
+            &mut self.crafted,
+            &mut self.equipped,
+        )
+    }
+}
+
 fn menu_active(
     game_state: &State<GameState>,
     day_phase: &State<DayPhase>,
@@ -145,12 +173,9 @@ fn menu_active(
 pub fn open_menu_on_station_interaction(
     mut events: MessageReader<InteractionEvent>,
     mut menu: ResMut<CraftingMenu>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-    {
+    if !phase.is_farming() {
         return;
     }
     for event in events.read() {
@@ -163,10 +188,9 @@ pub fn open_menu_on_station_interaction(
 pub fn close_menu_on_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<CraftingMenu>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !menu_active(&game_state, &day_phase, &menu) {
+    if !menu.open || !phase.is_playing() {
         return;
     }
     if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
@@ -174,12 +198,8 @@ pub fn close_menu_on_input(
     }
 }
 
-pub fn close_menu_outside_farming(
-    mut menu: ResMut<CraftingMenu>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
-) {
-    if menu.open && !menu_active(&game_state, &day_phase, &menu) {
+pub fn close_menu_outside_farming(mut menu: ResMut<CraftingMenu>, phase: Phase) {
+    if menu.open && !phase.is_farming() {
         menu.close_menu();
     }
 }
@@ -188,10 +208,9 @@ pub fn move_menu_selection(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<CraftingMenu>,
     gear: Res<PlayerGear>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !menu_active(&game_state, &day_phase, &menu) {
+    if !phase.is_farming() || !menu.open {
         return;
     }
     let last_row = row_count(&gear.owned).saturating_sub(1);
@@ -208,47 +227,26 @@ pub fn move_menu_selection(
     menu.selected = next.min(last_row);
 }
 
-pub fn craft_selected_row(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut menu: ResMut<CraftingMenu>,
-    mut inventory: ResMut<Inventory>,
-    mut gear: ResMut<PlayerGear>,
-    mut crafted_events: MessageWriter<GearCrafted>,
-    mut equipped_events: MessageWriter<GearEquipped>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
-) {
-    if !menu_active(&game_state, &day_phase, &menu) {
+pub fn craft_selected_row(keys: Res<ButtonInput<KeyCode>>, mut work: CraftingWork) {
+    if !work.active() {
         return;
     }
     if !keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
-    let Some(action) = row_action(menu.selected, &gear.owned) else {
+    let Some(action) = row_action(work.menu.selected, &work.gear.owned) else {
         return;
     };
-    let outcome = apply(
-        action,
-        &mut inventory,
-        &mut gear,
-        &mut crafted_events,
-        &mut equipped_events,
-    );
-    menu.set_notice(outcome.notice());
+    let outcome = work.apply(action);
+    work.menu.set_notice(outcome.notice());
 }
 
 pub fn craft_row_on_click(
     rows: Query<(Entity, &RecipeRow), Changed<Interaction>>,
     interactions: Query<&Interaction>,
-    mut menu: ResMut<CraftingMenu>,
-    mut inventory: ResMut<Inventory>,
-    mut gear: ResMut<PlayerGear>,
-    mut crafted_events: MessageWriter<GearCrafted>,
-    mut equipped_events: MessageWriter<GearEquipped>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    mut work: CraftingWork,
 ) {
-    if !menu_active(&game_state, &day_phase, &menu) {
+    if !work.active() {
         return;
     }
     for (entity, row) in rows.iter() {
@@ -258,18 +256,12 @@ pub fn craft_row_on_click(
         if *interaction != Interaction::Pressed {
             continue;
         }
-        menu.selected = row.index;
-        let Some(action) = row_action(row.index, &gear.owned) else {
+        work.menu.selected = row.index;
+        let Some(action) = row_action(row.index, &work.gear.owned) else {
             continue;
         };
-        let outcome = apply(
-            action,
-            &mut inventory,
-            &mut gear,
-            &mut crafted_events,
-            &mut equipped_events,
-        );
-        menu.set_notice(outcome.notice());
+        let outcome = work.apply(action);
+        work.menu.set_notice(outcome.notice());
     }
 }
 

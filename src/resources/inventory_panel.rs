@@ -48,8 +48,10 @@ mod tests {
 
     #[test]
     fn open_resets_selection_and_notice() {
-        let mut panel = InventoryPanel::default();
-        panel.selected = 3;
+        let mut panel = InventoryPanel {
+            selected: 3,
+            ..default()
+        };
         panel.set_notice("Equipped Wooden Sword");
         panel.close_panel();
         panel.open_panel();

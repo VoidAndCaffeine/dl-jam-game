@@ -31,6 +31,7 @@ GameState::LoadingAssets
 | `BossPlugin` | 2 bosses + dual boss, attack patterns, material drops |
 | `DayCyclePlugin` | Day/Night transitions, progression tracking |
 | `PersistencePlugin` | Save/Load architecture (stubbed early, implement late) |
+| `LevelPlugin` | Loads rooms from `levels/*.txt`, spawns tiles + props, owns `SolidGrid` |
 | `UIPlugin` | HUD, crafting menu, boss select, result screens |
 | `AudioPlugin` | Music/SFX management |
 
@@ -113,6 +114,17 @@ struct BossProgress {
 
 ## 5. Development Workflow
 
+### System Conventions
+- **State checks go through `Phase`** (`src/states.rs`), a `SystemParam` bundling
+  `State<GameState>` + `State<DayPhase>`. Use `phase.is_playing()`,
+  `phase.is_farming()` or `phase.blocks_world()` instead of matching on the two
+  states separately. `blocks_world` is the "panel may react to input" check.
+- **Bundle repeated params.** Systems that shared 7+ `Query`/`Res` params were
+  split into `SystemParam` structs (`InteractableLookups`, `CraftingWork`,
+  `EquipWork`, `LevelState`). `cargo clippy` is warning-free; keep it that way.
+- **Logging uses `log::` macros**, not `eprintln!`. `log` is already a
+  dependency (`max_level_debug`), so debug output disappears in release builds.
+
 ### Commands
 ```bash
 # Native dev (primary iteration) - runs src/main.rs
@@ -152,6 +164,10 @@ assets/
 - `AssetServer::load_folder("images")` + `load_folder("audio")` in `LoadingAssets` state
 - `TextureAtlasLayout` for animated sprites (crops, bosses)
 - Audio: OGG Vorbis, mono SFX, stereo music, <2MB total
+- Room tiles are **not** loaded from `assets/`; they come from `levels/*.txt`
+  (see §11b) and render through `TilemapChunk`
+- `/assets` is gitignored, so trunk's `<link data-trunk rel="copy-dir" href="assets"/>`
+  in `index.html` is still commented out — uncomment it when art lands
 
 ## 7. Input Scheme (Desktop WASM)
 
@@ -213,10 +229,15 @@ src/
 ├── main.rs                 # Native App entry
 ├── lib.rs                  # WASM entry
 ├── default.rs              # Main game plugin (GamePlugin) — all plugins, systems, resources
-├── states.rs               # GameState, DayPhase
+├── states.rs               # GameState, DayPhase + Phase (bundled state param)
+├── levels/
+│   ├── mod.rs              # LevelId + include_str! of levels/*.txt
+│   ├── legend.rs           # TileKind, PropKind (chars, solidity, tileset layers)
+│   └── grid.rs             # SolidGrid — solidity lookup, tile↔world, collision
 ├── plugins/
 │   ├── farm.rs
 │   ├── gear.rs
+│   ├── level.rs            # LevelPlugin — load rooms, spawn TilemapChunk + props
 │   ├── boss.rs
 │   ├── day_cycle.rs
 │   ├── persistence.rs
@@ -231,16 +252,47 @@ src/
 ├── resources/
 │   ├── run_data.rs
 │   ├── inventory.rs
+│   ├── level.rs            # ActiveLevel, LevelEntity, PlayerSpawn, BossSpawn, LevelRequest
 │   └── save_manager.rs
 ├── events.rs
 ├── systems/
 │   ├── farming.rs
 │   ├── crafting.rs
 │   ├── combat.rs
-│   └── day_cycle.rs
+│   ├── day_cycle.rs
+│   └── level_movement.rs   # Player movement against SolidGrid + solid entities
 └── utils/
-    └── save_backend.rs
+    ├── save_backend.rs
+    ├── interaction_math.rs
+    └── level_parse.rs      # ASCII level file → LevelDef (pure, no Bevy types)
 ```
+
+---
+
+## 11b. Levels
+
+Rooms are ASCII text files in `levels/`, compiled into the binary with
+`include_str!` — no runtime file loading, so levels work in tests unchanged.
+
+**Format reference: [`levels/README.md`](levels/README.md)** — read it before
+editing or adding a level.
+
+- `levels/farm.txt`, `levels/arena_a.txt`, `levels/arena_b.txt`, `levels/arena_dual.txt`
+- `LevelPlugin` loads a room on entering `Playing` and on `LevelRequest`, spawns the
+  `TilemapChunk` plus props, and tags them `LevelEntity` so room swaps despawn cleanly.
+- One `[tiles]` grid + one optional `[props]` list. Tile chars: `,` grass, `.` dirt,
+  `~` water, `#` wall, space void. Prop markers: `^ p s x b` with `x,y` coords.
+- Grid rows are **top-down** (row 0 = first line); world space is **y-up**.
+  `LevelDef::world_row` converts; `SolidGrid::is_solid` takes a world row.
+- `#` is a wall, not a comment — comments only count outside the `[tiles]` grid.
+- `SolidGrid` holds blocking tiles in world order; walls are never spawned as
+  entities with colliders, which is what keeps collision cheap. Movement resolves
+  one axis at a time and sub-steps, so corners slide and nothing tunnels.
+- Bevy 0.19 removed the old tilemap. Tiles use `TilemapChunk` (one draw call) from
+  `bevy::sprite_render`, whose tile data is indexed **top-down** like the files, while
+  `calculate_tile_transform` is y-up.
+- `cargo test levels` validates every level file (sealed border, one player
+  spawn, no props inside walls), so a broken level fails the build.
 
 ---
 
@@ -256,7 +308,8 @@ src/
 
 ### Test Organization
 - **Unit tests**: `#[cfg(test)]` modules inside each source file (`src/**/*.rs`)
-- **Integration tests**: `tests/integration/*.rs` using full `GamePlugin`
+- **Integration tests**: `tests/integration/*.rs` using full `GamePlugin` (needs a
+  `[[test]]` entry in `Cargo.toml` per file, plus `pub mod` on the lib)
 
 ### Constraints
 - **No camera/rendering/window tests** — Bevy limitation
