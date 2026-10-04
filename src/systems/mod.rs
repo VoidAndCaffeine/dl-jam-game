@@ -1,3 +1,4 @@
+pub mod camera_follow;
 pub mod collision;
 pub mod collision_response;
 pub mod movement_input;

@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::states::GameState;
+use crate::systems::camera_follow::camera_follow;
 use crate::systems::collision::collision_detection;
 use crate::systems::collision_response::collision_response;
 use crate::systems::movement_input::movement_input;
@@ -19,6 +20,7 @@ impl Plugin for GamePlugin {
             .add_systems(FixedUpdate, movement_input)
             .add_systems(FixedUpdate, movement_physics)
             .add_systems(FixedUpdate, collision_detection)
+            .add_systems(FixedUpdate, camera_follow)
             .add_observer(collision_response);
     }
 }
