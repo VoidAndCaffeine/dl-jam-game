@@ -3,6 +3,8 @@ use wasm_bindgen::prelude::*;
 
 mod components;
 mod default;
+mod events;
+mod plugins;
 mod resources;
 mod states;
 mod systems;
