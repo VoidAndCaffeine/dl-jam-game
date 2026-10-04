@@ -2,15 +2,11 @@ use bevy::prelude::*;
 
 #[derive(Resource, Reflect)]
 pub struct CameraFollowConfig {
-    pub deadzone_size: Vec2,
-    pub lerp_factor: f32,
+    pub half_life: f32,
 }
 
 impl CameraFollowConfig {
-    pub const DEFAULT: Self = Self {
-        deadzone_size: Vec2::new(80.0, 50.0),
-        lerp_factor: 0.15,
-    };
+    pub const DEFAULT: Self = Self { half_life: 0.1 };
 }
 
 impl Default for CameraFollowConfig {
