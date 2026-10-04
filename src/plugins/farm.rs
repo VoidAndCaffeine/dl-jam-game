@@ -19,6 +19,7 @@ impl Plugin for FarmPlugin {
             .add_message::<CropHarvested>()
             .add_message::<DayAdvanced>()
             .add_systems(OnEnter(GameState::Playing), spawn_pots)
+            .add_systems(OnExit(GameState::Playing), despawn_pots)
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
             .add_systems(Update, debug_advance_day)
@@ -85,6 +86,12 @@ fn spawn_pots(mut commands: Commands) {
                     Name::new("Day Counter Text"),
                 ));
             });
+    }
+}
+
+fn despawn_pots(mut commands: Commands, pots: Query<Entity, With<Pot>>) {
+    for entity in pots.iter() {
+        commands.entity(entity).despawn();
     }
 }
 
@@ -223,9 +230,91 @@ fn update_pot_visuals(
 mod tests {
     use super::*;
     use bevy::prelude::*;
+    use bevy::state::app::StatesPlugin;
+    use bevy::transform::TransformPlugin;
+
+    const POT_COUNT: usize = 9;
+
+    fn setup_farm_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin, FarmPlugin))
+            .init_state::<GameState>()
+            .init_state::<DayPhase>();
+        app
+    }
+
+    fn enter_playing(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.update();
+    }
+
+    fn exit_playing(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        app.update();
+    }
+
+    fn pot_indices(app: &mut App) -> Vec<usize> {
+        let mut query = app.world_mut().query::<&Pot>();
+        let mut indices: Vec<usize> = query.iter(app.world()).map(|pot| pot.index).collect();
+        indices.sort_unstable();
+        indices
+    }
 
     #[test]
     fn farm_plugin_exists() {
         let _plugin = FarmPlugin;
+    }
+
+    #[test]
+    fn pots_spawn_once_on_playing() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        assert_eq!(
+            pot_indices(&mut app),
+            (0..POT_COUNT).collect::<Vec<usize>>()
+        );
+    }
+
+    #[test]
+    fn pots_despawn_when_leaving_playing() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        assert_eq!(pot_indices(&mut app).len(), POT_COUNT);
+
+        exit_playing(&mut app);
+        assert!(pot_indices(&mut app).is_empty());
+    }
+
+    #[test]
+    fn pots_do_not_duplicate_when_reentering_playing() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        exit_playing(&mut app);
+        enter_playing(&mut app);
+
+        assert_eq!(
+            pot_indices(&mut app),
+            (0..POT_COUNT).collect::<Vec<usize>>(),
+            "re-entering Playing must not leave stale pots behind"
+        );
+    }
+
+    #[test]
+    fn pots_survive_day_phase_changes() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::BossSelect);
+        app.update();
+
+        assert_eq!(pot_indices(&mut app).len(), POT_COUNT);
     }
 }
