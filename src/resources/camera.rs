@@ -14,3 +14,20 @@ impl Default for CameraFollowConfig {
         Self::DEFAULT
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_follow_config_default() {
+        let config = CameraFollowConfig::default();
+        assert_eq!(config.half_life, 0.1);
+    }
+
+    #[test]
+    fn camera_follow_config_const_default() {
+        let config = CameraFollowConfig::DEFAULT;
+        assert_eq!(config.half_life, 0.1);
+    }
+}

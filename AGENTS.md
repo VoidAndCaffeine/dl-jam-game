@@ -245,3 +245,52 @@ src/
 - `git commit` is configured to always require signing — do not attempt commits
 - `git add` should also not be used
 - Only safe commands: `git status`, `git diff`, `git log`
+
+---
+
+## 13. Unit Testing Guidelines
+
+### Test Organization
+- **Unit tests**: `#[cfg(test)]` modules inside each source file (`src/**/*.rs`)
+- **Integration tests**: `tests/integration/*.rs` using full `GamePlugin`
+
+### Constraints
+- **No camera/rendering/window tests** — Bevy limitation
+- Extract pure math/logic to `utils/` for testability
+- Test systems via `App` + `World` with minimal resources
+
+### Coverage Target
+- **70% line coverage** for unit tests
+- **50% line coverage** for integration tests
+- Measure: `cargo llvm-cov --workspace --lcov`
+
+### Commands
+```bash
+# Native
+cargo test
+
+# WASM
+wasm-pack test --headless --chrome -- --test-threads=1
+
+# Coverage
+cargo llvm-cov --workspace --lcov --output-path lcov.info
+```
+
+### Test Categories by Priority
+
+| Priority | Area | Examples |
+|----------|------|----------|
+| High | Movement/Collision | Input mapping, AABB detection, response physics |
+| High | State Machine | GameState/DayPhase transitions, enter/exit systems |
+| High | Farming | Pot states, growth timers, watering, harvest, unlocks |
+| High | Crafting | Recipe validation, material consumption, equip logic |
+| Medium | Day Cycle | Phase order, boss select filtering, dual boss unlock |
+| Medium | Combat | Boss phases, attack patterns, damage, defeat drops |
+| Medium | Persistence | SaveManager round-trip, auto-save triggers, backends |
+| Low | Resources | Serialization, defaults, Reflect |
+
+### Fixtures
+- Inline builders per test file (no shared `tests/fixtures/`)
+- Simple `setup_app()` helper returning configured `App`
+
+> **Rule**: Tests are only implemented **after** the corresponding feature is implemented. Do not write tests for planned/unimplemented features.

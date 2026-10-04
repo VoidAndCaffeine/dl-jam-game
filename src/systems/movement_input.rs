@@ -24,3 +24,73 @@ pub fn movement_input(
         movement.input_direction = direction.normalize_or_zero();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::prelude::*;
+
+    fn setup_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>();
+        app.world_mut().spawn(Movement::default());
+        app.add_systems(Update, movement_input);
+        app
+    }
+
+    fn get_movement(app: &mut App) -> Movement {
+        app.world_mut().query::<&Movement>().single(app.world_mut()).unwrap().clone()
+    }
+
+    #[test]
+    fn no_input_returns_zero_direction() {
+        let mut app = setup_app();
+        app.update();
+        let movement = get_movement(&mut app);
+        assert_eq!(movement.input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn wasd_sets_direction() {
+        let mut app = setup_app();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyW);
+        input.press(KeyCode::KeyD);
+        app.update();
+        let movement = get_movement(&mut app);
+        assert_eq!(movement.input_direction, Vec2::new(1.0, 1.0).normalize());
+    }
+
+    #[test]
+    fn arrow_keys_set_direction() {
+        let mut app = setup_app();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::ArrowUp);
+        input.press(KeyCode::ArrowLeft);
+        app.update();
+        let movement = get_movement(&mut app);
+        assert_eq!(movement.input_direction, Vec2::new(-1.0, 1.0).normalize());
+    }
+
+    #[test]
+    fn opposite_keys_cancel_out() {
+        let mut app = setup_app();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyW);
+        input.press(KeyCode::KeyS);
+        app.update();
+        let movement = get_movement(&mut app);
+        assert_eq!(movement.input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn diagonal_normalized_to_unit_length() {
+        let mut app = setup_app();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyW);
+        input.press(KeyCode::KeyD);
+        app.update();
+        let movement = get_movement(&mut app);
+        assert!((movement.input_direction.length() - 1.0).abs() < 0.001);
+    }
+}

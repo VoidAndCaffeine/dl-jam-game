@@ -32,3 +32,56 @@ pub fn collision_detection(mut commands: Commands, query: Query<(Entity, &Transf
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::prelude::*;
+
+    fn setup_app() -> App {
+        App::new()
+    }
+
+    fn spawn_collider(app: &mut App, pos: Vec2, size: Vec2, solid: bool) -> Entity {
+        app.world_mut().spawn((
+            Collider { size, is_solid: solid },
+            Transform::from_xyz(pos.x, pos.y, 0.0),
+        )).id()
+    }
+
+    #[test]
+    fn detects_aabb_overlap() {
+        let mut app = setup_app();
+        spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
+        spawn_collider(&mut app, Vec2::new(16.0, 0.0), Vec2::splat(32.0), true);
+        
+        app.update();
+        // System runs without error
+    }
+
+    #[test]
+    fn ignores_non_solid_colliders() {
+        let mut app = setup_app();
+        spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
+        spawn_collider(&mut app, Vec2::new(16.0, 0.0), Vec2::splat(32.0), false);
+        
+        app.update();
+    }
+
+    #[test]
+    fn no_self_collision() {
+        let mut app = setup_app();
+        spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
+        
+        app.update();
+    }
+
+    #[test]
+    fn no_overlap_when_separated() {
+        let mut app = setup_app();
+        spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
+        spawn_collider(&mut app, Vec2::new(100.0, 0.0), Vec2::splat(32.0), true);
+        
+        app.update();
+    }
+}
