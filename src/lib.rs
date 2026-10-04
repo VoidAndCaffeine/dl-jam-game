@@ -8,6 +8,7 @@ mod plugins;
 mod resources;
 mod states;
 mod systems;
+mod utils;
 
 pub use default::GamePlugin;
 

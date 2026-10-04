@@ -8,8 +8,10 @@ pub struct InteractionEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InteractionType {
-    MouseClick,
-    PlayerAction,
+    FarmAction,
+    Crafting,
+    BossArena,
+    NPC,
 }
 
 #[derive(Message, Debug, Clone)]
@@ -36,10 +38,10 @@ mod tests {
         let entity = app.world_mut().spawn_empty().id();
         let event = InteractionEvent {
             entity,
-            interaction_type: InteractionType::MouseClick,
+            interaction_type: InteractionType::FarmAction,
         };
         assert_eq!(event.entity, entity);
-        assert_eq!(event.interaction_type, InteractionType::MouseClick);
+        assert_eq!(event.interaction_type, InteractionType::FarmAction);
     }
 
     #[test]

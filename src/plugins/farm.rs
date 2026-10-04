@@ -4,7 +4,7 @@ use bevy::state::state::State;
 use crate::components::collider::Collider;
 use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
-use crate::plugins::interaction::Interactable;
+use crate::plugins::interaction::{Interactable, FarmPot};
 use crate::resources::farm::{CropUnlocks, DayCounter};
 use crate::states::{DayPhase, GameState};
 
@@ -50,7 +50,8 @@ fn spawn_pots(mut commands: Commands) {
                 size: Vec2::splat(POT_SIZE),
                 is_solid: true,
             },
-            Interactable::new(100.0),
+            Interactable::new(),
+            FarmPot,
             Sprite {
                 color: Color::srgb(1.0, 0.2, 0.2),
                 custom_size: Some(Vec2::splat(POT_SIZE)),
@@ -123,14 +124,21 @@ fn begin_next_day(
     mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
 ) {
+    eprintln!("[DAY ADVANCE] Beginning next day - current day: {}", day_counter.0);
     for mut pot in pots.iter_mut() {
+        let old_state = pot.state;
+        let old_days = pot.days_remaining;
         pot.advance_day();
+        eprintln!("[DAY ADVANCE] Pot {}: {:?} ({} days) -> {:?} ({} days)", pot.index, old_state, old_days, pot.state, pot.days_remaining);
     }
     day_counter.advance();
+    eprintln!("[DAY ADVANCE] Day advanced to: {}", day_counter.0);
     day_advanced_events.write(DayAdvanced { day: day_counter.0 });
 }
 
 fn debug_advance_day(
+    mut pots: Query<&mut Pot>,
+    mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
     keys: Res<ButtonInput<KeyCode>>,
     game_state: Res<State<GameState>>,
@@ -140,7 +148,16 @@ fn debug_advance_day(
         return;
     }
     if cfg!(debug_assertions) && keys.just_pressed(KeyCode::F9) {
-        day_advanced_events.write(DayAdvanced { day: 0 });
+        eprintln!("[DEBUG F9] Manual day advance triggered - current day: {}", day_counter.0);
+        for mut pot in pots.iter_mut() {
+            let old_state = pot.state;
+            let old_days = pot.days_remaining;
+            pot.advance_day();
+            eprintln!("[DEBUG F9] Pot {}: {:?} ({} days) -> {:?} ({} days)", pot.index, old_state, old_days, pot.state, pot.days_remaining);
+        }
+        day_counter.advance();
+        eprintln!("[DEBUG F9] Day advanced to: {}", day_counter.0);
+        day_advanced_events.write(DayAdvanced { day: day_counter.0 });
     }
 }
 

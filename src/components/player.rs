@@ -1,5 +1,9 @@
 use bevy::prelude::*;
 
+pub const PLAYER_SIZE: f32 = 32.0;
+// Interaction range = 2x pot size (pot size = 40.0)
+pub const INTERACTION_RANGE: f32 = 80.0;
+
 #[derive(Component, Reflect, Default, Clone)]
 pub struct Player;
 
