@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::plugins::{FarmPlugin, InteractionPlugin};
+use crate::plugins::{FarmPlugin, GearPlugin, InteractionPlugin};
 use crate::resources::camera::CameraFollowConfig;
 use crate::states::{DayPhase, GameState};
 use crate::systems::camera_follow::camera_follow;
@@ -20,6 +20,7 @@ impl Plugin for GamePlugin {
             .init_resource::<CameraFollowConfig>()
             .add_plugins(InteractionPlugin)
             .add_plugins(FarmPlugin)
+            .add_plugins(GearPlugin)
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)
             .add_systems(OnEnter(GameState::Playing), spawn_player)
             .add_systems(OnExit(GameState::Playing), despawn_player)
