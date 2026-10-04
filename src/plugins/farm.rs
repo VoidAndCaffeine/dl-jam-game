@@ -4,7 +4,7 @@ use bevy::state::state::State;
 use crate::components::collider::Collider;
 use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
-use crate::plugins::interaction::{Interactable, FarmPot};
+use crate::plugins::interaction::{Interactable, FarmPot, HighlightMarker};
 use crate::resources::farm::{CropUnlocks, DayCounter};
 use crate::states::{DayPhase, GameState};
 
@@ -21,7 +21,7 @@ impl Plugin for FarmPlugin {
             .add_systems(OnEnter(GameState::Playing), spawn_pots)
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
-            .add_systems(FixedUpdate, debug_advance_day)
+            .add_systems(Update, debug_advance_day)
             .add_systems(OnEnter(DayPhase::Farming), begin_next_day);
     }
 }
@@ -60,6 +60,18 @@ fn spawn_pots(mut commands: Commands) {
             Transform::from_xyz(*x, *y, 0.0),
             Name::new(format!("Pot {}", index)),
         )).with_children(|parent| {
+            // Highlight sprite - slightly larger, yellow, behind the main sprite
+            parent.spawn((
+                HighlightMarker,
+                Sprite {
+                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                    custom_size: Some(Vec2::splat(POT_SIZE * 1.15)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.0, -0.1),
+                Visibility::Hidden,
+                Name::new("Highlight"),
+            ));
             parent.spawn((
                 Text2d::new(""),
                 TextFont {

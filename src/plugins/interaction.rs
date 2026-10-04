@@ -16,6 +16,9 @@ impl Interactable {
 }
 
 #[derive(Component, Reflect, Default, Debug)]
+pub struct HighlightMarker;
+
+#[derive(Component, Reflect, Default, Debug)]
 pub struct FarmPot;
 
 #[derive(Component, Reflect, Default, Debug)]
@@ -160,27 +163,30 @@ fn mouse_raycast_interaction(
         eprintln!("[DEBUG] No interactable in range of player AND ray");
     }
 }
-        
 fn highlight_interactables_in_range(
     player_query: Query<&Transform, With<Player>>,
-    interactables: Query<(Entity, &Transform), With<Interactable>>,
-    mut commands: Commands,
+    interactables: Query<(Entity, &Transform, &Children), With<Interactable>>,
+    highlights: Query<&HighlightMarker>,
+    mut visibility: Query<&mut Visibility>,
 ) {
     let Ok(player_transform) = player_query.single() else { return };
     let player_pos = player_transform.translation.truncate();
 
-    for (entity, transform) in interactables.iter() {
+    for (entity, transform, children) in interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
-        let mut entity_commands = commands.entity(entity);
-
-        if distance <= INTERACTION_RANGE {
-            entity_commands.try_insert(Outline {
-                width: Val::Px(2.0),
-                offset: Val::Px(2.0),
-                color: Color::srgb(1.0, 1.0, 0.0),
-            });
-        } else {
-            entity_commands.remove::<Outline>();
+        
+        // Find the highlight child
+        for child in children.iter() {
+            if highlights.get(child).is_ok() {
+                if let Ok(mut vis) = visibility.get_mut(child) {
+                    if distance <= INTERACTION_RANGE {
+                        *vis = Visibility::Visible;
+                    } else {
+                        *vis = Visibility::Hidden;
+                    }
+                }
+                break;
+            }
         }
     }
 }
@@ -235,7 +241,19 @@ mod tests {
             Interactable,
             marker,
             Transform::from_xyz(pos.x, pos.y, 0.0),
-        )).id()
+        )).with_children(|parent| {
+            parent.spawn((
+                HighlightMarker,
+                Sprite {
+                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                    custom_size: Some(Vec2::splat(40.0 * 1.15)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.0, -0.1),
+                Visibility::Hidden,
+                Name::new("Highlight"),
+            ));
+        }).id()
     }
 
     fn get_captured_events(app: &mut App) -> Vec<InteractionEvent> {
@@ -343,10 +361,14 @@ mod tests {
     fn highlight_adds_outline_in_range() {
         let mut app = setup_interaction_app();
         let entity = spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        app.update(); // Allow TransformPropagation
 
-        app.update();
-
-        let has_outline = app.world().get::<Outline>(entity).is_some();
+        // Find the highlight entity by marker and check its visibility
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world()).next().expect("Highlight child not found").0
+        };
+        let has_outline = app.world().get::<Visibility>(highlight_entity).map(|v| *v == Visibility::Visible).unwrap_or(false);
         assert!(has_outline);
     }
 
@@ -354,10 +376,13 @@ mod tests {
     fn highlight_removes_outline_out_of_range() {
         let mut app = setup_interaction_app();
         let entity = spawn_interactable(&mut app, Vec2::new(100.0, 0.0), FarmPot);
+        app.update(); // Allow TransformPropagation
 
-        app.update();
-
-        let has_outline = app.world().get::<Outline>(entity).is_some();
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world()).next().expect("Highlight child not found").0
+        };
+        let has_outline = app.world().get::<Visibility>(highlight_entity).map(|v| *v == Visibility::Visible).unwrap_or(false);
         assert!(!has_outline);
     }
 
@@ -365,16 +390,20 @@ mod tests {
     fn highlight_updates_when_player_moves() {
         let mut app = setup_interaction_app();
         let entity = spawn_interactable(&mut app, Vec2::new(0.0, 0.0), FarmPot);
+        app.update(); // Allow TransformPropagation
 
-        app.update();
-        assert!(app.world().get::<Outline>(entity).is_some());
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world()).next().expect("Highlight child not found").0
+        };
+        assert_eq!(app.world().get::<Visibility>(highlight_entity).unwrap(), &Visibility::Visible);
 
         let mut player_transform = app.world_mut().query_filtered::<&mut Transform, With<Player>>().single(app.world_mut()).unwrap().clone();
         player_transform.translation.x = 100.0;
         app.world_mut().query_filtered::<&mut Transform, With<Player>>().single_mut(app.world_mut()).unwrap().translation = player_transform.translation;
         app.update();
 
-        assert!(!app.world().get::<Outline>(entity).is_some());
+        assert_eq!(app.world().get::<Visibility>(highlight_entity).unwrap(), &Visibility::Hidden);
     }
 
     #[test]
