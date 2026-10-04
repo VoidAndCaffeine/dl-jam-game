@@ -1,7 +1,11 @@
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
+mod components;
 mod default;
+mod states;
+mod systems;
+
 pub use default::GamePlugin;
 
 #[wasm_bindgen(start)]
