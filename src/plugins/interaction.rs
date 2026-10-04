@@ -46,6 +46,7 @@ fn player_proximity_interaction(
     player_query: Query<&GlobalTransform, With<Player>>,
     interactables: Query<(Entity, &GlobalTransform), With<Interactable>>,
     farm_pots: Query<&FarmPot>,
+    pots: Query<&crate::components::pot::Pot>,
     crafting_stations: Query<&CraftingStation>,
     boss_arenas: Query<&BossArenaEntry>,
     npcs: Query<&NPC>,
@@ -65,6 +66,10 @@ fn player_proximity_interaction(
 
     let interactable_positions: Vec<(Entity, Vec2)> = interactables
         .iter()
+        .filter(|(entity, _)| {
+            // Skip watered pots - they are not interactable until next day
+            pots.get(*entity).map(|p| p.state != crate::components::pot::PotState::Watered).unwrap_or(true)
+        })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
@@ -101,6 +106,7 @@ fn mouse_raycast_interaction(
     cameras: Query<(&Camera, &GlobalTransform)>,
     interactables: Query<(Entity, &GlobalTransform), With<Interactable>>,
     farm_pots: Query<&FarmPot>,
+    pots: Query<&crate::components::pot::Pot>,
     crafting_stations: Query<&CraftingStation>,
     boss_arenas: Query<&BossArenaEntry>,
     npcs: Query<&NPC>,
@@ -127,6 +133,10 @@ fn mouse_raycast_interaction(
 
     let interactable_positions: Vec<(Entity, Vec2)> = interactables
         .iter()
+        .filter(|(entity, _)| {
+            // Skip watered pots - they are not interactable until next day
+            pots.get(*entity).map(|p| p.state != crate::components::pot::PotState::Watered).unwrap_or(true)
+        })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
@@ -166,6 +176,7 @@ fn mouse_raycast_interaction(
 fn highlight_interactables_in_range(
     player_query: Query<&Transform, With<Player>>,
     interactables: Query<(Entity, &Transform, &Children), With<Interactable>>,
+    pots: Query<&crate::components::pot::Pot>,
     highlights: Query<&HighlightMarker>,
     mut visibility: Query<&mut Visibility>,
 ) {
@@ -174,6 +185,20 @@ fn highlight_interactables_in_range(
 
     for (entity, transform, children) in interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
+        
+        // Skip watered pots - they should not be highlighted
+        if pots.get(entity).map(|p| p.state == crate::components::pot::PotState::Watered).unwrap_or(false) {
+            // Still need to hide the highlight if it was previously visible
+            for child in children.iter() {
+                if highlights.get(child).is_ok() {
+                    if let Ok(mut vis) = visibility.get_mut(child) {
+                        *vis = Visibility::Hidden;
+                    }
+                    break;
+                }
+            }
+            continue;
+        }
         
         // Find the highlight child
         for child in children.iter() {
