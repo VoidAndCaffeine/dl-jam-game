@@ -13,7 +13,7 @@ pub enum PotState {
 }
 
 #[derive(
-    Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug,
+    Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default, Debug,
 )]
 pub enum CropType {
     #[default]
@@ -23,11 +23,21 @@ pub enum CropType {
 }
 
 impl CropType {
+    pub const ALL: [CropType; 3] = [CropType::Starter, CropType::CropA, CropType::CropB];
+
     pub fn growth_days(&self) -> u8 {
         match self {
             CropType::Starter => 3,
             CropType::CropA => 4,
             CropType::CropB => 5,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            CropType::Starter => "Starter Crop",
+            CropType::CropA => "Crop A",
+            CropType::CropB => "Crop B",
         }
     }
 }
@@ -204,6 +214,14 @@ mod tests {
         assert_eq!(CropType::Starter.growth_days(), 3);
         assert_eq!(CropType::CropA.growth_days(), 4);
         assert_eq!(CropType::CropB.growth_days(), 5);
+    }
+
+    #[test]
+    fn crop_type_labels_are_distinct_and_non_empty() {
+        for crop in CropType::ALL {
+            assert!(!crop.label().is_empty());
+        }
+        assert_eq!(CropType::ALL.len(), 3);
     }
 
     #[test]

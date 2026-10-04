@@ -1,10 +1,12 @@
 use crate::components::collider::Collider;
-use crate::events::{InteractionEvent, InteractionType};
 use crate::plugins::interaction::{CraftingStation, HighlightMarker, Interactable};
-use crate::states::{DayPhase, GameState};
-use bevy::ecs::message::MessageReader;
+use crate::resources::run_data::PlayerGear;
+use crate::states::GameState;
+use crate::systems::crafting::{
+    CraftingMenuSet, close_menu_on_input, close_menu_outside_farming, craft_row_on_click,
+    craft_selected_row, move_menu_selection, open_menu_on_station_interaction,
+};
 use bevy::prelude::*;
-use bevy::state::state::State;
 
 pub const CRAFTING_STATION_SIZE: f32 = 64.0;
 pub const CRAFTING_STATION_POS: Vec2 = Vec2::new(-200.0, 0.0);
@@ -13,9 +15,24 @@ pub struct GearPlugin;
 
 impl Plugin for GearPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::Playing), spawn_crafting_station)
+        app.init_resource::<PlayerGear>()
+            .add_message::<crate::events::GearCrafted>()
+            .add_message::<crate::events::GearEquipped>()
+            .add_systems(OnEnter(GameState::Playing), spawn_crafting_station)
             .add_systems(OnExit(GameState::Playing), despawn_crafting_station)
-            .add_systems(Update, crafting_station_interaction_handler);
+            .add_systems(
+                Update,
+                (
+                    open_menu_on_station_interaction,
+                    close_menu_outside_farming,
+                    close_menu_on_input,
+                    move_menu_selection,
+                    craft_selected_row,
+                    craft_row_on_click,
+                )
+                    .chain()
+                    .in_set(CraftingMenuSet::Menu),
+            );
     }
 }
 
@@ -60,31 +77,15 @@ fn despawn_crafting_station(
     }
 }
 
-fn crafting_station_interaction_handler(
-    mut events: MessageReader<InteractionEvent>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
-) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-    {
-        return;
-    }
-    for event in events.read() {
-        if event.interaction_type == InteractionType::Crafting {
-            eprintln!(
-                "[CRAFTING] Crafting station interacted with ({:?}) - UI not implemented yet",
-                event.entity
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::components::player::{INTERACTION_RANGE, Player};
+    use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::InteractionPlugin;
+    use crate::resources::crafting_menu::CraftingMenu;
+    use crate::resources::inventory::Inventory;
+    use crate::states::{DayPhase, GameState};
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
@@ -106,6 +107,8 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<CapturedEvents>()
+            .init_resource::<CraftingMenu>()
+            .init_resource::<Inventory>()
             .add_plugins((
                 MinimalPlugins,
                 TransformPlugin,
@@ -115,10 +118,7 @@ mod tests {
             ))
             .init_state::<GameState>()
             .init_state::<DayPhase>()
-            .add_systems(
-                Update,
-                capture_events.after(crafting_station_interaction_handler),
-            );
+            .add_systems(Update, capture_events.after(CraftingMenuSet::Menu));
 
         app.world_mut()
             .spawn((Player, Transform::from_xyz(0.0, 0.0, 1.0)));
@@ -271,6 +271,40 @@ mod tests {
 
         let captured = app.world().resource::<CapturedEvents>();
         assert_eq!(captured.0.len(), 0);
+    }
+
+    #[test]
+    fn interacting_with_the_station_opens_the_crafting_menu() {
+        let mut app = setup_gear_app();
+        station_entity(&mut app);
+        app.update();
+
+        move_player(
+            &mut app,
+            CRAFTING_STATION_POS + Vec2::new(INTERACTION_RANGE * 0.5, 0.0),
+        );
+        app.update();
+
+        assert!(!app.world().resource::<CraftingMenu>().open);
+        press_key(&mut app, KeyCode::Space);
+        assert!(app.world().resource::<CraftingMenu>().open);
+    }
+
+    #[test]
+    fn escape_closes_the_crafting_menu() {
+        let mut app = setup_gear_app();
+        station_entity(&mut app);
+        app.update();
+        move_player(
+            &mut app,
+            CRAFTING_STATION_POS + Vec2::new(INTERACTION_RANGE * 0.5, 0.0),
+        );
+        app.update();
+        press_key(&mut app, KeyCode::Space);
+        assert!(app.world().resource::<CraftingMenu>().open);
+
+        press_key(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<CraftingMenu>().open);
     }
 
     #[test]

@@ -28,6 +28,12 @@ pub struct CropWatered;
 #[derive(Message, Debug, Clone)]
 pub struct CropHarvested(pub crate::components::pot::CropType);
 
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GearCrafted(pub crate::components::gear::GearPiece);
+
+#[derive(Message, Debug, Clone, Copy)]
+pub struct GearEquipped(pub crate::components::gear::GearSlot);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +54,19 @@ mod tests {
     fn day_advanced_event_creation() {
         let event = DayAdvanced { day: 5 };
         assert_eq!(event.day, 5);
+    }
+
+    #[test]
+    fn gear_messages_creation() {
+        let piece = crate::components::gear::GearPiece::new(
+            crate::components::gear::GearSet::Starter,
+            crate::components::gear::GearSlot::Weapon,
+        );
+        let crafted = GearCrafted(piece);
+        assert_eq!(crafted.0, piece);
+        assert_eq!(
+            GearEquipped(piece.slot).0,
+            crate::components::gear::GearSlot::Weapon
+        );
     }
 }

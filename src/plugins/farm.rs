@@ -3,6 +3,7 @@ use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
 use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
 use crate::resources::farm::{CropUnlocks, DayCounter};
+use crate::resources::inventory::Inventory;
 use crate::states::{DayPhase, GameState};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
@@ -14,6 +15,7 @@ impl Plugin for FarmPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DayCounter>()
             .init_resource::<CropUnlocks>()
+            .init_resource::<Inventory>()
             .add_message::<CropPlanted>()
             .add_message::<CropWatered>()
             .add_message::<CropHarvested>()
@@ -23,6 +25,7 @@ impl Plugin for FarmPlugin {
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
             .add_systems(Update, debug_advance_day)
+            .add_systems(Update, harvest_into_inventory)
             .add_systems(OnEnter(DayPhase::Farming), begin_next_day);
     }
 }
@@ -141,6 +144,15 @@ fn pot_interaction_handler(
                 }
             }
         }
+    }
+}
+
+fn harvest_into_inventory(
+    mut events: MessageReader<CropHarvested>,
+    mut inventory: ResMut<Inventory>,
+) {
+    for event in events.read() {
+        inventory.add_crop(event.0, 1);
     }
 }
 
@@ -316,5 +328,91 @@ mod tests {
         app.update();
 
         assert_eq!(pot_indices(&mut app).len(), POT_COUNT);
+    }
+
+    #[test]
+    fn harvesting_a_ripe_pot_stocks_the_inventory() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = grow_pot_to_ready(&mut app, 0);
+        let crop = app
+            .world_mut()
+            .get_mut::<Pot>(pot)
+            .expect("pot entity")
+            .harvest()
+            .expect("ripe pot yields a crop");
+
+        app.world_mut().write_message(CropHarvested(crop));
+        app.update();
+
+        let inventory = app.world().resource::<Inventory>();
+        assert_eq!(inventory.crop_count(CropType::Starter), 1);
+        assert_eq!(app.world().get::<Pot>(pot).unwrap().state, PotState::Empty);
+    }
+
+    #[test]
+    fn harvests_accumulate_in_the_inventory() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        for _ in 0..3 {
+            app.world_mut()
+                .write_message(CropHarvested(CropType::Starter));
+        }
+        for _ in 0..2 {
+            app.world_mut()
+                .write_message(CropHarvested(CropType::CropA));
+        }
+        app.update();
+
+        let inventory = app.world().resource::<Inventory>();
+        assert_eq!(inventory.crop_count(CropType::Starter), 3);
+        assert_eq!(inventory.crop_count(CropType::CropA), 2);
+        assert_eq!(inventory.crop_count(CropType::CropB), 0);
+    }
+
+    #[test]
+    fn harvesting_an_unripe_pot_yields_nothing_to_stock() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 1);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .expect("pot 1 exists")
+            .plant(CropType::Starter);
+
+        let crop = app.world_mut().get_mut::<Pot>(pot).unwrap().harvest();
+        assert_eq!(crop, None);
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<Inventory>()
+                .crop_count(CropType::Starter),
+            0
+        );
+    }
+
+    fn pot_entity(app: &mut App, index: usize) -> Entity {
+        let mut query = app.world_mut().query_filtered::<Entity, With<Pot>>();
+        query
+            .iter(app.world())
+            .find(|entity| {
+                app.world()
+                    .get::<Pot>(*entity)
+                    .is_some_and(|pot| pot.index == index)
+            })
+            .expect("pot entity")
+    }
+
+    fn grow_pot_to_ready(app: &mut App, index: usize) -> Entity {
+        let pot = pot_entity(app, index);
+        let mut pots = app.world_mut().get_mut::<Pot>(pot).expect("pot entity");
+        pots.plant(CropType::Starter);
+        for _ in 0..CropType::Starter.growth_days() {
+            pots.water();
+            pots.advance_day();
+        }
+        pot
     }
 }

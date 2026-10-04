@@ -1,5 +1,6 @@
 use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
+use crate::resources::crafting_menu::CraftingMenu;
 use crate::states::{DayPhase, GameState};
 use crate::utils::interaction_math::{
     find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries,
@@ -53,11 +54,13 @@ fn player_proximity_interaction(
     boss_arenas: Query<&BossArenaEntry>,
     npcs: Query<&NPC>,
     keys: Res<ButtonInput<KeyCode>>,
+    menu: Res<CraftingMenu>,
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
     if !matches!(game_state.get(), GameState::Playing)
         || !matches!(day_phase.get(), DayPhase::Farming)
+        || menu.open
     {
         return;
     }
@@ -131,11 +134,13 @@ fn mouse_raycast_interaction(
     npcs: Query<&NPC>,
     player_query: Query<&GlobalTransform, With<Player>>,
     mouse_input: Res<ButtonInput<MouseButton>>,
+    menu: Res<CraftingMenu>,
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
     if !matches!(game_state.get(), GameState::Playing)
         || !matches!(day_phase.get(), DayPhase::Farming)
+        || menu.open
     {
         return;
     }
@@ -222,6 +227,7 @@ fn highlight_interactables_in_range(
     pots: Query<&crate::components::pot::Pot>,
     highlights: Query<&HighlightMarker>,
     mut visibility: Query<&mut Visibility>,
+    menu: Res<CraftingMenu>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
@@ -231,12 +237,12 @@ fn highlight_interactables_in_range(
     for (entity, transform, children) in interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
 
-        // Skip watered pots - they should not be highlighted
-        if pots
-            .get(entity)
-            .map(|p| p.state == crate::components::pot::PotState::Watered)
-            .unwrap_or(false)
-        {
+        let hidden = menu.open
+            || pots
+                .get(entity)
+                .map(|p| p.state == crate::components::pot::PotState::Watered)
+                .unwrap_or(false);
+        if hidden {
             // Still need to hide the highlight if it was previously visible
             for child in children.iter() {
                 if highlights.get(child).is_ok() {
@@ -290,6 +296,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<CraftingMenu>()
             .init_resource::<CapturedEvents>()
             .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin))
             .init_state::<GameState>()
@@ -390,6 +397,47 @@ mod tests {
 
         let events = get_captured_events(&mut app);
         assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn space_does_nothing_while_the_crafting_menu_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
+        app.world_mut().resource_mut::<CraftingMenu>().open = true;
+
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::Space);
+        app.update();
+
+        let events = get_captured_events(&mut app);
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn highlights_hide_while_the_crafting_menu_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        app.update();
+
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
+        };
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Visible
+        );
+
+        app.world_mut().resource_mut::<CraftingMenu>().open = true;
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Hidden
+        );
     }
 
     #[test]
