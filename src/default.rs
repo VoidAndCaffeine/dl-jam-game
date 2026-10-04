@@ -4,6 +4,7 @@ use crate::plugins::{FarmPlugin, GearPlugin, InteractionPlugin, UIPlugin};
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
+use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::camera_follow::camera_follow;
@@ -23,6 +24,7 @@ impl Plugin for GamePlugin {
             .init_resource::<CameraFollowConfig>()
             .init_resource::<CraftingMenu>()
             .init_resource::<Inventory>()
+            .init_resource::<InventoryPanel>()
             .init_resource::<PlayerGear>()
             .add_plugins(InteractionPlugin)
             .add_plugins(FarmPlugin)
@@ -46,11 +48,13 @@ mod tests {
     use crate::components::pot::CropType;
     use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::CraftingStation;
-    use crate::plugins::ui::CraftingMenuRoot;
+    use crate::plugins::ui::{CraftingMenuRoot, InventoryRoot};
     use crate::resources::crafting_menu::CraftingMenu;
     use crate::resources::inventory::Inventory;
+    use crate::resources::inventory_panel::InventoryPanel;
     use crate::resources::run_data::PlayerGear;
     use crate::systems::crafting::RecipeRow;
+    use crate::systems::inventory::InventorySlot;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
 
@@ -117,6 +121,35 @@ mod tests {
             .query_filtered::<Entity, With<RecipeRow>>()
             .iter(app.world())
             .count()
+    }
+
+    fn inventory(app: &App) -> &InventoryPanel {
+        app.world().resource::<InventoryPanel>()
+    }
+
+    fn inventory_roots(app: &mut App) -> Vec<Entity> {
+        app.world_mut()
+            .query_filtered::<Entity, With<InventoryRoot>>()
+            .iter(app.world())
+            .collect()
+    }
+
+    fn inventory_slots(app: &mut App) -> Vec<(usize, Entity)> {
+        let mut slots: Vec<(usize, Entity)> = app
+            .world_mut()
+            .query_filtered::<(Entity, &InventorySlot), With<Button>>()
+            .iter(app.world())
+            .map(|(entity, slot)| (slot.index, entity))
+            .collect();
+        slots.sort_by_key(|(index, _)| *index);
+        slots
+    }
+
+    fn set_day_phase(app: &mut App, phase: DayPhase) {
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(phase);
+        app.update();
     }
 
     #[test]
@@ -237,5 +270,154 @@ mod tests {
         assert_eq!(menu_roots(&mut app), vec![root]);
         assert_eq!(menu_rows(&mut app), 4);
         assert_eq!(menu(&app).selected, 0);
+    }
+
+    #[test]
+    fn the_inventory_is_closed_until_the_player_asks_for_it() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        assert!(!inventory(&app).open);
+        assert!(inventory_roots(&mut app).is_empty());
+    }
+
+    #[test]
+    fn i_key_opens_and_closes_the_inventory_end_to_end() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        app.world_mut()
+            .resource_mut::<Inventory>()
+            .add_crop(CropType::Starter, 5);
+
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(inventory(&app).open);
+        assert_eq!(inventory_roots(&mut app).len(), 1);
+        let slots = inventory_slots(&mut app);
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].0, 0);
+
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(!inventory(&app).open);
+        assert!(inventory_roots(&mut app).is_empty());
+    }
+
+    #[test]
+    fn the_inventory_shows_harvested_crops() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        app.world_mut()
+            .write_message(crate::events::CropHarvested(CropType::Starter));
+        app.update();
+        app.update();
+        tap_key(&mut app, KeyCode::KeyI);
+
+        let texts: Vec<String> = app
+            .world_mut()
+            .query_filtered::<&Text, With<Node>>()
+            .iter(app.world())
+            .map(|text| text.0.clone())
+            .collect();
+        assert!(
+            texts.iter().any(|text| text == "Starter Crop"),
+            "crop row missing from {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|text| text == "x1"),
+            "crop count missing from {texts:?}"
+        );
+    }
+
+    #[test]
+    fn crafting_then_equipping_from_the_inventory_works_end_to_end() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        app.world_mut()
+            .resource_mut::<Inventory>()
+            .add_crop(CropType::Starter, 30);
+
+        station_interaction(&mut app);
+        tap_key(&mut app, KeyCode::Enter);
+        assert!(gear(&app).owns_set(GearSet::Starter));
+
+        tap_key(&mut app, KeyCode::Escape);
+        assert!(!menu(&app).open);
+
+        app.world_mut()
+            .resource_mut::<PlayerGear>()
+            .own(crate::components::gear::GearPiece::new(
+                GearSet::Master,
+                GearSlot::Weapon,
+            ));
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(inventory(&app).open);
+
+        let last_slot = inventory_slots(&mut app)
+            .pop()
+            .expect("the master weapon has a row")
+            .0;
+        app.world_mut().resource_mut::<InventoryPanel>().selected = last_slot;
+        app.update();
+        tap_key(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            gear(&app).equipped(GearSlot::Weapon),
+            Some(crate::components::gear::GearPiece::new(
+                GearSet::Master,
+                GearSlot::Weapon
+            ))
+        );
+        assert_eq!(
+            inventory(&app).notice,
+            "Equipped Dreamlayer Blade (Master Set)"
+        );
+    }
+
+    #[test]
+    fn the_inventory_opens_outside_the_farming_phase() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        set_day_phase(&mut app, DayPhase::BossSelect);
+
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(inventory(&app).open);
+
+        set_day_phase(&mut app, DayPhase::BossFight);
+        assert!(inventory(&app).open);
+        assert_eq!(inventory_roots(&mut app).len(), 1);
+
+        tap_key(&mut app, KeyCode::Escape);
+        assert!(!inventory(&app).open);
+    }
+
+    #[test]
+    fn the_crafting_menu_and_the_inventory_never_share_the_screen() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        station_interaction(&mut app);
+        assert_eq!(menu_roots(&mut app).len(), 1);
+
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(menu_roots(&mut app).is_empty());
+        assert_eq!(inventory_roots(&mut app).len(), 1);
+
+        app.world_mut().resource_mut::<CraftingMenu>().open_menu();
+        app.update();
+        assert!(menu_roots(&mut app).is_empty());
+        assert_eq!(inventory_roots(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn leaving_playing_clears_the_inventory_state() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+        tap_key(&mut app, KeyCode::KeyI);
+        assert!(inventory(&app).open);
+
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        app.update();
+
+        assert!(!inventory(&app).open);
+        assert!(inventory_roots(&mut app).is_empty());
     }
 }

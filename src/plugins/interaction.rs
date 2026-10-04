@@ -1,6 +1,7 @@
 use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::inventory_panel::InventoryPanel;
 use crate::states::{DayPhase, GameState};
 use crate::utils::interaction_math::{
     find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries,
@@ -37,7 +38,8 @@ pub struct InteractionPlugin;
 
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<InteractionEvent>()
+        app.init_resource::<InventoryPanel>()
+            .add_message::<InteractionEvent>()
             .add_systems(Update, player_proximity_interaction)
             .add_systems(Update, mouse_raycast_interaction)
             .add_systems(Update, highlight_interactables_in_range);
@@ -55,12 +57,14 @@ fn player_proximity_interaction(
     npcs: Query<&NPC>,
     keys: Res<ButtonInput<KeyCode>>,
     menu: Res<CraftingMenu>,
+    inventory: Res<InventoryPanel>,
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
     if !matches!(game_state.get(), GameState::Playing)
         || !matches!(day_phase.get(), DayPhase::Farming)
         || menu.open
+        || inventory.open
     {
         return;
     }
@@ -135,12 +139,14 @@ fn mouse_raycast_interaction(
     player_query: Query<&GlobalTransform, With<Player>>,
     mouse_input: Res<ButtonInput<MouseButton>>,
     menu: Res<CraftingMenu>,
+    inventory: Res<InventoryPanel>,
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
     if !matches!(game_state.get(), GameState::Playing)
         || !matches!(day_phase.get(), DayPhase::Farming)
         || menu.open
+        || inventory.open
     {
         return;
     }
@@ -228,6 +234,7 @@ fn highlight_interactables_in_range(
     highlights: Query<&HighlightMarker>,
     mut visibility: Query<&mut Visibility>,
     menu: Res<CraftingMenu>,
+    inventory: Res<InventoryPanel>,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
@@ -238,6 +245,7 @@ fn highlight_interactables_in_range(
         let distance = player_pos.distance(transform.translation.truncate());
 
         let hidden = menu.open
+            || inventory.open
             || pots
                 .get(entity)
                 .map(|p| p.state == crate::components::pot::PotState::Watered)
@@ -297,6 +305,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<CraftingMenu>()
+            .init_resource::<InventoryPanel>()
             .init_resource::<CapturedEvents>()
             .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin))
             .init_state::<GameState>()
@@ -437,6 +446,77 @@ mod tests {
         assert_eq!(
             app.world().get::<Visibility>(highlight_entity).unwrap(),
             &Visibility::Hidden
+        );
+    }
+
+    #[test]
+    fn space_does_nothing_while_the_inventory_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .open_panel();
+
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::Space);
+        app.update();
+
+        let events = get_captured_events(&mut app);
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn highlights_hide_while_the_inventory_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        app.update();
+
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
+        };
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Visible
+        );
+
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .open_panel();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Hidden
+        );
+    }
+
+    #[test]
+    fn highlights_come_back_after_the_inventory_closes() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
+        };
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .open_panel();
+        app.update();
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .close_panel();
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Visible
         );
     }
 

@@ -10,7 +10,7 @@ impl DayCounter {
     }
 }
 
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Debug)]
 pub struct CropUnlocks {
     pub starter: bool,
     pub crop_a: bool,
@@ -43,6 +43,12 @@ impl CropUnlocks {
     }
 }
 
+impl Default for CropUnlocks {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,6 +74,13 @@ mod tests {
         assert!(unlocks.starter);
         assert!(!unlocks.crop_a);
         assert!(!unlocks.crop_b);
+    }
+
+    #[test]
+    fn crop_unlocks_default_matches_new() {
+        assert!(CropUnlocks::default().starter);
+        assert!(!CropUnlocks::default().crop_a);
+        assert!(!CropUnlocks::default().crop_b);
     }
 
     #[test]

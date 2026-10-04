@@ -1,13 +1,15 @@
 use crate::components::player::Movement;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::inventory_panel::InventoryPanel;
 use bevy::prelude::*;
 
 pub fn movement_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut movement_query: Query<&mut Movement>,
     menu: Res<CraftingMenu>,
+    inventory: Res<InventoryPanel>,
 ) {
-    let frozen = menu.open;
+    let frozen = menu.open || inventory.open;
     for mut movement in movement_query.iter_mut() {
         let mut direction = Vec2::ZERO;
 
@@ -40,7 +42,8 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<CraftingMenu>();
+            .init_resource::<CraftingMenu>()
+            .init_resource::<InventoryPanel>();
         app.world_mut().spawn(Movement::default());
         app.add_systems(Update, movement_input);
         app
@@ -125,6 +128,35 @@ mod tests {
         app.update();
 
         app.world_mut().resource_mut::<CraftingMenu>().open = false;
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
+    }
+
+    #[test]
+    fn movement_is_frozen_while_the_inventory_is_open() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .open_panel();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn movement_resumes_after_the_inventory_closes() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .open_panel();
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<InventoryPanel>()
+            .close_panel();
         app.update();
         assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
     }

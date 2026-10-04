@@ -107,11 +107,12 @@ pub fn perform(
     }
 }
 
-fn apply(
+/// Applies a row action, writing the resulting craft/equip messages. Callers own
+/// their own notice so several panels can share this logic.
+pub fn apply(
     action: RowAction,
     inventory: &mut Inventory,
     gear: &mut PlayerGear,
-    menu: &mut CraftingMenu,
     crafted_events: &mut MessageWriter<GearCrafted>,
     equipped_events: &mut MessageWriter<GearEquipped>,
 ) -> CraftOutcome {
@@ -128,7 +129,6 @@ fn apply(
         }
         _ => {}
     }
-    menu.set_notice(outcome.notice());
     outcome
 }
 
@@ -227,14 +227,14 @@ pub fn craft_selected_row(
     let Some(action) = row_action(menu.selected, &gear.owned) else {
         return;
     };
-    apply(
+    let outcome = apply(
         action,
         &mut inventory,
         &mut gear,
-        &mut menu,
         &mut crafted_events,
         &mut equipped_events,
     );
+    menu.set_notice(outcome.notice());
 }
 
 pub fn craft_row_on_click(
@@ -262,14 +262,14 @@ pub fn craft_row_on_click(
         let Some(action) = row_action(row.index, &gear.owned) else {
             continue;
         };
-        apply(
+        let outcome = apply(
             action,
             &mut inventory,
             &mut gear,
-            &mut menu,
             &mut crafted_events,
             &mut equipped_events,
         );
+        menu.set_notice(outcome.notice());
     }
 }
 

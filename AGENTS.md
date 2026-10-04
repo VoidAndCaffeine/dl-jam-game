@@ -161,8 +161,12 @@ assets/
 | Interact (plant/water/harvest/craft/attack) | Left Click / Space |
 | Gear Swap | 1 (weapon), 2 (armor) / Scroll |
 | Open Crafting | Tab / C |
+| Open Inventory | I (toggle, works in every phase) |
 | Boss Select | Click UI |
 | Pause | Escape |
+
+Panels are mutually exclusive and freeze movement + world interaction while open.
+Esc closes whichever panel is open.
 
 ## 8. Persistence Architecture (Save/Load Ready)
 
