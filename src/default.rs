@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+use crate::resources::camera::CameraFollowConfig;
 use crate::states::GameState;
 use crate::systems::camera_follow::camera_follow;
 use crate::systems::collision::collision_detection;
@@ -14,6 +15,7 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>()
+            .init_resource::<CameraFollowConfig>()
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)
             .add_systems(OnEnter(GameState::Playing), spawn_player)
             .add_systems(OnExit(GameState::Playing), despawn_player)
