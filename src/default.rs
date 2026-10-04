@@ -1,17 +1,16 @@
 use bevy::prelude::*;
 
-use crate::plugins::{FarmPlugin, GearPlugin, InteractionPlugin, UIPlugin};
+use crate::plugins::{FarmPlugin, GearPlugin, InteractionPlugin, LevelPlugin, UIPlugin};
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
+use crate::resources::level::LevelSet;
 use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::camera_follow::camera_follow;
-use crate::systems::collision::collision_detection;
-use crate::systems::collision_response::collision_response;
+use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
-use crate::systems::movement_physics::movement_physics;
 use crate::systems::spawn_player::{despawn_player, spawn_player};
 use crate::systems::transition::transition_to_playing;
 
@@ -27,17 +26,20 @@ impl Plugin for GamePlugin {
             .init_resource::<InventoryPanel>()
             .init_resource::<PlayerGear>()
             .add_plugins(InteractionPlugin)
+            .add_plugins(LevelPlugin)
             .add_plugins(FarmPlugin)
             .add_plugins(GearPlugin)
             .add_plugins(UIPlugin)
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)
-            .add_systems(OnEnter(GameState::Playing), spawn_player)
+            .add_systems(
+                OnEnter(GameState::Playing),
+                spawn_player.after(LevelSet::Load),
+            )
             .add_systems(OnExit(GameState::Playing), despawn_player)
             .add_systems(FixedUpdate, movement_input)
-            .add_systems(FixedUpdate, movement_physics)
-            .add_systems(FixedUpdate, collision_detection)
-            .add_systems(FixedUpdate, camera_follow)
-            .add_observer(collision_response);
+            .add_systems(FixedUpdate, grid_movement.after(movement_input))
+            .add_systems(FixedUpdate, camera_follow);
     }
 }
 
@@ -168,7 +170,7 @@ mod tests {
                 .next()
                 .is_some()
         );
-        assert_eq!(menu(&app).open, false);
+        assert!(!menu(&app).open);
         assert!(menu_roots(&mut app).is_empty());
     }
 

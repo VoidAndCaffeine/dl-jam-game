@@ -9,7 +9,6 @@ use crate::systems::crafting::{
 use bevy::prelude::*;
 
 pub const CRAFTING_STATION_SIZE: f32 = 64.0;
-pub const CRAFTING_STATION_POS: Vec2 = Vec2::new(-200.0, 0.0);
 
 pub struct GearPlugin;
 
@@ -18,7 +17,6 @@ impl Plugin for GearPlugin {
         app.init_resource::<PlayerGear>()
             .add_message::<crate::events::GearCrafted>()
             .add_message::<crate::events::GearEquipped>()
-            .add_systems(OnEnter(GameState::Playing), spawn_crafting_station)
             .add_systems(OnExit(GameState::Playing), despawn_crafting_station)
             .add_systems(
                 Update,
@@ -36,7 +34,9 @@ impl Plugin for GearPlugin {
     }
 }
 
-fn spawn_crafting_station(mut commands: Commands) {
+/// Spawns the crafting station at a world position. The position comes from the
+/// level's `s` marker.
+pub fn spawn_crafting_station(commands: &mut Commands, position: Vec2) -> Entity {
     commands
         .spawn((
             Interactable::new(),
@@ -50,7 +50,7 @@ fn spawn_crafting_station(mut commands: Commands) {
                 custom_size: Some(Vec2::splat(CRAFTING_STATION_SIZE)),
                 ..default()
             },
-            Transform::from_xyz(CRAFTING_STATION_POS.x, CRAFTING_STATION_POS.y, 0.0),
+            Transform::from_xyz(position.x, position.y, 0.0),
             Name::new("Crafting Station"),
         ))
         .with_children(|parent| {
@@ -61,11 +61,12 @@ fn spawn_crafting_station(mut commands: Commands) {
                     custom_size: Some(Vec2::splat(CRAFTING_STATION_SIZE * 1.15)),
                     ..default()
                 },
-                Transform::from_xyz(0.0, 0.0, -0.1),
+                Transform::from_xyz(0.0, 0.0, crate::plugins::interaction::HIGHLIGHT_Z),
                 Visibility::Hidden,
                 Name::new("Highlight"),
             ));
-        });
+        })
+        .id()
 }
 
 fn despawn_crafting_station(
@@ -83,8 +84,10 @@ mod tests {
     use crate::components::player::{INTERACTION_RANGE, Player};
     use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::InteractionPlugin;
+    use crate::plugins::level::LevelPlugin;
     use crate::resources::crafting_menu::CraftingMenu;
     use crate::resources::inventory::Inventory;
+    use crate::resources::level::PlayerSpawn;
     use crate::states::{DayPhase, GameState};
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
@@ -114,6 +117,7 @@ mod tests {
                 TransformPlugin,
                 StatesPlugin,
                 InteractionPlugin,
+                LevelPlugin,
                 GearPlugin,
             ))
             .init_state::<GameState>()
@@ -133,13 +137,19 @@ mod tests {
         app
     }
 
-    /// Presses a key and runs two frames so the capture system is guaranteed to
-    /// observe the message regardless of how the systems happen to be ordered.
+    /// Presses a key for exactly one frame, then runs a second frame so the
+    /// capture system observes the message regardless of system ordering.
+    ///
+    /// Nothing clears `just_pressed` without the input plugin, so it has to be
+    /// cleared by hand or the interaction fires on both frames.
     fn press_key(app: &mut App, key: KeyCode) {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(key);
         app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(key);
         app.update();
     }
 
@@ -150,6 +160,20 @@ mod tests {
         let mut transform = query.single_mut(app.world_mut()).unwrap();
         transform.translation.x = pos.x;
         transform.translation.y = pos.y;
+    }
+
+    /// A spot inside the farm that is out of interaction range of everything.
+    fn far_corner(app: &App) -> Vec2 {
+        app.world().resource::<PlayerSpawn>().position
+    }
+
+    fn station_position(app: &mut App) -> Vec2 {
+        app.world_mut()
+            .query_filtered::<&Transform, With<CraftingStation>>()
+            .single(app.world())
+            .expect("Crafting station not spawned")
+            .translation
+            .truncate()
     }
 
     fn station_entity(app: &mut App) -> Entity {
@@ -188,8 +212,13 @@ mod tests {
         assert_eq!(sprite.color, Color::BLACK);
         assert_eq!(sprite.custom_size, Some(Vec2::splat(CRAFTING_STATION_SIZE)));
 
-        let transform = app.world().get::<Transform>(entity).unwrap();
-        assert_eq!(transform.translation.truncate(), CRAFTING_STATION_POS);
+        let actual = app
+            .world()
+            .get::<Transform>(entity)
+            .unwrap()
+            .translation
+            .truncate();
+        assert_eq!(actual, station_position(&mut app));
     }
 
     #[test]
@@ -244,16 +273,14 @@ mod tests {
         let entity = station_entity(&mut app);
         app.update(); // allow TransformPropagation to compute GlobalTransform
 
-        move_player(
-            &mut app,
-            CRAFTING_STATION_POS + Vec2::new(INTERACTION_RANGE * 0.5, 0.0),
-        );
+        let beside = station_position(&mut app) + Vec2::new(INTERACTION_RANGE * 0.5, 0.0);
+        move_player(&mut app, beside);
         app.update();
 
         press_key(&mut app, KeyCode::Space);
 
         let captured = app.world().resource::<CapturedEvents>();
-        assert_eq!(captured.0.len(), 1);
+        assert_eq!(captured.0.len(), 1, "captured {:?}", captured.0);
         assert_eq!(captured.0[0].entity, entity);
         assert_eq!(captured.0[0].interaction_type, InteractionType::Crafting);
     }
@@ -264,7 +291,8 @@ mod tests {
         station_entity(&mut app);
         app.update();
 
-        move_player(&mut app, Vec2::new(200.0, 0.0));
+        let away = far_corner(&app);
+        move_player(&mut app, away);
         app.update();
 
         press_key(&mut app, KeyCode::Space);
@@ -279,10 +307,8 @@ mod tests {
         station_entity(&mut app);
         app.update();
 
-        move_player(
-            &mut app,
-            CRAFTING_STATION_POS + Vec2::new(INTERACTION_RANGE * 0.5, 0.0),
-        );
+        let beside = station_position(&mut app) + Vec2::new(INTERACTION_RANGE * 0.5, 0.0);
+        move_player(&mut app, beside);
         app.update();
 
         assert!(!app.world().resource::<CraftingMenu>().open);
@@ -295,10 +321,8 @@ mod tests {
         let mut app = setup_gear_app();
         station_entity(&mut app);
         app.update();
-        move_player(
-            &mut app,
-            CRAFTING_STATION_POS + Vec2::new(INTERACTION_RANGE * 0.5, 0.0),
-        );
+        let beside = station_position(&mut app) + Vec2::new(INTERACTION_RANGE * 0.5, 0.0);
+        move_player(&mut app, beside);
         app.update();
         press_key(&mut app, KeyCode::Space);
         assert!(app.world().resource::<CraftingMenu>().open);

@@ -4,10 +4,9 @@ use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, Intera
 use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
 use crate::resources::farm::{CropUnlocks, DayCounter};
 use crate::resources::inventory::Inventory;
-use crate::states::{DayPhase, GameState};
+use crate::states::{DayPhase, GameState, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
-use bevy::state::state::State;
 
 pub struct FarmPlugin;
 
@@ -20,7 +19,6 @@ impl Plugin for FarmPlugin {
             .add_message::<CropWatered>()
             .add_message::<CropHarvested>()
             .add_message::<DayAdvanced>()
-            .add_systems(OnEnter(GameState::Playing), spawn_pots)
             .add_systems(OnExit(GameState::Playing), despawn_pots)
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
@@ -30,66 +28,52 @@ impl Plugin for FarmPlugin {
     }
 }
 
-const POT_SIZE: f32 = 40.0;
-const POT_SPACING: f32 = 80.0;
-const GRID_OFFSET_X: f32 = 200.0;
+pub const POT_SIZE: f32 = 40.0;
 
-fn spawn_pots(mut commands: Commands) {
-    let positions = [
-        (GRID_OFFSET_X - POT_SPACING, POT_SPACING),
-        (GRID_OFFSET_X, POT_SPACING),
-        (GRID_OFFSET_X + POT_SPACING, POT_SPACING),
-        (GRID_OFFSET_X - POT_SPACING, 0.0),
-        (GRID_OFFSET_X, 0.0),
-        (GRID_OFFSET_X + POT_SPACING, 0.0),
-        (GRID_OFFSET_X - POT_SPACING, -POT_SPACING),
-        (GRID_OFFSET_X, -POT_SPACING),
-        (GRID_OFFSET_X + POT_SPACING, -POT_SPACING),
-    ];
-
-    for (index, (x, y)) in positions.iter().enumerate() {
-        commands
-            .spawn((
-                Pot::new(index),
-                Collider {
-                    size: Vec2::splat(POT_SIZE),
-                    is_solid: true,
-                },
-                Interactable::new(),
-                FarmPot,
+/// Spawns one pot at a world position. Position comes from the level's `p`
+/// markers, and the index is the marker's order in the file.
+pub fn spawn_pot(commands: &mut Commands, index: usize, position: Vec2) -> Entity {
+    commands
+        .spawn((
+            Pot::new(index),
+            Collider {
+                size: Vec2::splat(POT_SIZE),
+                is_solid: true,
+            },
+            Interactable::new(),
+            FarmPot,
+            Sprite {
+                color: Color::srgb(1.0, 0.2, 0.2),
+                custom_size: Some(Vec2::splat(POT_SIZE)),
+                ..default()
+            },
+            Transform::from_xyz(position.x, position.y, 0.0),
+            Name::new(format!("Pot {}", index)),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                HighlightMarker,
                 Sprite {
-                    color: Color::srgb(1.0, 0.2, 0.2),
-                    custom_size: Some(Vec2::splat(POT_SIZE)),
+                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                    custom_size: Some(Vec2::splat(POT_SIZE * 1.15)),
                     ..default()
                 },
-                Transform::from_xyz(*x, *y, 0.0),
-                Name::new(format!("Pot {}", index)),
-            ))
-            .with_children(|parent| {
-                // Highlight sprite - slightly larger, yellow, behind the main sprite
-                parent.spawn((
-                    HighlightMarker,
-                    Sprite {
-                        color: Color::srgba(1.0, 1.0, 0.0, 0.5),
-                        custom_size: Some(Vec2::splat(POT_SIZE * 1.15)),
-                        ..default()
-                    },
-                    Transform::from_xyz(0.0, 0.0, -0.1),
-                    Visibility::Hidden,
-                    Name::new("Highlight"),
-                ));
-                parent.spawn((
-                    Text2d::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(16.0),
-                        ..default()
-                    },
-                    TextColor(Color::WHITE),
-                    Transform::from_xyz(0.0, POT_SIZE * 0.6, 1.0),
-                    Name::new("Day Counter Text"),
-                ));
-            });
-    }
+                Transform::from_xyz(0.0, 0.0, crate::plugins::interaction::HIGHLIGHT_Z),
+                Visibility::Hidden,
+                Name::new("Highlight"),
+            ));
+            parent.spawn((
+                Text2d::new(""),
+                TextFont {
+                    font_size: FontSize::Px(16.0),
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+                Transform::from_xyz(0.0, POT_SIZE * 0.6, 1.0),
+                Name::new("Day Counter Text"),
+            ));
+        })
+        .id()
 }
 
 fn despawn_pots(mut commands: Commands, pots: Query<Entity, With<Pot>>) {
@@ -105,12 +89,9 @@ fn pot_interaction_handler(
     mut planted_events: MessageWriter<CropPlanted>,
     mut watered_events: MessageWriter<CropWatered>,
     mut harvested_events: MessageWriter<CropHarvested>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-    {
+    if !phase.is_farming() {
         return;
     }
     for event in events.read() {
@@ -161,22 +142,7 @@ fn begin_next_day(
     mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
 ) {
-    eprintln!(
-        "[DAY ADVANCE] Beginning next day - current day: {}",
-        day_counter.0
-    );
-    for mut pot in pots.iter_mut() {
-        let old_state = pot.state;
-        let old_days = pot.days_remaining;
-        pot.advance_day();
-        eprintln!(
-            "[DAY ADVANCE] Pot {}: {:?} ({} days) -> {:?} ({} days)",
-            pot.index, old_state, old_days, pot.state, pot.days_remaining
-        );
-    }
-    day_counter.advance();
-    eprintln!("[DAY ADVANCE] Day advanced to: {}", day_counter.0);
-    day_advanced_events.write(DayAdvanced { day: day_counter.0 });
+    advance_day(&mut pots, &mut day_counter, &mut day_advanced_events);
 }
 
 fn debug_advance_day(
@@ -184,43 +150,41 @@ fn debug_advance_day(
     mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
     keys: Res<ButtonInput<KeyCode>>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-    {
+    if !phase.is_farming() {
         return;
     }
     if cfg!(debug_assertions) && keys.just_pressed(KeyCode::F9) {
-        eprintln!(
-            "[DEBUG F9] Manual day advance triggered - current day: {}",
-            day_counter.0
-        );
-        for mut pot in pots.iter_mut() {
-            let old_state = pot.state;
-            let old_days = pot.days_remaining;
-            pot.advance_day();
-            eprintln!(
-                "[DEBUG F9] Pot {}: {:?} ({} days) -> {:?} ({} days)",
-                pot.index, old_state, old_days, pot.state, pot.days_remaining
-            );
-        }
-        day_counter.advance();
-        eprintln!("[DEBUG F9] Day advanced to: {}", day_counter.0);
-        day_advanced_events.write(DayAdvanced { day: day_counter.0 });
+        advance_day(&mut pots, &mut day_counter, &mut day_advanced_events);
     }
+}
+
+fn advance_day(
+    pots: &mut Query<&mut Pot>,
+    day_counter: &mut DayCounter,
+    day_advanced_events: &mut MessageWriter<DayAdvanced>,
+) {
+    for mut pot in pots.iter_mut() {
+        pot.advance_day();
+        log::debug!(
+            "pot {}: {:?} ({} days left)",
+            pot.index,
+            pot.state,
+            pot.days_remaining
+        );
+    }
+    day_counter.advance();
+    log::info!("day advanced to {}", day_counter.0);
+    day_advanced_events.write(DayAdvanced { day: day_counter.0 });
 }
 
 fn update_pot_visuals(
     mut pots: Query<(&Pot, &mut Sprite, &Children)>,
     mut text_query: Query<&mut Text2d>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-    {
+    if !phase.is_farming() {
         return;
     }
     for (pot, mut sprite, children) in pots.iter_mut() {
@@ -241,7 +205,6 @@ fn update_pot_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
 
@@ -250,7 +213,13 @@ mod tests {
     fn setup_farm_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
-            .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin, FarmPlugin))
+            .add_plugins((
+                MinimalPlugins,
+                TransformPlugin,
+                StatesPlugin,
+                crate::plugins::level::LevelPlugin,
+                FarmPlugin,
+            ))
             .init_state::<GameState>()
             .init_state::<DayPhase>();
         app

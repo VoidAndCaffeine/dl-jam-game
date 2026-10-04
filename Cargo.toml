@@ -8,7 +8,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
-bevy = { version = "0.19.1", features = ["web"] }
+bevy = { version = "0.19.1", default-features = false, features = [
+    "2d",    # sprites, tilemap chunks, camera, asset + state plumbing
+    "ui",    # HUD and menus
+    "audio", # sound and music
+    "web",   # wasm target
+] }
 wasm-bindgen = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 
@@ -38,6 +43,10 @@ inherits = "release"
 opt-level = "s"
 # Strip all debugging information from the binary to slightly reduce file size.
 strip = "debuginfo"
+
+[[test]]
+name = "level_loading"
+path = "tests/integration/level_loading.rs"
 
 [dev-dependencies]
 serde_json = "1.0"

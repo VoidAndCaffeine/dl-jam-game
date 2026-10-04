@@ -6,12 +6,6 @@ pub struct Collider {
     pub is_solid: bool,
 }
 
-#[derive(Event, Debug, Clone)]
-pub struct CollisionEvent {
-    pub entity_a: Entity,
-    pub entity_b: Entity,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -24,16 +18,12 @@ mod tests {
     }
 
     #[test]
-    fn collision_event_creation() {
-        // Just verify CollisionEvent can be created with entities
-        let mut app = App::new();
-        let e1 = app.world_mut().spawn_empty().id();
-        let e2 = app.world_mut().spawn_empty().id();
-        let event = CollisionEvent {
-            entity_a: e1,
-            entity_b: e2,
+    fn a_collider_can_be_built_for_a_world_box() {
+        let collider = Collider {
+            size: Vec2::splat(32.0),
+            is_solid: true,
         };
-        assert_eq!(event.entity_a, e1);
-        assert_eq!(event.entity_b, e2);
+        assert!(collider.is_solid);
+        assert_eq!(collider.size * 0.5, Vec2::splat(16.0));
     }
 }

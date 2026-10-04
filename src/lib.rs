@@ -1,14 +1,15 @@
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
-mod components;
-mod default;
-mod events;
-mod plugins;
-mod resources;
-mod states;
-mod systems;
-mod utils;
+pub mod components;
+pub mod default;
+pub mod events;
+pub mod levels;
+pub mod plugins;
+pub mod resources;
+pub mod states;
+pub mod systems;
+pub mod utils;
 
 pub use default::GamePlugin;
 

@@ -1,3 +1,4 @@
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -18,9 +19,113 @@ pub enum DayPhase {
     Result,
 }
 
+/// The two states most systems ask about, bundled so their signatures stay
+/// readable.
+#[derive(SystemParam)]
+pub struct Phase<'w> {
+    pub game: Res<'w, State<GameState>>,
+    pub day: Res<'w, State<DayPhase>>,
+}
+
+impl Phase<'_> {
+    pub fn is_playing(&self) -> bool {
+        matches!(self.game.get(), GameState::Playing)
+    }
+
+    pub fn is_farming(&self) -> bool {
+        self.is_playing() && matches!(self.day.get(), DayPhase::Farming)
+    }
+
+    /// True when a panel that pauses world interaction may react to input.
+    pub fn blocks_world(&self) -> bool {
+        matches!(self.game.get(), GameState::Playing)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::state::app::StatesPlugin;
+
+    #[derive(Resource, Default)]
+    struct Probe {
+        playing: bool,
+        farming: bool,
+        blocks_world: bool,
+    }
+
+    fn record(phase: Phase, mut probe: ResMut<Probe>) {
+        probe.playing = phase.is_playing();
+        probe.farming = phase.is_farming();
+        probe.blocks_world = phase.blocks_world();
+    }
+
+    fn setup() -> App {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .init_resource::<Probe>()
+            .init_state::<GameState>()
+            .init_state::<DayPhase>()
+            .add_systems(Update, record);
+        app.update();
+        app
+    }
+
+    fn probe(app: &App) -> &Probe {
+        app.world().resource::<Probe>()
+    }
+
+    fn set_game(app: &mut App, state: GameState) {
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(state);
+        app.update();
+    }
+
+    fn set_phase(app: &mut App, phase: DayPhase) {
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(phase);
+        app.update();
+    }
+
+    #[test]
+    fn loading_assets_is_neither_playing_nor_farming() {
+        let app = setup();
+        assert!(!probe(&app).playing);
+        assert!(!probe(&app).farming);
+        assert!(!probe(&app).blocks_world);
+    }
+
+    #[test]
+    fn playing_defaults_to_the_farming_phase() {
+        let mut app = setup();
+        set_game(&mut app, GameState::Playing);
+        assert!(probe(&app).playing);
+        assert!(probe(&app).farming);
+    }
+
+    #[test]
+    fn a_boss_fight_stops_farming_but_keeps_panels_reachable() {
+        let mut app = setup();
+        set_game(&mut app, GameState::Playing);
+        set_phase(&mut app, DayPhase::BossFight);
+
+        assert!(probe(&app).playing);
+        assert!(!probe(&app).farming);
+        assert!(probe(&app).blocks_world);
+    }
+
+    #[test]
+    fn victory_ends_play_entirely() {
+        let mut app = setup();
+        set_game(&mut app, GameState::Playing);
+        set_game(&mut app, GameState::Victory);
+
+        assert!(!probe(&app).playing);
+        assert!(!probe(&app).farming);
+        assert!(!probe(&app).blocks_world);
+    }
 
     #[test]
     fn game_state_default_is_loading_assets() {

@@ -2,13 +2,12 @@ use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory_panel::InventoryPanel;
-use crate::states::{DayPhase, GameState};
+use crate::states::Phase;
 use crate::utils::interaction_math::{
     find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries,
 };
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
-use bevy::state::state::State;
 
 #[derive(Component, Reflect, Default, Debug)]
 pub struct Interactable;
@@ -22,6 +21,10 @@ impl Interactable {
 #[derive(Component, Reflect, Default, Debug)]
 pub struct HighlightMarker;
 
+/// Highlights sit just behind their parent sprite. The room floor must stay
+/// further back than this or it covers them.
+pub const HIGHLIGHT_Z: f32 = -0.1;
+
 #[derive(Component, Reflect, Default, Debug)]
 pub struct FarmPot;
 
@@ -33,6 +36,31 @@ pub struct BossArenaEntry;
 
 #[derive(Component, Reflect, Default, Debug)]
 pub struct NPC;
+
+/// Everything both interaction systems need to find and classify interactables.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct InteractableLookups<'w, 's> {
+    pub player: Query<'w, 's, &'static GlobalTransform, With<Player>>,
+    pub interactables: Query<'w, 's, (Entity, &'static GlobalTransform), With<Interactable>>,
+    pub farm_pots: Query<'w, 's, &'static FarmPot>,
+    pub pots: Query<'w, 's, &'static crate::components::pot::Pot>,
+    pub crafting_stations: Query<'w, 's, &'static CraftingStation>,
+    pub boss_arenas: Query<'w, 's, &'static BossArenaEntry>,
+    pub npcs: Query<'w, 's, &'static NPC>,
+}
+
+/// The panels that freeze world interaction while they are open.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct OpenPanels<'w> {
+    menu: Res<'w, CraftingMenu>,
+    inventory: Res<'w, InventoryPanel>,
+}
+
+impl OpenPanels<'_> {
+    fn any_open(&self) -> bool {
+        self.menu.open || self.inventory.open
+    }
+}
 
 pub struct InteractionPlugin;
 
@@ -48,81 +76,57 @@ impl Plugin for InteractionPlugin {
 
 fn player_proximity_interaction(
     mut events: MessageWriter<InteractionEvent>,
-    player_query: Query<&GlobalTransform, With<Player>>,
-    interactables: Query<(Entity, &GlobalTransform), With<Interactable>>,
-    farm_pots: Query<&FarmPot>,
-    pots: Query<&crate::components::pot::Pot>,
-    crafting_stations: Query<&CraftingStation>,
-    boss_arenas: Query<&BossArenaEntry>,
-    npcs: Query<&NPC>,
+    lookups: InteractableLookups,
     keys: Res<ButtonInput<KeyCode>>,
-    menu: Res<CraftingMenu>,
-    inventory: Res<InventoryPanel>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    panels: OpenPanels,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-        || menu.open
-        || inventory.open
-    {
+    if !phase.is_farming() || panels.any_open() {
         return;
     }
     if !keys.just_pressed(KeyCode::Space) {
         return;
     }
 
-    let Ok(player_transform) = player_query.single() else {
+    let Ok(player_transform) = lookups.player.single() else {
         return;
     };
     let player_pos = player_transform.translation().truncate();
 
-    let interactable_positions: Vec<(Entity, Vec2)> = interactables
+    let interactable_positions: Vec<(Entity, Vec2)> = lookups
+        .interactables
         .iter()
         .filter(|(entity, _)| {
             // Skip watered pots - they are not interactable until next day
-            pots.get(*entity)
+            lookups
+                .pots
+                .get(*entity)
                 .map(|p| p.state != crate::components::pot::PotState::Watered)
                 .unwrap_or(true)
         })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
-    eprintln!(
-        "[DEBUG] Space pressed! Player at {:?}, {} interactables found",
-        player_pos,
+    log::debug!(
+        "space pressed at {player_pos:?} with {} interactables",
         interactable_positions.len()
     );
-    for (entity, pos) in &interactable_positions {
-        let dist = player_pos.distance(*pos);
-        eprintln!(
-            "[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}",
-            entity,
-            pos,
-            dist,
-            dist <= INTERACTION_RANGE
-        );
-    }
 
     let closest_entity =
         find_closest_in_range(player_pos, &interactable_positions, INTERACTION_RANGE);
 
     if let Some(entity) = closest_entity {
-        eprintln!("[DEBUG] Closest in range: {:?}", entity);
         let interaction_type = resolve_interaction_type_from_queries(
             entity,
-            &farm_pots,
-            &crafting_stations,
-            &boss_arenas,
-            &npcs,
+            &lookups.farm_pots,
+            &lookups.crafting_stations,
+            &lookups.boss_arenas,
+            &lookups.npcs,
         );
         events.write(InteractionEvent {
             entity,
             interaction_type,
         });
-        eprintln!("[DEBUG] Interaction event sent for {:?}", entity);
-    } else {
-        eprintln!("[DEBUG] No interactable in range");
     }
 }
 
@@ -130,24 +134,12 @@ fn mouse_raycast_interaction(
     mut events: MessageWriter<InteractionEvent>,
     windows: Query<&Window>,
     cameras: Query<(&Camera, &GlobalTransform)>,
-    interactables: Query<(Entity, &GlobalTransform), With<Interactable>>,
-    farm_pots: Query<&FarmPot>,
-    pots: Query<&crate::components::pot::Pot>,
-    crafting_stations: Query<&CraftingStation>,
-    boss_arenas: Query<&BossArenaEntry>,
-    npcs: Query<&NPC>,
-    player_query: Query<&GlobalTransform, With<Player>>,
+    lookups: InteractableLookups,
     mouse_input: Res<ButtonInput<MouseButton>>,
-    menu: Res<CraftingMenu>,
-    inventory: Res<InventoryPanel>,
-    game_state: Res<State<GameState>>,
-    day_phase: Res<State<DayPhase>>,
+    panels: OpenPanels,
+    phase: Phase,
 ) {
-    if !matches!(game_state.get(), GameState::Playing)
-        || !matches!(day_phase.get(), DayPhase::Farming)
-        || menu.open
-        || inventory.open
-    {
+    if !phase.is_farming() || panels.any_open() {
         return;
     }
     if !mouse_input.just_pressed(MouseButton::Left) {
@@ -166,67 +158,53 @@ fn mouse_raycast_interaction(
         return;
     };
 
-    let Ok(player_transform) = player_query.single() else {
+    let Ok(player_transform) = lookups.player.single() else {
         return;
     };
     let player_pos = player_transform.translation().truncate();
 
-    let interactable_positions: Vec<(Entity, Vec2)> = interactables
+    let interactable_positions: Vec<(Entity, Vec2)> = lookups
+        .interactables
         .iter()
         .filter(|(entity, _)| {
             // Skip watered pots - they are not interactable until next day
-            pots.get(*entity)
+            lookups
+                .pots
+                .get(*entity)
                 .map(|p| p.state != crate::components::pot::PotState::Watered)
                 .unwrap_or(true)
         })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
-    eprintln!(
-        "[DEBUG] Left click! Player at {:?}, cursor at {:?}, ray origin: {:?}, {} interactables found",
-        player_pos,
-        cursor_pos,
+    log::debug!(
+        "left click at {cursor_pos:?}, ray from {:?}, {} interactables",
         ray.origin.truncate(),
         interactable_positions.len()
     );
-    for (entity, pos) in &interactable_positions {
-        let dist = player_pos.distance(*pos);
-        eprintln!(
-            "[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}",
-            entity,
-            pos,
-            dist,
-            dist <= INTERACTION_RANGE
-        );
-    }
 
     let in_range: Vec<(Entity, Vec2)> = interactable_positions
         .into_iter()
         .filter(|(_, pos)| player_pos.distance(*pos) <= INTERACTION_RANGE)
         .collect();
 
-    eprintln!("[DEBUG] {} interactables in player range", in_range.len());
-
     let closest_entity = find_closest_to_ray(ray.origin.truncate(), &in_range);
 
     if let Some(entity) = closest_entity {
-        eprintln!("[DEBUG] Closest to ray in range: {:?}", entity);
         let interaction_type = resolve_interaction_type_from_queries(
             entity,
-            &farm_pots,
-            &crafting_stations,
-            &boss_arenas,
-            &npcs,
+            &lookups.farm_pots,
+            &lookups.crafting_stations,
+            &lookups.boss_arenas,
+            &lookups.npcs,
         );
         events.write(InteractionEvent {
             entity,
             interaction_type,
         });
-        eprintln!("[DEBUG] Interaction event sent for {:?}", entity);
-    } else {
-        eprintln!("[DEBUG] No interactable in range of player AND ray");
     }
 }
+
 fn highlight_interactables_in_range(
     player_query: Query<&Transform, With<Player>>,
     interactables: Query<(Entity, &Transform, &Children), With<Interactable>>,
@@ -283,8 +261,8 @@ fn highlight_interactables_in_range(
 mod tests {
     use super::*;
     use crate::events::InteractionType;
+    use crate::states::{DayPhase, GameState};
     use bevy::ecs::message::MessageReader;
-    use bevy::prelude::*;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
 
@@ -360,15 +338,10 @@ mod tests {
         captured.0.clone()
     }
 
-    fn clear_captured_events(app: &mut App) {
-        let mut captured = app.world_mut().resource_mut::<CapturedEvents>();
-        captured.0.clear();
-    }
-
     #[test]
     fn space_interacts_with_closest_in_range() {
         let mut app = setup_interaction_app();
-        let e1 = spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        let _far = spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
         let e2 = spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
         app.update(); // Allow TransformPropagation to compute GlobalTransform
 
@@ -575,7 +548,7 @@ mod tests {
     #[test]
     fn highlight_adds_outline_in_range() {
         let mut app = setup_interaction_app();
-        let entity = spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
         app.update(); // Allow TransformPropagation
 
         // Find the highlight entity by marker and check its visibility
@@ -597,7 +570,7 @@ mod tests {
     #[test]
     fn highlight_removes_outline_out_of_range() {
         let mut app = setup_interaction_app();
-        let entity = spawn_interactable(&mut app, Vec2::new(100.0, 0.0), FarmPot);
+        spawn_interactable(&mut app, Vec2::new(100.0, 0.0), FarmPot);
         app.update(); // Allow TransformPropagation
 
         let highlight_entity = {
@@ -618,7 +591,7 @@ mod tests {
     #[test]
     fn highlight_updates_when_player_moves() {
         let mut app = setup_interaction_app();
-        let entity = spawn_interactable(&mut app, Vec2::new(0.0, 0.0), FarmPot);
+        spawn_interactable(&mut app, Vec2::new(0.0, 0.0), FarmPot);
         app.update(); // Allow TransformPropagation
 
         let highlight_entity = {
@@ -633,12 +606,11 @@ mod tests {
             &Visibility::Visible
         );
 
-        let mut player_transform = app
+        let mut player_transform = *app
             .world_mut()
             .query_filtered::<&mut Transform, With<Player>>()
             .single(app.world_mut())
-            .unwrap()
-            .clone();
+            .unwrap();
         player_transform.translation.x = 100.0;
         app.world_mut()
             .query_filtered::<&mut Transform, With<Player>>()
@@ -678,7 +650,7 @@ mod tests {
 
     #[test]
     fn interactable_default() {
-        let interactable = Interactable::default();
+        let interactable = Interactable;
         let _ = interactable;
     }
 }
