@@ -18,11 +18,16 @@ mod tests {
         app.add_plugins(StatesPlugin);
         app.init_state::<GameState>();
         app.add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing);
-        
+
         // Start in LoadingAssets
-        app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::LoadingAssets);
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::LoadingAssets);
         app.update();
-        
-        assert_eq!(app.world().resource::<State<GameState>>().get(), &GameState::Playing);
+
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Playing
+        );
     }
 }

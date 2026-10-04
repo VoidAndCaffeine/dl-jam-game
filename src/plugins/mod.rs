@@ -1,8 +1,10 @@
-pub mod interaction;
 pub mod farm;
 pub mod gear;
+pub mod interaction;
 
-pub use interaction::InteractionPlugin;
-pub use interaction::{Interactable, FarmPot, CraftingStation, BossArenaEntry, NPC, HighlightMarker};
 pub use farm::FarmPlugin;
 pub use gear::GearPlugin;
+pub use interaction::InteractionPlugin;
+pub use interaction::{
+    BossArenaEntry, CraftingStation, FarmPot, HighlightMarker, Interactable, NPC,
+};

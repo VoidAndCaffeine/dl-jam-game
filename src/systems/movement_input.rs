@@ -39,7 +39,11 @@ mod tests {
     }
 
     fn get_movement(app: &mut App) -> Movement {
-        app.world_mut().query::<&Movement>().single(app.world_mut()).unwrap().clone()
+        app.world_mut()
+            .query::<&Movement>()
+            .single(app.world_mut())
+            .unwrap()
+            .clone()
     }
 
     #[test]

@@ -1,8 +1,8 @@
-use bevy::prelude::*;
-use bevy::ecs::world::World;
 use crate::components::player::INTERACTION_RANGE;
 use crate::events::InteractionType;
-use crate::plugins::interaction::{FarmPot, CraftingStation, BossArenaEntry, NPC, Interactable};
+use crate::plugins::interaction::{BossArenaEntry, CraftingStation, FarmPot, Interactable, NPC};
+use bevy::ecs::world::World;
+use bevy::prelude::*;
 
 pub fn find_closest_in_range(
     player_pos: Vec2,
@@ -23,10 +23,7 @@ pub fn find_closest_in_range(
     closest_entity
 }
 
-pub fn find_closest_to_ray(
-    ray_origin: Vec2,
-    candidates: &[(Entity, Vec2)],
-) -> Option<Entity> {
+pub fn find_closest_to_ray(ray_origin: Vec2, candidates: &[(Entity, Vec2)]) -> Option<Entity> {
     let mut closest_entity = None;
     let mut closest_distance = f32::INFINITY;
 
@@ -41,10 +38,7 @@ pub fn find_closest_to_ray(
     closest_entity
 }
 
-pub fn resolve_interaction_type(
-    entity: Entity,
-    world: &World,
-) -> InteractionType {
+pub fn resolve_interaction_type(entity: Entity, world: &World) -> InteractionType {
     if world.get::<FarmPot>(entity).is_some() {
         return InteractionType::FarmAction;
     }
@@ -92,10 +86,12 @@ mod tests {
     }
 
     fn spawn_entity(app: &mut App, pos: Vec2) -> Entity {
-        app.world_mut().spawn((
-            Transform::from_xyz(pos.x, pos.y, 0.0),
-            GlobalTransform::default(),
-        )).id()
+        app.world_mut()
+            .spawn((
+                Transform::from_xyz(pos.x, pos.y, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id()
     }
 
     #[test]
@@ -125,7 +121,11 @@ mod tests {
         let e1 = spawn_entity(&mut app, Vec2::new(20.0, 0.0));
         let e2 = spawn_entity(&mut app, Vec2::new(10.0, 0.0));
         let e3 = spawn_entity(&mut app, Vec2::new(30.0, 0.0));
-        let interactables = vec![(e1, Vec2::new(20.0, 0.0)), (e2, Vec2::new(10.0, 0.0)), (e3, Vec2::new(30.0, 0.0))];
+        let interactables = vec![
+            (e1, Vec2::new(20.0, 0.0)),
+            (e2, Vec2::new(10.0, 0.0)),
+            (e3, Vec2::new(30.0, 0.0)),
+        ];
         let result = find_closest_in_range(player_pos, &interactables, INTERACTION_RANGE);
         assert_eq!(result, Some(e2));
     }
@@ -154,7 +154,11 @@ mod tests {
         let e1 = spawn_entity(&mut app, Vec2::new(100.0, 0.0));
         let e2 = spawn_entity(&mut app, Vec2::new(10.0, 0.0));
         let e3 = spawn_entity(&mut app, Vec2::new(50.0, 0.0));
-        let candidates = vec![(e1, Vec2::new(100.0, 0.0)), (e2, Vec2::new(10.0, 0.0)), (e3, Vec2::new(50.0, 0.0))];
+        let candidates = vec![
+            (e1, Vec2::new(100.0, 0.0)),
+            (e2, Vec2::new(10.0, 0.0)),
+            (e3, Vec2::new(50.0, 0.0)),
+        ];
         let ray_origin = Vec2::new(5.0, 0.0);
         let result = find_closest_to_ray(ray_origin, &candidates);
         assert_eq!(result, Some(e2));

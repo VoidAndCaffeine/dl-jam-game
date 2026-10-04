@@ -1,10 +1,12 @@
-use bevy::prelude::*;
-use bevy::ecs::message::MessageWriter;
-use bevy::state::state::State;
 use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
 use crate::states::{DayPhase, GameState};
-use crate::utils::interaction_math::{find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries};
+use crate::utils::interaction_math::{
+    find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries,
+};
+use bevy::ecs::message::MessageWriter;
+use bevy::prelude::*;
+use bevy::state::state::State;
 
 #[derive(Component, Reflect, Default, Debug)]
 pub struct Interactable;
@@ -54,32 +56,49 @@ fn player_proximity_interaction(
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) || !matches!(day_phase.get(), DayPhase::Farming) {
+    if !matches!(game_state.get(), GameState::Playing)
+        || !matches!(day_phase.get(), DayPhase::Farming)
+    {
         return;
     }
     if !keys.just_pressed(KeyCode::Space) {
         return;
     }
 
-    let Ok(player_transform) = player_query.single() else { return };
+    let Ok(player_transform) = player_query.single() else {
+        return;
+    };
     let player_pos = player_transform.translation().truncate();
 
     let interactable_positions: Vec<(Entity, Vec2)> = interactables
         .iter()
         .filter(|(entity, _)| {
             // Skip watered pots - they are not interactable until next day
-            pots.get(*entity).map(|p| p.state != crate::components::pot::PotState::Watered).unwrap_or(true)
+            pots.get(*entity)
+                .map(|p| p.state != crate::components::pot::PotState::Watered)
+                .unwrap_or(true)
         })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
-    eprintln!("[DEBUG] Space pressed! Player at {:?}, {} interactables found", player_pos, interactable_positions.len());
+    eprintln!(
+        "[DEBUG] Space pressed! Player at {:?}, {} interactables found",
+        player_pos,
+        interactable_positions.len()
+    );
     for (entity, pos) in &interactable_positions {
         let dist = player_pos.distance(*pos);
-        eprintln!("[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}", entity, pos, dist, dist <= INTERACTION_RANGE);
+        eprintln!(
+            "[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}",
+            entity,
+            pos,
+            dist,
+            dist <= INTERACTION_RANGE
+        );
     }
 
-    let closest_entity = find_closest_in_range(player_pos, &interactable_positions, INTERACTION_RANGE);
+    let closest_entity =
+        find_closest_in_range(player_pos, &interactable_positions, INTERACTION_RANGE);
 
     if let Some(entity) = closest_entity {
         eprintln!("[DEBUG] Closest in range: {:?}", entity);
@@ -115,7 +134,9 @@ fn mouse_raycast_interaction(
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) || !matches!(day_phase.get(), DayPhase::Farming) {
+    if !matches!(game_state.get(), GameState::Playing)
+        || !matches!(day_phase.get(), DayPhase::Farming)
+    {
         return;
     }
     if !mouse_input.just_pressed(MouseButton::Left) {
@@ -123,27 +144,49 @@ fn mouse_raycast_interaction(
     }
 
     let Ok(window) = windows.single() else { return };
-    let Some(cursor_pos) = window.cursor_position() else { return };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
 
-    let Ok((camera, camera_transform)) = cameras.single() else { return };
-    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) else { return };
+    let Ok((camera, camera_transform)) = cameras.single() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(camera_transform, cursor_pos) else {
+        return;
+    };
 
-    let Ok(player_transform) = player_query.single() else { return };
+    let Ok(player_transform) = player_query.single() else {
+        return;
+    };
     let player_pos = player_transform.translation().truncate();
 
     let interactable_positions: Vec<(Entity, Vec2)> = interactables
         .iter()
         .filter(|(entity, _)| {
             // Skip watered pots - they are not interactable until next day
-            pots.get(*entity).map(|p| p.state != crate::components::pot::PotState::Watered).unwrap_or(true)
+            pots.get(*entity)
+                .map(|p| p.state != crate::components::pot::PotState::Watered)
+                .unwrap_or(true)
         })
         .map(|(entity, transform)| (entity, transform.translation().truncate()))
         .collect();
 
-    eprintln!("[DEBUG] Left click! Player at {:?}, cursor at {:?}, ray origin: {:?}, {} interactables found", player_pos, cursor_pos, ray.origin.truncate(), interactable_positions.len());
+    eprintln!(
+        "[DEBUG] Left click! Player at {:?}, cursor at {:?}, ray origin: {:?}, {} interactables found",
+        player_pos,
+        cursor_pos,
+        ray.origin.truncate(),
+        interactable_positions.len()
+    );
     for (entity, pos) in &interactable_positions {
         let dist = player_pos.distance(*pos);
-        eprintln!("[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}", entity, pos, dist, dist <= INTERACTION_RANGE);
+        eprintln!(
+            "[DEBUG]   Entity {:?} at {:?}, distance: {:.2}, in range: {}",
+            entity,
+            pos,
+            dist,
+            dist <= INTERACTION_RANGE
+        );
     }
 
     let in_range: Vec<(Entity, Vec2)> = interactable_positions
@@ -180,14 +223,20 @@ fn highlight_interactables_in_range(
     highlights: Query<&HighlightMarker>,
     mut visibility: Query<&mut Visibility>,
 ) {
-    let Ok(player_transform) = player_query.single() else { return };
+    let Ok(player_transform) = player_query.single() else {
+        return;
+    };
     let player_pos = player_transform.translation.truncate();
 
     for (entity, transform, children) in interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
-        
+
         // Skip watered pots - they should not be highlighted
-        if pots.get(entity).map(|p| p.state == crate::components::pot::PotState::Watered).unwrap_or(false) {
+        if pots
+            .get(entity)
+            .map(|p| p.state == crate::components::pot::PotState::Watered)
+            .unwrap_or(false)
+        {
             // Still need to hide the highlight if it was previously visible
             for child in children.iter() {
                 if highlights.get(child).is_ok() {
@@ -199,7 +248,7 @@ fn highlight_interactables_in_range(
             }
             continue;
         }
-        
+
         // Find the highlight child
         for child in children.iter() {
             if highlights.get(child).is_ok() {
@@ -219,16 +268,19 @@ fn highlight_interactables_in_range(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::*;
-    use bevy::transform::TransformPlugin;
-    use bevy::state::app::StatesPlugin;
-    use bevy::ecs::message::MessageReader;
     use crate::events::InteractionType;
+    use bevy::ecs::message::MessageReader;
+    use bevy::prelude::*;
+    use bevy::state::app::StatesPlugin;
+    use bevy::transform::TransformPlugin;
 
     #[derive(Resource, Default)]
     struct CapturedEvents(Vec<InteractionEvent>);
 
-    fn capture_events(mut captured: ResMut<CapturedEvents>, mut reader: MessageReader<InteractionEvent>) {
+    fn capture_events(
+        mut captured: ResMut<CapturedEvents>,
+        mut reader: MessageReader<InteractionEvent>,
+    ) {
         for event in reader.read() {
             captured.0.push(event.clone());
         }
@@ -246,39 +298,45 @@ mod tests {
             .add_systems(Update, player_proximity_interaction)
             .add_systems(Update, mouse_raycast_interaction)
             .add_systems(Update, highlight_interactables_in_range)
-            .add_systems(Update, capture_events.after(player_proximity_interaction).after(mouse_raycast_interaction));
+            .add_systems(
+                Update,
+                capture_events
+                    .after(player_proximity_interaction)
+                    .after(mouse_raycast_interaction),
+            );
 
-        app.world_mut().spawn((
-            Player,
-            Transform::from_xyz(0.0, 0.0, 1.0),
-        ));
+        app.world_mut()
+            .spawn((Player, Transform::from_xyz(0.0, 0.0, 1.0)));
 
-        app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::Playing);
-        app.world_mut().resource_mut::<NextState<DayPhase>>().set(DayPhase::Farming);
-        
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::Farming);
+
         // Process state transitions
         app.update();
         app
     }
 
     fn spawn_interactable(app: &mut App, pos: Vec2, marker: impl Component) -> Entity {
-        app.world_mut().spawn((
-            Interactable,
-            marker,
-            Transform::from_xyz(pos.x, pos.y, 0.0),
-        )).with_children(|parent| {
-            parent.spawn((
-                HighlightMarker,
-                Sprite {
-                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
-                    custom_size: Some(Vec2::splat(40.0 * 1.15)),
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, -0.1),
-                Visibility::Hidden,
-                Name::new("Highlight"),
-            ));
-        }).id()
+        app.world_mut()
+            .spawn((Interactable, marker, Transform::from_xyz(pos.x, pos.y, 0.0)))
+            .with_children(|parent| {
+                parent.spawn((
+                    HighlightMarker,
+                    Sprite {
+                        color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                        custom_size: Some(Vec2::splat(40.0 * 1.15)),
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.0, -0.1),
+                    Visibility::Hidden,
+                    Name::new("Highlight"),
+                ));
+            })
+            .id()
     }
 
     fn get_captured_events(app: &mut App) -> Vec<InteractionEvent> {
@@ -339,7 +397,9 @@ mod tests {
         let mut app = setup_interaction_app();
         spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
 
-        app.world_mut().resource_mut::<NextState<DayPhase>>().set(DayPhase::BossSelect);
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::BossSelect);
         app.update();
 
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -355,7 +415,9 @@ mod tests {
         let mut app = setup_interaction_app();
         spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
 
-        app.world_mut().resource_mut::<NextState<GameState>>().set(GameState::LoadingAssets);
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::LoadingAssets);
         app.update();
 
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -391,9 +453,16 @@ mod tests {
         // Find the highlight entity by marker and check its visibility
         let highlight_entity = {
             let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
-            q.iter(app.world()).next().expect("Highlight child not found").0
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
         };
-        let has_outline = app.world().get::<Visibility>(highlight_entity).map(|v| *v == Visibility::Visible).unwrap_or(false);
+        let has_outline = app
+            .world()
+            .get::<Visibility>(highlight_entity)
+            .map(|v| *v == Visibility::Visible)
+            .unwrap_or(false);
         assert!(has_outline);
     }
 
@@ -405,9 +474,16 @@ mod tests {
 
         let highlight_entity = {
             let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
-            q.iter(app.world()).next().expect("Highlight child not found").0
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
         };
-        let has_outline = app.world().get::<Visibility>(highlight_entity).map(|v| *v == Visibility::Visible).unwrap_or(false);
+        let has_outline = app
+            .world()
+            .get::<Visibility>(highlight_entity)
+            .map(|v| *v == Visibility::Visible)
+            .unwrap_or(false);
         assert!(!has_outline);
     }
 
@@ -419,25 +495,46 @@ mod tests {
 
         let highlight_entity = {
             let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
-            q.iter(app.world()).next().expect("Highlight child not found").0
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
         };
-        assert_eq!(app.world().get::<Visibility>(highlight_entity).unwrap(), &Visibility::Visible);
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Visible
+        );
 
-        let mut player_transform = app.world_mut().query_filtered::<&mut Transform, With<Player>>().single(app.world_mut()).unwrap().clone();
+        let mut player_transform = app
+            .world_mut()
+            .query_filtered::<&mut Transform, With<Player>>()
+            .single(app.world_mut())
+            .unwrap()
+            .clone();
         player_transform.translation.x = 100.0;
-        app.world_mut().query_filtered::<&mut Transform, With<Player>>().single_mut(app.world_mut()).unwrap().translation = player_transform.translation;
+        app.world_mut()
+            .query_filtered::<&mut Transform, With<Player>>()
+            .single_mut(app.world_mut())
+            .unwrap()
+            .translation = player_transform.translation;
         app.update();
 
-        assert_eq!(app.world().get::<Visibility>(highlight_entity).unwrap(), &Visibility::Hidden);
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Hidden
+        );
     }
 
     #[test]
     fn highlight_only_on_interactables() {
         let mut app = setup_interaction_app();
-        let entity = app.world_mut().spawn((
-            Transform::from_xyz(10.0, 0.0, 0.0),
-            GlobalTransform::default(),
-        )).id();
+        let entity = app
+            .world_mut()
+            .spawn((
+                Transform::from_xyz(10.0, 0.0, 0.0),
+                GlobalTransform::default(),
+            ))
+            .id();
 
         app.update();
 

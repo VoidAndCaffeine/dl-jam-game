@@ -1,12 +1,12 @@
-use bevy::prelude::*;
-use bevy::ecs::message::{MessageReader, MessageWriter};
-use bevy::state::state::State;
 use crate::components::collider::Collider;
 use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
-use crate::plugins::interaction::{Interactable, FarmPot, HighlightMarker};
+use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
 use crate::resources::farm::{CropUnlocks, DayCounter};
 use crate::states::{DayPhase, GameState};
+use bevy::ecs::message::{MessageReader, MessageWriter};
+use bevy::prelude::*;
+use bevy::state::state::State;
 
 pub struct FarmPlugin;
 
@@ -44,45 +44,47 @@ fn spawn_pots(mut commands: Commands) {
     ];
 
     for (index, (x, y)) in positions.iter().enumerate() {
-        commands.spawn((
-            Pot::new(index),
-            Collider {
-                size: Vec2::splat(POT_SIZE),
-                is_solid: true,
-            },
-            Interactable::new(),
-            FarmPot,
-            Sprite {
-                color: Color::srgb(1.0, 0.2, 0.2),
-                custom_size: Some(Vec2::splat(POT_SIZE)),
-                ..default()
-            },
-            Transform::from_xyz(*x, *y, 0.0),
-            Name::new(format!("Pot {}", index)),
-        )).with_children(|parent| {
-            // Highlight sprite - slightly larger, yellow, behind the main sprite
-            parent.spawn((
-                HighlightMarker,
+        commands
+            .spawn((
+                Pot::new(index),
+                Collider {
+                    size: Vec2::splat(POT_SIZE),
+                    is_solid: true,
+                },
+                Interactable::new(),
+                FarmPot,
                 Sprite {
-                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
-                    custom_size: Some(Vec2::splat(POT_SIZE * 1.15)),
+                    color: Color::srgb(1.0, 0.2, 0.2),
+                    custom_size: Some(Vec2::splat(POT_SIZE)),
                     ..default()
                 },
-                Transform::from_xyz(0.0, 0.0, -0.1),
-                Visibility::Hidden,
-                Name::new("Highlight"),
-            ));
-            parent.spawn((
-                Text2d::new(""),
-                TextFont {
-                    font_size: FontSize::Px(16.0),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Transform::from_xyz(0.0, POT_SIZE * 0.6, 1.0),
-                Name::new("Day Counter Text"),
-            ));
-        });
+                Transform::from_xyz(*x, *y, 0.0),
+                Name::new(format!("Pot {}", index)),
+            ))
+            .with_children(|parent| {
+                // Highlight sprite - slightly larger, yellow, behind the main sprite
+                parent.spawn((
+                    HighlightMarker,
+                    Sprite {
+                        color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                        custom_size: Some(Vec2::splat(POT_SIZE * 1.15)),
+                        ..default()
+                    },
+                    Transform::from_xyz(0.0, 0.0, -0.1),
+                    Visibility::Hidden,
+                    Name::new("Highlight"),
+                ));
+                parent.spawn((
+                    Text2d::new(""),
+                    TextFont {
+                        font_size: FontSize::Px(16.0),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    Transform::from_xyz(0.0, POT_SIZE * 0.6, 1.0),
+                    Name::new("Day Counter Text"),
+                ));
+            });
     }
 }
 
@@ -96,11 +98,15 @@ fn pot_interaction_handler(
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) || !matches!(day_phase.get(), DayPhase::Farming) {
+    if !matches!(game_state.get(), GameState::Playing)
+        || !matches!(day_phase.get(), DayPhase::Farming)
+    {
         return;
     }
     for event in events.read() {
-        let Ok(mut pot) = pots.get_mut(event.entity) else { continue };
+        let Ok(mut pot) = pots.get_mut(event.entity) else {
+            continue;
+        };
 
         match pot.state {
             PotState::Empty => {
@@ -136,12 +142,18 @@ fn begin_next_day(
     mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
 ) {
-    eprintln!("[DAY ADVANCE] Beginning next day - current day: {}", day_counter.0);
+    eprintln!(
+        "[DAY ADVANCE] Beginning next day - current day: {}",
+        day_counter.0
+    );
     for mut pot in pots.iter_mut() {
         let old_state = pot.state;
         let old_days = pot.days_remaining;
         pot.advance_day();
-        eprintln!("[DAY ADVANCE] Pot {}: {:?} ({} days) -> {:?} ({} days)", pot.index, old_state, old_days, pot.state, pot.days_remaining);
+        eprintln!(
+            "[DAY ADVANCE] Pot {}: {:?} ({} days) -> {:?} ({} days)",
+            pot.index, old_state, old_days, pot.state, pot.days_remaining
+        );
     }
     day_counter.advance();
     eprintln!("[DAY ADVANCE] Day advanced to: {}", day_counter.0);
@@ -156,16 +168,24 @@ fn debug_advance_day(
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) || !matches!(day_phase.get(), DayPhase::Farming) {
+    if !matches!(game_state.get(), GameState::Playing)
+        || !matches!(day_phase.get(), DayPhase::Farming)
+    {
         return;
     }
     if cfg!(debug_assertions) && keys.just_pressed(KeyCode::F9) {
-        eprintln!("[DEBUG F9] Manual day advance triggered - current day: {}", day_counter.0);
+        eprintln!(
+            "[DEBUG F9] Manual day advance triggered - current day: {}",
+            day_counter.0
+        );
         for mut pot in pots.iter_mut() {
             let old_state = pot.state;
             let old_days = pot.days_remaining;
             pot.advance_day();
-            eprintln!("[DEBUG F9] Pot {}: {:?} ({} days) -> {:?} ({} days)", pot.index, old_state, old_days, pot.state, pot.days_remaining);
+            eprintln!(
+                "[DEBUG F9] Pot {}: {:?} ({} days) -> {:?} ({} days)",
+                pot.index, old_state, old_days, pot.state, pot.days_remaining
+            );
         }
         day_counter.advance();
         eprintln!("[DEBUG F9] Day advanced to: {}", day_counter.0);
@@ -179,7 +199,9 @@ fn update_pot_visuals(
     game_state: Res<State<GameState>>,
     day_phase: Res<State<DayPhase>>,
 ) {
-    if !matches!(game_state.get(), GameState::Playing) || !matches!(day_phase.get(), DayPhase::Farming) {
+    if !matches!(game_state.get(), GameState::Playing)
+        || !matches!(day_phase.get(), DayPhase::Farming)
+    {
         return;
     }
     for (pot, mut sprite, children) in pots.iter_mut() {

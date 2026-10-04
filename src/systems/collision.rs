@@ -43,10 +43,15 @@ mod tests {
     }
 
     fn spawn_collider(app: &mut App, pos: Vec2, size: Vec2, solid: bool) -> Entity {
-        app.world_mut().spawn((
-            Collider { size, is_solid: solid },
-            Transform::from_xyz(pos.x, pos.y, 0.0),
-        )).id()
+        app.world_mut()
+            .spawn((
+                Collider {
+                    size,
+                    is_solid: solid,
+                },
+                Transform::from_xyz(pos.x, pos.y, 0.0),
+            ))
+            .id()
     }
 
     #[test]
@@ -54,7 +59,7 @@ mod tests {
         let mut app = setup_app();
         spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
         spawn_collider(&mut app, Vec2::new(16.0, 0.0), Vec2::splat(32.0), true);
-        
+
         app.update();
         // System runs without error
     }
@@ -64,7 +69,7 @@ mod tests {
         let mut app = setup_app();
         spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
         spawn_collider(&mut app, Vec2::new(16.0, 0.0), Vec2::splat(32.0), false);
-        
+
         app.update();
     }
 
@@ -72,7 +77,7 @@ mod tests {
     fn no_self_collision() {
         let mut app = setup_app();
         spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
-        
+
         app.update();
     }
 
@@ -81,7 +86,7 @@ mod tests {
         let mut app = setup_app();
         spawn_collider(&mut app, Vec2::ZERO, Vec2::splat(32.0), true);
         spawn_collider(&mut app, Vec2::new(100.0, 0.0), Vec2::splat(32.0), true);
-        
+
         app.update();
     }
 }

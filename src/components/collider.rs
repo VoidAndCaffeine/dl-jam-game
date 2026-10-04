@@ -29,7 +29,10 @@ mod tests {
         let mut app = App::new();
         let e1 = app.world_mut().spawn_empty().id();
         let e2 = app.world_mut().spawn_empty().id();
-        let event = CollisionEvent { entity_a: e1, entity_b: e2 };
+        let event = CollisionEvent {
+            entity_a: e1,
+            entity_b: e2,
+        };
         assert_eq!(event.entity_a, e1);
         assert_eq!(event.entity_b, e2);
     }

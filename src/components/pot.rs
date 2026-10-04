@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(
+    Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug,
+)]
 pub enum PotState {
     #[default]
     Empty,
@@ -10,7 +12,9 @@ pub enum PotState {
     Ready,
 }
 
-#[derive(Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug)]
+#[derive(
+    Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Default, Debug,
+)]
 pub enum CropType {
     #[default]
     Starter,
