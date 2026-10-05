@@ -1,6 +1,7 @@
 pub mod boss_select;
 pub mod camera_follow;
 pub mod crafting;
+pub mod crop_select;
 pub mod inventory;
 pub mod level_movement;
 pub mod movement_input;

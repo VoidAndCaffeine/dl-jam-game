@@ -78,6 +78,13 @@ struct BossProgress {
 struct FarmState {
     pots: Vec<Pot>,  // pot state kept across room swaps so crops survive boss fights
 }
+
+#[derive(Resource, Reflect, Default)]
+struct CropSelectMenu {
+    open: bool,
+    selected: usize,     // index into CropType::ALL
+    pending_pot: usize,  // Pot::index the picker was opened for
+}
 ```
 
 ### Components (all `#[derive(Component, Reflect, Serialize, Deserialize)]`)
@@ -88,6 +95,7 @@ struct FarmState {
 - `Boss { id: BossId, phase: u8, max_hp: f32 }`
 - `AttackPattern { timer: Timer, pattern: PatternType }`
 - `MaterialDrop { material: MaterialType }`
+- `CropOption { crop: CropType, index: usize }` — clickable row in the crop picker
 
 ### Events
 - `CropPlanted(CropType)`, `CropWatered`, `CropHarvested(CropType)`
@@ -179,7 +187,8 @@ assets/
 | Action | Key/Mouse |
 |--------|-----------|
 | Move | WASD / Arrow Keys |
-| Interact (plant/water/harvest/craft/attack) | Left Click / Space |
+| Interact (water/harvest/craft/attack) | Left Click / Space |
+| Plant (on an empty pot) | Opens the crop picker: Arrows/WASD select, Enter/E/Space or click plants, Esc cancels |
 | Gear Swap | 1 (weapon), 2 (armor) / Scroll |
 | Open Crafting | Tab / C |
 | Open Inventory | I (toggle, works in every phase) |
@@ -187,7 +196,9 @@ assets/
 | Pause | Escape |
 
 Panels are mutually exclusive and freeze movement + world interaction while open.
-Esc closes whichever panel is open.
+Esc closes whichever panel is open. Interacting with an empty pot opens the
+`CropSelectMenu` picker (locked crops are shown dimmed with their unlock hint);
+the crop is planted only when the player confirms.
 
 ## 8. Persistence Architecture (Save/Load Ready)
 
@@ -257,12 +268,14 @@ src/
 ├── resources/
 │   ├── run_data.rs
 │   ├── inventory.rs
+│   ├── crop_select.rs      # CropSelectMenu — crop picker state + target pot
 │   ├── level.rs            # ActiveLevel, LevelEntity, PlayerSpawn, BossSpawn, LevelRequest
 │   └── save_manager.rs
 ├── events.rs
 ├── systems/
 │   ├── farming.rs
 │   ├── crafting.rs
+│   ├── crop_select.rs      # CropSelectPlugin — picker input + planting
 │   ├── combat.rs
 │   ├── day_cycle.rs
 │   └── level_movement.rs   # Player movement against SolidGrid + solid entities

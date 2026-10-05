@@ -3,6 +3,7 @@ use crate::components::pot::CropType;
 use crate::events::{GearCrafted, GearEquipped};
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
@@ -155,17 +156,22 @@ pub fn close_inventory_outside_playing(mut panel: ResMut<InventoryPanel>, phase:
 /// Belt-and-braces guard: the crafting menu can open from a station interaction in
 /// the same frame the inventory opens, and only one panel may be open at a time.
 /// The boss select menu is a panel too, so opening either other panel backs out of
-/// it (and the boss phase recovers to farming).
+/// it (and the boss phase recovers to farming). The crop picker is transient, so
+/// any other panel simply closes it.
 pub fn enforce_single_open_panel(
     mut menu: ResMut<CraftingMenu>,
     panel: ResMut<InventoryPanel>,
     mut boss: ResMut<BossSelectMenu>,
+    mut crop_select: ResMut<CropSelectMenu>,
 ) {
     if panel.open && menu.open {
         menu.close_menu();
     }
     if boss.open && (menu.open || panel.open) {
         boss.close_menu();
+    }
+    if crop_select.open && (menu.open || panel.open || boss.open) {
+        crop_select.close_menu();
     }
 }
 
@@ -281,6 +287,7 @@ mod tests {
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
             .init_resource::<BossSelectMenu>()
+            .init_resource::<CropSelectMenu>()
             .init_resource::<Inventory>()
             .init_resource::<PlayerGear>()
             .init_resource::<CropUnlocks>()
@@ -653,6 +660,31 @@ mod tests {
         app.update();
 
         assert!(menu(&app).open);
+    }
+
+    #[test]
+    fn opening_the_inventory_closes_the_crop_picker() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+        open_panel(&mut app);
+        app.update();
+
+        assert!(panel(&app).open);
+        assert!(!app.world().resource::<CropSelectMenu>().open);
+    }
+
+    #[test]
+    fn the_guard_closes_the_crop_picker_while_the_crafting_menu_is_open() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+        app.world_mut().resource_mut::<CraftingMenu>().open_menu();
+        app.update();
+
+        assert!(!app.world().resource::<CropSelectMenu>().open);
     }
 
     #[test]

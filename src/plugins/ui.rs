@@ -1,8 +1,10 @@
 use crate::components::boss::BossId;
 use crate::components::gear::{GearPiece, GearSet, RECIPE_COUNT, recipe_for_set};
+use crate::components::pot::CropType;
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
@@ -10,6 +12,7 @@ use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
 use crate::systems::boss_select::{BossOption, BossSelectSet};
 use crate::systems::crafting::{CraftingMenuSet, RecipeRow, RowAction, row_action};
+use crate::systems::crop_select::{CropOption, CropSelectSet};
 use crate::systems::inventory::{
     InventoryPanelSet, InventoryRow, InventorySlot, close_inventory_on_input,
     close_inventory_outside_playing, close_inventory_panel, enforce_single_open_panel,
@@ -83,6 +86,38 @@ pub enum BossSelectText {
     ConfirmPrompt,
 }
 
+#[derive(Component, Reflect, Debug, Default)]
+pub struct CropSelectRoot;
+
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CropSelectText {
+    Title,
+    RowName(usize),
+    RowStatus(usize),
+    Hint,
+}
+
+/// Status line for a crop row: locked rows explain which boss unlocks them.
+fn crop_status(crop: CropType, unlocks: &CropUnlocks) -> (String, Color) {
+    if !unlocks.is_unlocked(crop) {
+        let hint = match crop {
+            CropType::Starter => "Locked",
+            CropType::CropA => "Beat Boss A",
+            CropType::CropB => "Beat Boss B",
+        };
+        return (format!("LOCKED  -  {hint}"), TEXT_BLOCKED);
+    }
+    (format!("{} days", crop.growth_days()), TEXT_PRIMARY)
+}
+
+fn crop_name_color(crop: CropType, unlocks: &CropUnlocks) -> Color {
+    if unlocks.is_unlocked(crop) {
+        TEXT_PRIMARY
+    } else {
+        TEXT_DIM
+    }
+}
+
 /// Status line for a boss row: locked rows explain how to open them.
 fn boss_status(id: BossId, progress: &BossProgress) -> (String, Color) {
     if !progress.is_unlocked(id) {
@@ -111,6 +146,7 @@ impl Plugin for UIPlugin {
             .init_resource::<CropUnlocks>()
             .init_resource::<BossSelectMenu>()
             .init_resource::<BossProgress>()
+            .init_resource::<CropSelectMenu>()
             .add_message::<crate::events::GearCrafted>()
             .add_message::<crate::events::GearEquipped>()
             .add_systems(
@@ -122,6 +158,8 @@ impl Plugin for UIPlugin {
                     despawn_inventory_panel,
                     close_boss_select,
                     despawn_boss_select_ui,
+                    close_crop_select,
+                    despawn_crop_select_ui,
                 ),
             )
             .add_systems(
@@ -132,6 +170,15 @@ impl Plugin for UIPlugin {
                     style_hovered_boss_option,
                 )
                     .after(BossSelectSet::Menu),
+            )
+            .add_systems(
+                Update,
+                (
+                    sync_crop_select,
+                    refresh_crop_select,
+                    style_hovered_crop_option,
+                )
+                    .after(CropSelectSet::Menu),
             )
             .add_systems(
                 Update,
@@ -150,7 +197,8 @@ impl Plugin for UIPlugin {
                 Update,
                 enforce_single_open_panel
                     .after(InventoryPanelSet::Panel)
-                    .after(CraftingMenuSet::Menu),
+                    .after(CraftingMenuSet::Menu)
+                    .after(CropSelectSet::Menu),
             )
             .add_systems(
                 Update,
@@ -996,6 +1044,179 @@ type BossSelectRoots<'w, 's> =
     Query<'w, 's, Entity, Or<(With<BossSelectRoot>, With<BossConfirmRoot>)>>;
 
 fn despawn_boss_select_ui(mut commands: Commands, roots: BossSelectRoots) {
+    for entity in roots.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn spawn_crop_option_row(
+    parent: &mut ChildSpawnerCommands,
+    index: usize,
+    crop: CropType,
+    unlocks: &CropUnlocks,
+) {
+    parent
+        .spawn((CropOption { crop, index }, row_style_bundle()))
+        .with_children(|row| {
+            row.spawn((
+                CropSelectText::RowName(index),
+                label(crop.label(), 20.0, crop_name_color(crop, unlocks)),
+                Node {
+                    width: Val::Px(240.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ));
+            let (status, color) = crop_status(crop, unlocks);
+            row.spawn((
+                CropSelectText::RowStatus(index),
+                label(status, 14.0, color),
+                TextLayout::justify(Justify::Right),
+                Node {
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn spawn_crop_select(commands: &mut Commands, unlocks: &CropUnlocks) {
+    commands
+        .spawn((
+            Name::new("Crop Select Root"),
+            CropSelectRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
+        .with_children(|screen| {
+            screen
+                .spawn((
+                    Name::new("Crop Select Panel"),
+                    Node {
+                        width: Val::Px(PANEL_WIDTH),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_BG),
+                    BorderColor::all(PANEL_BORDER),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Name::new("Title"),
+                        CropSelectText::Title,
+                        label("SELECT CROP", 26.0, TEXT_PRIMARY),
+                    ));
+                    for (index, crop) in CropType::ALL.iter().enumerate() {
+                        spawn_crop_option_row(panel, index, *crop, unlocks);
+                    }
+                    panel.spawn((
+                        Name::new("Hint"),
+                        CropSelectText::Hint,
+                        label(
+                            "Arrows select   |   Enter / E / click plants   |   Esc cancels",
+                            13.0,
+                            TEXT_DIM,
+                        ),
+                    ));
+                });
+        });
+}
+
+fn sync_crop_select(
+    mut commands: Commands,
+    menu: Res<CropSelectMenu>,
+    unlocks: Res<CropUnlocks>,
+    roots: Query<Entity, With<CropSelectRoot>>,
+) {
+    let existing: Vec<Entity> = roots.iter().collect();
+    let action = if !menu.open {
+        if existing.is_empty() {
+            MenuSync::Nothing
+        } else {
+            MenuSync::Despawn
+        }
+    } else if existing.is_empty() {
+        MenuSync::Spawn
+    } else {
+        MenuSync::Nothing
+    };
+
+    match action {
+        MenuSync::Spawn => spawn_crop_select(&mut commands, &unlocks),
+        MenuSync::Despawn => despawn_crop_select_ui(commands, roots),
+        MenuSync::Rebuild => {
+            despawn_crop_select_ui(commands.reborrow(), roots);
+            spawn_crop_select(&mut commands, &unlocks);
+        }
+        MenuSync::Nothing => {}
+    }
+}
+
+fn refresh_crop_select(
+    menu: Res<CropSelectMenu>,
+    unlocks: Res<CropUnlocks>,
+    mut options: Query<(&CropOption, &mut BorderColor)>,
+    mut texts: Query<(&CropSelectText, &mut Text, &mut TextColor)>,
+) {
+    for (option, mut border) in options.iter_mut() {
+        border.set_all(if menu.open && option.index == menu.selected {
+            ROW_BORDER_SELECTED
+        } else {
+            ROW_BORDER
+        });
+    }
+    for (marker, mut text, mut color) in texts.iter_mut() {
+        match marker {
+            CropSelectText::RowName(index) => {
+                if let Some(crop) = CropType::ALL.get(*index) {
+                    color.0 = crop_name_color(*crop, &unlocks);
+                }
+            }
+            CropSelectText::RowStatus(index) => {
+                if let Some(crop) = CropType::ALL.get(*index) {
+                    let (value, value_color) = crop_status(*crop, &unlocks);
+                    *text = Text::new(value);
+                    color.0 = value_color;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+type HoveredCropRows<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static mut BackgroundColor),
+    (Changed<Interaction>, With<CropOption>),
+>;
+
+fn style_hovered_crop_option(mut rows: HoveredCropRows) {
+    for (interaction, mut background) in rows.iter_mut() {
+        background.0 = if *interaction == Interaction::Hovered {
+            ROW_BG_HOVER
+        } else {
+            ROW_BG
+        };
+    }
+}
+
+fn close_crop_select(mut menu: ResMut<CropSelectMenu>) {
+    menu.close_menu();
+}
+
+fn despawn_crop_select_ui(mut commands: Commands, roots: Query<Entity, With<CropSelectRoot>>) {
     for entity in roots.iter() {
         commands.entity(entity).despawn();
     }
@@ -1886,5 +2107,186 @@ mod tests {
             item_detail(&weapon, &inventory, &equipped_gear),
             ("Weapon  -  Equipped".to_string(), TEXT_CRAFTABLE)
         );
+    }
+
+    fn crop_root_entities(app: &mut App) -> Vec<Entity> {
+        app.world_mut()
+            .query_filtered::<Entity, With<CropSelectRoot>>()
+            .iter(app.world())
+            .collect()
+    }
+
+    fn crop_option_entities(app: &mut App) -> Vec<(usize, Entity)> {
+        let mut rows: Vec<(usize, Entity)> = app
+            .world_mut()
+            .query_filtered::<(Entity, &CropOption), With<Button>>()
+            .iter(app.world())
+            .map(|(entity, option)| (option.index, entity))
+            .collect();
+        rows.sort_by_key(|(index, _)| *index);
+        rows
+    }
+
+    fn crop_select_texts(app: &mut App, marker: CropSelectText) -> Vec<String> {
+        app.world_mut()
+            .query_filtered::<(&CropSelectText, &Text), With<CropSelectText>>()
+            .iter(app.world())
+            .filter(|(candidate, _)| **candidate == marker)
+            .map(|(_, text)| text.0.clone())
+            .collect()
+    }
+
+    fn open_crop_select(app: &mut App, pot: usize) {
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(pot);
+        app.update();
+    }
+
+    #[test]
+    fn the_crop_picker_spawns_one_root_while_open() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        assert!(crop_root_entities(&mut app).is_empty());
+
+        open_crop_select(&mut app, 0);
+
+        assert_eq!(crop_root_entities(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn the_crop_picker_does_not_spawn_twice() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+        app.update();
+        app.update();
+
+        assert_eq!(crop_root_entities(&mut app).len(), 1);
+    }
+
+    #[test]
+    fn the_crop_picker_lists_every_crop_in_order() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+
+        let rows = crop_option_entities(&mut app);
+        assert_eq!(rows.len(), CropType::ALL.len());
+        for (position, (index, entity)) in rows.iter().enumerate() {
+            assert_eq!(*index, position);
+            assert!(app.world().get::<Interaction>(*entity).is_some());
+            assert!(app.world().get::<Button>(*entity).is_some());
+        }
+        assert_eq!(
+            crop_select_texts(&mut app, CropSelectText::RowName(0)),
+            vec!["Starter Crop".to_string()]
+        );
+    }
+
+    #[test]
+    fn locked_crops_are_marked_locked() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+
+        assert_eq!(
+            crop_select_texts(&mut app, CropSelectText::RowStatus(0)),
+            vec!["3 days".to_string()]
+        );
+        assert_eq!(
+            crop_select_texts(&mut app, CropSelectText::RowStatus(1)),
+            vec!["LOCKED  -  Beat Boss A".to_string()]
+        );
+        assert_eq!(
+            crop_select_texts(&mut app, CropSelectText::RowStatus(2)),
+            vec!["LOCKED  -  Beat Boss B".to_string()]
+        );
+    }
+
+    #[test]
+    fn unlocking_a_crop_updates_its_status_without_respawning() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+        let root = crop_root_entities(&mut app)[0];
+
+        app.world_mut()
+            .resource_mut::<CropUnlocks>()
+            .unlock_crop_a();
+        app.update();
+
+        assert_eq!(crop_root_entities(&mut app), vec![root]);
+        assert_eq!(
+            crop_select_texts(&mut app, CropSelectText::RowStatus(1)),
+            vec!["4 days".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_selected_crop_gets_the_highlighted_border() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        app.world_mut()
+            .resource_mut::<CropUnlocks>()
+            .unlock_crop_a();
+        open_crop_select(&mut app, 0);
+        app.world_mut().resource_mut::<CropSelectMenu>().selected = 1;
+        app.update();
+
+        let rows = crop_option_entities(&mut app);
+        assert_eq!(
+            app.world().get::<BorderColor>(rows[1].1).unwrap().top,
+            ROW_BORDER_SELECTED
+        );
+        assert_eq!(
+            app.world().get::<BorderColor>(rows[0].1).unwrap().top,
+            ROW_BORDER
+        );
+    }
+
+    #[test]
+    fn closing_the_crop_picker_despawns_it() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+        assert_eq!(crop_root_entities(&mut app).len(), 1);
+
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .close_menu();
+        app.update();
+
+        assert!(crop_root_entities(&mut app).is_empty());
+        assert!(crop_option_entities(&mut app).is_empty());
+    }
+
+    #[test]
+    fn leaving_playing_despawns_the_crop_picker() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_crop_select(&mut app, 0);
+
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        app.update();
+
+        assert!(crop_root_entities(&mut app).is_empty());
+    }
+
+    #[test]
+    fn crop_status_distinguishes_locked_and_unlocked() {
+        let mut unlocks = CropUnlocks::new();
+        assert_eq!(crop_status(CropType::Starter, &unlocks).0, "3 days");
+        assert_eq!(
+            crop_status(CropType::CropA, &unlocks),
+            ("LOCKED  -  Beat Boss A".to_string(), TEXT_BLOCKED)
+        );
+
+        unlocks.unlock_crop_a();
+        assert_eq!(crop_status(CropType::CropA, &unlocks).0, "4 days");
+        assert_eq!(crop_name_color(CropType::CropA, &unlocks), TEXT_PRIMARY);
+        assert_eq!(crop_name_color(CropType::CropB, &unlocks), TEXT_DIM);
     }
 }

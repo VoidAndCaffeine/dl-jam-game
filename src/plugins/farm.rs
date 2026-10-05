@@ -1,7 +1,8 @@
 use crate::components::collider::Collider;
-use crate::components::pot::{CropType, Pot, PotState};
+use crate::components::pot::{Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
 use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
+use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::day_cycle::DayCycle;
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::inventory::Inventory;
@@ -18,6 +19,7 @@ impl Plugin for FarmPlugin {
             .init_resource::<CropUnlocks>()
             .init_resource::<FarmState>()
             .init_resource::<Inventory>()
+            .init_resource::<CropSelectMenu>()
             .init_resource::<DayCycle>()
             .add_message::<CropPlanted>()
             .add_message::<CropWatered>()
@@ -93,8 +95,7 @@ fn despawn_pots(mut commands: Commands, pots: Query<Entity, With<Pot>>) {
 fn pot_interaction_handler(
     mut events: MessageReader<InteractionEvent>,
     mut pots: Query<&mut Pot>,
-    crop_unlocks: Res<CropUnlocks>,
-    mut planted_events: MessageWriter<CropPlanted>,
+    mut crop_select: ResMut<CropSelectMenu>,
     mut watered_events: MessageWriter<CropWatered>,
     mut harvested_events: MessageWriter<CropHarvested>,
     phase: Phase,
@@ -109,15 +110,8 @@ fn pot_interaction_handler(
 
         match pot.state {
             PotState::Empty => {
-                let crop_type = if crop_unlocks.is_unlocked(CropType::CropB) {
-                    CropType::CropB
-                } else if crop_unlocks.is_unlocked(CropType::CropA) {
-                    CropType::CropA
-                } else {
-                    CropType::Starter
-                };
-                pot.plant(crop_type);
-                planted_events.write(CropPlanted(crop_type));
+                // Let the player choose which unlocked crop to plant.
+                crop_select.open_menu(pot.index);
             }
             PotState::Planted => {
                 if pot.water() {
@@ -228,6 +222,8 @@ fn snapshot_pots(pots: Query<&Pot>, mut farm: ResMut<FarmState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::pot::CropType;
+    use crate::events::InteractionType;
     use crate::levels::LevelId;
     use crate::resources::level::LevelRequest;
     use crate::states::DayPhase;
@@ -235,6 +231,73 @@ mod tests {
     use bevy::transform::TransformPlugin;
 
     const POT_COUNT: usize = 9;
+
+    /// A bare app that runs the pot interaction handler in `Update` so tests do
+    /// not depend on the fixed timestep ticking.
+    fn setup_handler_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<CropSelectMenu>()
+            .init_resource::<CropUnlocks>()
+            .add_plugins((MinimalPlugins, StatesPlugin))
+            .init_state::<GameState>()
+            .init_state::<DayPhase>()
+            .add_message::<InteractionEvent>()
+            .add_message::<CropWatered>()
+            .add_message::<CropHarvested>()
+            .add_systems(Update, pot_interaction_handler);
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::Farming);
+        app.update();
+        app
+    }
+
+    fn interact(app: &mut App, entity: Entity) {
+        app.world_mut().write_message(InteractionEvent {
+            entity,
+            interaction_type: InteractionType::FarmAction,
+        });
+        app.update();
+    }
+
+    #[test]
+    fn interacting_with_an_empty_pot_opens_the_crop_picker_instead_of_planting() {
+        let mut app = setup_handler_app();
+        let pot = app.world_mut().spawn(Pot::new(2)).id();
+
+        interact(&mut app, pot);
+
+        let menu = app.world().resource::<CropSelectMenu>();
+        assert!(menu.open, "the picker must open on an empty pot");
+        assert_eq!(menu.pending_pot, 2);
+        assert_eq!(
+            app.world().get::<Pot>(pot).unwrap().state,
+            PotState::Empty,
+            "nothing is planted until the player chooses"
+        );
+    }
+
+    #[test]
+    fn interacting_with_a_planted_pot_still_waters_it() {
+        let mut app = setup_handler_app();
+        let pot = app.world_mut().spawn(Pot::new(0)).id();
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::Starter);
+
+        interact(&mut app, pot);
+
+        assert_eq!(
+            app.world().get::<Pot>(pot).unwrap().state,
+            PotState::Watered
+        );
+        assert!(!app.world().resource::<CropSelectMenu>().open);
+    }
 
     fn setup_farm_app() -> App {
         let mut app = App::new();

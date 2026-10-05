@@ -12,6 +12,7 @@ use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::boss_select::BossSelectPlugin;
 use crate::systems::camera_follow::camera_follow;
+use crate::systems::crop_select::CropSelectPlugin;
 use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
 use crate::systems::spawn_player::{despawn_player, spawn_player};
@@ -33,6 +34,7 @@ impl Plugin for GamePlugin {
             .add_plugins(FarmPlugin)
             .add_plugins(GearPlugin)
             .add_plugins(BossSelectPlugin)
+            .add_plugins(CropSelectPlugin)
             .add_plugins(BossPlugin)
             .add_plugins(DayCyclePlugin)
             .add_plugins(UIPlugin)
@@ -53,11 +55,13 @@ impl Plugin for GamePlugin {
 mod tests {
     use super::*;
     use crate::components::gear::{GearSet, GearSlot};
-    use crate::components::pot::CropType;
+    use crate::components::pot::{CropType, Pot, PotState};
     use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::CraftingStation;
-    use crate::plugins::ui::{CraftingMenuRoot, InventoryRoot};
+    use crate::plugins::ui::{CraftingMenuRoot, CropSelectRoot, InventoryRoot};
     use crate::resources::crafting_menu::CraftingMenu;
+    use crate::resources::crop_select::CropSelectMenu;
+    use crate::resources::farm::CropUnlocks;
     use crate::resources::inventory::Inventory;
     use crate::resources::inventory_panel::InventoryPanel;
     use crate::resources::run_data::PlayerGear;
@@ -427,5 +431,44 @@ mod tests {
 
         assert!(!inventory(&app).open);
         assert!(inventory_roots(&mut app).is_empty());
+    }
+
+    fn crop_roots(app: &mut App) -> Vec<Entity> {
+        app.world_mut()
+            .query_filtered::<Entity, With<CropSelectRoot>>()
+            .iter(app.world())
+            .collect()
+    }
+
+    #[test]
+    fn planting_from_the_crop_picker_works_end_to_end() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+
+        app.world_mut()
+            .resource_mut::<CropUnlocks>()
+            .unlock_crop_a();
+        let pot = app
+            .world_mut()
+            .query_filtered::<(Entity, &Pot), With<Pot>>()
+            .iter(app.world())
+            .find(|(_, pot)| pot.index == 0)
+            .map(|(entity, _)| entity)
+            .expect("pot 0 is spawned");
+
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+        app.world_mut().resource_mut::<CropSelectMenu>().selected = 1;
+        app.update();
+        assert_eq!(crop_roots(&mut app).len(), 1);
+
+        tap_key(&mut app, KeyCode::Enter);
+
+        let planted = app.world().get::<Pot>(pot).expect("pot still exists");
+        assert_eq!(planted.state, PotState::Planted);
+        assert_eq!(planted.crop_type, CropType::CropA);
+        assert!(!app.world().resource::<CropSelectMenu>().open);
+        assert!(crop_roots(&mut app).is_empty());
     }
 }

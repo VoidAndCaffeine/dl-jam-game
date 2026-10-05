@@ -1,5 +1,6 @@
 use crate::components::player::Movement;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
@@ -9,10 +10,12 @@ pub fn movement_input(
     mut movement_query: Query<&mut Movement>,
     menu: Res<CraftingMenu>,
     inventory: Res<InventoryPanel>,
+    crop_select: Res<CropSelectMenu>,
     phase: Phase,
 ) {
     let frozen = menu.open
         || inventory.open
+        || crop_select.open
         || matches!(phase.day.get(), DayPhase::BossSelect | DayPhase::Result)
         || !phase.is_playing();
     for mut movement in movement_query.iter_mut() {
@@ -49,6 +52,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
+            .init_resource::<CropSelectMenu>()
             .add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .init_state::<GameState>()
             .init_state::<DayPhase>();
@@ -160,18 +164,30 @@ mod tests {
     }
 
     #[test]
-    fn movement_resumes_after_the_inventory_closes() {
+    fn movement_is_frozen_while_the_crop_picker_is_open() {
         let mut app = setup_app();
         app.world_mut()
-            .resource_mut::<InventoryPanel>()
-            .open_panel();
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn movement_resumes_after_the_crop_picker_closes() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
         input.press(KeyCode::KeyD);
         app.update();
 
         app.world_mut()
-            .resource_mut::<InventoryPanel>()
-            .close_panel();
+            .resource_mut::<CropSelectMenu>()
+            .close_menu();
         app.update();
         assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
     }

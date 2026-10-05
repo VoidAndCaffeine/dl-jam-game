@@ -1,6 +1,7 @@
 use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::states::Phase;
 use crate::utils::interaction_math::{
@@ -54,11 +55,12 @@ pub struct InteractableLookups<'w, 's> {
 pub struct OpenPanels<'w> {
     menu: Res<'w, CraftingMenu>,
     inventory: Res<'w, InventoryPanel>,
+    crop_select: Res<'w, CropSelectMenu>,
 }
 
 impl OpenPanels<'_> {
     fn any_open(&self) -> bool {
-        self.menu.open || self.inventory.open
+        self.menu.open || self.inventory.open || self.crop_select.open
     }
 }
 
@@ -67,6 +69,7 @@ pub struct InteractionPlugin;
 impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InventoryPanel>()
+            .init_resource::<CropSelectMenu>()
             .add_message::<InteractionEvent>()
             .add_systems(Update, player_proximity_interaction)
             .add_systems(Update, mouse_raycast_interaction)
@@ -211,8 +214,7 @@ fn highlight_interactables_in_range(
     pots: Query<&crate::components::pot::Pot>,
     highlights: Query<&HighlightMarker>,
     mut visibility: Query<&mut Visibility>,
-    menu: Res<CraftingMenu>,
-    inventory: Res<InventoryPanel>,
+    panels: OpenPanels,
 ) {
     let Ok(player_transform) = player_query.single() else {
         return;
@@ -222,8 +224,7 @@ fn highlight_interactables_in_range(
     for (entity, transform, children) in interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
 
-        let hidden = menu.open
-            || inventory.open
+        let hidden = panels.any_open()
             || pots
                 .get(entity)
                 .map(|p| p.state == crate::components::pot::PotState::Watered)
@@ -284,6 +285,7 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
+            .init_resource::<CropSelectMenu>()
             .init_resource::<CapturedEvents>()
             .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin))
             .init_state::<GameState>()
@@ -490,6 +492,51 @@ mod tests {
         assert_eq!(
             app.world().get::<Visibility>(highlight_entity).unwrap(),
             &Visibility::Visible
+        );
+    }
+
+    #[test]
+    fn space_does_nothing_while_the_crop_picker_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(10.0, 0.0), FarmPot);
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::Space);
+        app.update();
+
+        let events = get_captured_events(&mut app);
+        assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn highlights_hide_while_the_crop_picker_is_open() {
+        let mut app = setup_interaction_app();
+        spawn_interactable(&mut app, Vec2::new(20.0, 0.0), FarmPot);
+        app.update();
+
+        let highlight_entity = {
+            let mut q = app.world_mut().query::<(Entity, &HighlightMarker)>();
+            q.iter(app.world())
+                .next()
+                .expect("Highlight child not found")
+                .0
+        };
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Visible
+        );
+
+        app.world_mut()
+            .resource_mut::<CropSelectMenu>()
+            .open_menu(0);
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Visibility>(highlight_entity).unwrap(),
+            &Visibility::Hidden
         );
     }
 
