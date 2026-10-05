@@ -48,6 +48,10 @@ strip = "debuginfo"
 name = "level_loading"
 path = "tests/integration/level_loading.rs"
 
+[[test]]
+name = "boss_flow"
+path = "tests/integration/boss_flow.rs"
+
 [dev-dependencies]
 serde_json = "1.0"
 bincode = "1.3"

@@ -1,3 +1,4 @@
+pub mod boss_select;
 pub mod camera_follow;
 pub mod crafting;
 pub mod inventory;

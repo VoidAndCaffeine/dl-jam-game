@@ -1,3 +1,4 @@
+pub mod boss;
 pub mod collider;
 pub mod gear;
 pub mod player;

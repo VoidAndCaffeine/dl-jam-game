@@ -1,6 +1,7 @@
 use crate::components::gear::{GearPiece, MaterialType};
 use crate::components::pot::CropType;
 use crate::events::{GearCrafted, GearEquipped};
+use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
@@ -153,9 +154,18 @@ pub fn close_inventory_outside_playing(mut panel: ResMut<InventoryPanel>, phase:
 
 /// Belt-and-braces guard: the crafting menu can open from a station interaction in
 /// the same frame the inventory opens, and only one panel may be open at a time.
-pub fn enforce_single_open_panel(mut menu: ResMut<CraftingMenu>, panel: Res<InventoryPanel>) {
+/// The boss select menu is a panel too, so opening either other panel backs out of
+/// it (and the boss phase recovers to farming).
+pub fn enforce_single_open_panel(
+    mut menu: ResMut<CraftingMenu>,
+    panel: ResMut<InventoryPanel>,
+    mut boss: ResMut<BossSelectMenu>,
+) {
     if panel.open && menu.open {
         menu.close_menu();
+    }
+    if boss.open && (menu.open || panel.open) {
+        boss.close_menu();
     }
 }
 
@@ -270,6 +280,7 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
+            .init_resource::<BossSelectMenu>()
             .init_resource::<Inventory>()
             .init_resource::<PlayerGear>()
             .init_resource::<CropUnlocks>()

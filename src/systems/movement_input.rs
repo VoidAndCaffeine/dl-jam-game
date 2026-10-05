@@ -1,6 +1,7 @@
 use crate::components::player::Movement;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory_panel::InventoryPanel;
+use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
 
 pub fn movement_input(
@@ -8,8 +9,12 @@ pub fn movement_input(
     mut movement_query: Query<&mut Movement>,
     menu: Res<CraftingMenu>,
     inventory: Res<InventoryPanel>,
+    phase: Phase,
 ) {
-    let frozen = menu.open || inventory.open;
+    let frozen = menu.open
+        || inventory.open
+        || matches!(phase.day.get(), DayPhase::BossSelect | DayPhase::Result)
+        || !phase.is_playing();
     for mut movement in movement_query.iter_mut() {
         let mut direction = Vec2::ZERO;
 
@@ -37,14 +42,25 @@ pub fn movement_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::states::GameState;
 
     fn setup_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<CraftingMenu>()
-            .init_resource::<InventoryPanel>();
+            .init_resource::<InventoryPanel>()
+            .add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .init_state::<GameState>()
+            .init_state::<DayPhase>();
         app.world_mut().spawn(Movement::default());
         app.add_systems(Update, movement_input);
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::Farming);
+        app.update();
         app
     }
 

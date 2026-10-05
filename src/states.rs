@@ -36,6 +36,18 @@ impl Phase<'_> {
         self.is_playing() && matches!(self.day.get(), DayPhase::Farming)
     }
 
+    pub fn is_boss_select(&self) -> bool {
+        self.is_playing() && matches!(self.day.get(), DayPhase::BossSelect)
+    }
+
+    pub fn is_boss_fight(&self) -> bool {
+        self.is_playing() && matches!(self.day.get(), DayPhase::BossFight)
+    }
+
+    pub fn is_result(&self) -> bool {
+        self.is_playing() && matches!(self.day.get(), DayPhase::Result)
+    }
+
     /// True when a panel that pauses world interaction may react to input.
     pub fn blocks_world(&self) -> bool {
         matches!(self.game.get(), GameState::Playing)
@@ -114,6 +126,19 @@ mod tests {
         assert!(probe(&app).playing);
         assert!(!probe(&app).farming);
         assert!(probe(&app).blocks_world);
+    }
+
+    #[test]
+    fn boss_select_and_boss_fight_are_distinct_phases() {
+        let mut app = setup();
+        set_game(&mut app, GameState::Playing);
+
+        set_phase(&mut app, DayPhase::BossSelect);
+        assert!(probe(&app).playing);
+        assert!(!probe(&app).farming);
+
+        set_phase(&mut app, DayPhase::BossFight);
+        assert!(!probe(&app).farming);
     }
 
     #[test]

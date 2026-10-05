@@ -1,3 +1,4 @@
+use crate::components::boss::BossId;
 use bevy::prelude::*;
 
 #[derive(Message, Debug, Clone)]
@@ -33,6 +34,18 @@ pub struct GearCrafted(pub crate::components::gear::GearPiece);
 
 #[derive(Message, Debug, Clone, Copy)]
 pub struct GearEquipped(pub crate::components::gear::GearSlot);
+
+/// Emitted when the player confirms a boss in the selection menu.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct BossSelected(pub BossId);
+
+/// Emitted from combat when a boss runs out of health.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct BossDefeated(pub BossId);
+
+/// Emitted from combat when the player's health is depleted.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PlayerDied;
 
 #[cfg(test)]
 mod tests {

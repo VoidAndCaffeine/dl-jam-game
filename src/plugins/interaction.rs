@@ -81,7 +81,7 @@ fn player_proximity_interaction(
     panels: OpenPanels,
     phase: Phase,
 ) {
-    if !phase.is_farming() || panels.any_open() {
+    if (!phase.is_farming() && !phase.is_boss_fight()) || panels.any_open() {
         return;
     }
     if !keys.just_pressed(KeyCode::Space) {
@@ -139,7 +139,7 @@ fn mouse_raycast_interaction(
     panels: OpenPanels,
     phase: Phase,
 ) {
-    if !phase.is_farming() || panels.any_open() {
+    if (!phase.is_farming() && !phase.is_boss_fight()) || panels.any_open() {
         return;
     }
     if !mouse_input.just_pressed(MouseButton::Left) {

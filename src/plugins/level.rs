@@ -4,7 +4,7 @@ use crate::levels::grid::SolidGrid;
 use crate::levels::{LevelId, PropKind, TileKind};
 use crate::plugins::farm::spawn_pot;
 use crate::plugins::gear::spawn_crafting_station;
-use crate::plugins::interaction::{BossArenaEntry, Interactable};
+use crate::plugins::interaction::{BossArenaEntry, HIGHLIGHT_Z, HighlightMarker, Interactable};
 use crate::resources::level::{
     ActiveLevel, BossSpawn, LevelEntity, LevelRequest, LevelSet, PlayerSpawn, build_level,
     prop_position, prop_positions,
@@ -177,6 +177,19 @@ fn spawn_arena_gate(commands: &mut Commands, position: Vec2) -> Entity {
             Transform::from_xyz(position.x, position.y, 0.0),
             Name::new("Arena Gate"),
         ))
+        .with_children(|parent| {
+            parent.spawn((
+                HighlightMarker,
+                Sprite {
+                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
+                    custom_size: Some(Vec2::splat(ARENA_GATE_SIZE * 1.15)),
+                    ..default()
+                },
+                Transform::from_xyz(0.0, 0.0, HIGHLIGHT_Z),
+                Visibility::Hidden,
+                Name::new("Highlight"),
+            ));
+        })
         .id()
 }
 

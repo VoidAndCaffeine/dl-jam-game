@@ -476,6 +476,27 @@ fn the_highlight_hides_again_when_the_player_walks_away() {
 }
 
 #[test]
+fn the_arena_gate_highlights_when_the_player_walks_up_to_it() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+
+    let gate = first_of::<BossArenaEntry>(&mut app);
+    let highlight = highlight_of(app.world_mut(), gate).expect("gate owns a highlight child");
+    assert!(
+        !highlight_visible(app.world_mut(), highlight),
+        "starts hidden"
+    );
+
+    let gate_pos = position_of::<BossArenaEntry>(&mut app);
+    move_player_to(&mut app, gate_pos - Vec2::new(50.0, 0.0));
+    step(&mut app, 2);
+
+    assert!(
+        highlight_visible(app.world_mut(), highlight),
+        "highlights when the player is beside the gate"
+    );
+}
+#[test]
 fn the_floor_is_drawn_behind_the_highlights() {
     let mut app = setup_app();
     enter_playing(&mut app);

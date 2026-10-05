@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
-use crate::plugins::{FarmPlugin, GearPlugin, InteractionPlugin, LevelPlugin, UIPlugin};
+use crate::plugins::{
+    BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, InteractionPlugin, LevelPlugin, UIPlugin,
+};
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
@@ -8,6 +10,7 @@ use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelSet;
 use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
+use crate::systems::boss_select::BossSelectPlugin;
 use crate::systems::camera_follow::camera_follow;
 use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
@@ -29,6 +32,9 @@ impl Plugin for GamePlugin {
             .add_plugins(LevelPlugin)
             .add_plugins(FarmPlugin)
             .add_plugins(GearPlugin)
+            .add_plugins(BossSelectPlugin)
+            .add_plugins(BossPlugin)
+            .add_plugins(DayCyclePlugin)
             .add_plugins(UIPlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)

@@ -2,9 +2,10 @@ use crate::components::collider::Collider;
 use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
 use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
+use crate::resources::day_cycle::DayCycle;
 use crate::resources::farm::{CropUnlocks, DayCounter};
 use crate::resources::inventory::Inventory;
-use crate::states::{DayPhase, GameState, Phase};
+use crate::states::{GameState, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 
@@ -15,6 +16,7 @@ impl Plugin for FarmPlugin {
         app.init_resource::<DayCounter>()
             .init_resource::<CropUnlocks>()
             .init_resource::<Inventory>()
+            .init_resource::<DayCycle>()
             .add_message::<CropPlanted>()
             .add_message::<CropWatered>()
             .add_message::<CropHarvested>()
@@ -24,7 +26,7 @@ impl Plugin for FarmPlugin {
             .add_systems(FixedUpdate, update_pot_visuals)
             .add_systems(Update, debug_advance_day)
             .add_systems(Update, harvest_into_inventory)
-            .add_systems(OnEnter(DayPhase::Farming), begin_next_day);
+            .add_systems(Update, begin_next_day);
     }
 }
 
@@ -140,8 +142,14 @@ fn harvest_into_inventory(
 fn begin_next_day(
     mut pots: Query<&mut Pot>,
     mut day_counter: ResMut<DayCounter>,
+    mut day_cycle: ResMut<DayCycle>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
+    phase: Phase,
 ) {
+    if !phase.is_farming() || !day_cycle.pending_advance {
+        return;
+    }
+    day_cycle.pending_advance = false;
     advance_day(&mut pots, &mut day_counter, &mut day_advanced_events);
 }
 
@@ -205,6 +213,7 @@ fn update_pot_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::states::DayPhase;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
 

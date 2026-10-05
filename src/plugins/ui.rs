@@ -1,10 +1,14 @@
+use crate::components::boss::BossId;
 use crate::components::gear::{GearPiece, GearSet, RECIPE_COUNT, recipe_for_set};
+use crate::resources::boss_progress::BossProgress;
+use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
+use crate::systems::boss_select::{BossOption, BossSelectSet};
 use crate::systems::crafting::{CraftingMenuSet, RecipeRow, RowAction, row_action};
 use crate::systems::inventory::{
     InventoryPanelSet, InventoryRow, InventorySlot, close_inventory_on_input,
@@ -65,12 +69,48 @@ pub enum InventoryLine {
     Notice,
 }
 
+#[derive(Component, Reflect, Debug, Default)]
+pub struct BossSelectRoot;
+
+#[derive(Component, Reflect, Debug, Default)]
+pub struct BossConfirmRoot;
+
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BossSelectText {
+    Title,
+    OptionName(usize),
+    OptionStatus(usize),
+    ConfirmPrompt,
+}
+
+/// Status line for a boss row: locked rows explain how to open them.
+fn boss_status(id: BossId, progress: &BossProgress) -> (String, Color) {
+    if !progress.is_unlocked(id) {
+        return ("LOCKED  -  Beat Boss A + Boss B".to_string(), TEXT_BLOCKED);
+    }
+    if progress.is_beaten(id) {
+        ("BEATEN".to_string(), TEXT_CRAFTABLE)
+    } else {
+        ("AVAILABLE".to_string(), TEXT_PRIMARY)
+    }
+}
+
+fn boss_name_color(id: BossId, progress: &BossProgress) -> Color {
+    if progress.is_unlocked(id) {
+        TEXT_PRIMARY
+    } else {
+        TEXT_DIM
+    }
+}
+
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InventoryPanel>()
             .init_resource::<CropUnlocks>()
+            .init_resource::<BossSelectMenu>()
+            .init_resource::<BossProgress>()
             .add_message::<crate::events::GearCrafted>()
             .add_message::<crate::events::GearEquipped>()
             .add_systems(
@@ -80,7 +120,18 @@ impl Plugin for UIPlugin {
                     despawn_crafting_menu,
                     close_inventory_panel,
                     despawn_inventory_panel,
+                    close_boss_select,
+                    despawn_boss_select_ui,
                 ),
+            )
+            .add_systems(
+                Update,
+                (
+                    sync_boss_select,
+                    refresh_boss_select,
+                    style_hovered_boss_option,
+                )
+                    .after(BossSelectSet::Menu),
             )
             .add_systems(
                 Update,
@@ -721,6 +772,232 @@ fn style_hovered_row(mut rows: HoveredRecipeRows) {
         } else {
             ROW_BG
         };
+    }
+}
+
+fn spawn_boss_option_row(
+    parent: &mut ChildSpawnerCommands,
+    index: usize,
+    id: BossId,
+    progress: &BossProgress,
+) {
+    parent
+        .spawn((BossOption { boss_id: id, index }, row_style_bundle()))
+        .with_children(|row| {
+            row.spawn((
+                BossSelectText::OptionName(index),
+                label(id.label(), 20.0, boss_name_color(id, progress)),
+                Node {
+                    width: Val::Px(240.0),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+            ));
+            let (status, color) = boss_status(id, progress);
+            row.spawn((
+                BossSelectText::OptionStatus(index),
+                label(status, 14.0, color),
+                TextLayout::justify(Justify::Right),
+                Node {
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    ..default()
+                },
+            ));
+        });
+}
+
+fn spawn_boss_select(commands: &mut Commands, progress: &BossProgress) {
+    commands
+        .spawn((
+            Name::new("Boss Select Root"),
+            BossSelectRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
+        .with_children(|screen| {
+            screen
+                .spawn((
+                    Name::new("Boss Select Panel"),
+                    Node {
+                        width: Val::Px(PANEL_WIDTH),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_BG),
+                    BorderColor::all(PANEL_BORDER),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Name::new("Title"),
+                        BossSelectText::Title,
+                        label("SELECT BOSS", 26.0, TEXT_PRIMARY),
+                    ));
+                    for (index, id) in BossId::ALL.iter().enumerate() {
+                        spawn_boss_option_row(panel, index, *id, progress);
+                    }
+                    panel.spawn((
+                        Name::new("Hint"),
+                        label(
+                            "Arrows select   |   Enter chooses   |   Esc returns to the farm",
+                            13.0,
+                            TEXT_DIM,
+                        ),
+                    ));
+                });
+        });
+}
+
+fn spawn_boss_confirm(commands: &mut Commands, menu: &BossSelectMenu) {
+    commands
+        .spawn((
+            Name::new("Boss Confirm Root"),
+            BossConfirmRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+        ))
+        .with_children(|screen| {
+            screen
+                .spawn((
+                    Name::new("Boss Confirm Panel"),
+                    Node {
+                        width: Val::Px(560.0),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(12.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(8.0)),
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_BG),
+                    BorderColor::all(PANEL_BORDER),
+                ))
+                .with_children(|panel| {
+                    let prompt = match menu.pending_boss {
+                        Some(id) => format!("Enter the {} arena?", id.label()),
+                        None => "Enter the arena?".to_string(),
+                    };
+                    panel.spawn((
+                        Name::new("Prompt"),
+                        BossSelectText::ConfirmPrompt,
+                        label(prompt, 24.0, TEXT_PRIMARY),
+                    ));
+                    panel.spawn((
+                        Name::new("Confirm Hint"),
+                        label(
+                            "Enter / Space / Y to confirm   |   Esc / N to cancel",
+                            14.0,
+                            TEXT_DIM,
+                        ),
+                    ));
+                });
+        });
+}
+
+fn sync_boss_select(
+    mut commands: Commands,
+    menu: Res<BossSelectMenu>,
+    progress: Res<BossProgress>,
+    select_roots: Query<Entity, With<BossSelectRoot>>,
+    confirm_roots: Query<Entity, With<BossConfirmRoot>>,
+) {
+    let list_present = !select_roots.is_empty();
+    if menu.open && !list_present {
+        spawn_boss_select(&mut commands, &progress);
+    } else if !menu.open && list_present {
+        for entity in select_roots.iter() {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    let confirm_present = !confirm_roots.is_empty();
+    if menu.confirmation_open && !confirm_present {
+        spawn_boss_confirm(&mut commands, &menu);
+    } else if !menu.confirmation_open && confirm_present {
+        for entity in confirm_roots.iter() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+fn refresh_boss_select(
+    menu: Res<BossSelectMenu>,
+    progress: Res<BossProgress>,
+    mut options: Query<(&BossOption, &mut BorderColor)>,
+    mut texts: Query<(&BossSelectText, &mut Text, &mut TextColor)>,
+) {
+    let highlighting = menu.open && !menu.confirmation_open;
+    for (option, mut border) in options.iter_mut() {
+        border.set_all(if highlighting && option.index == menu.selected {
+            ROW_BORDER_SELECTED
+        } else {
+            ROW_BORDER
+        });
+    }
+    for (marker, mut text, mut color) in texts.iter_mut() {
+        match marker {
+            BossSelectText::OptionName(index) => {
+                if let Some(id) = BossId::ALL.get(*index) {
+                    color.0 = boss_name_color(*id, &progress);
+                }
+            }
+            BossSelectText::OptionStatus(index) => {
+                if let Some(id) = BossId::ALL.get(*index) {
+                    let (value, value_color) = boss_status(*id, &progress);
+                    *text = Text::new(value);
+                    color.0 = value_color;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+type HoveredBossRows<'w, 's> = Query<
+    'w,
+    's,
+    (&'static Interaction, &'static mut BackgroundColor),
+    (Changed<Interaction>, With<BossOption>),
+>;
+
+fn style_hovered_boss_option(mut rows: HoveredBossRows) {
+    for (interaction, mut background) in rows.iter_mut() {
+        background.0 = if *interaction == Interaction::Hovered {
+            ROW_BG_HOVER
+        } else {
+            ROW_BG
+        };
+    }
+}
+
+fn close_boss_select(mut menu: ResMut<BossSelectMenu>) {
+    menu.close_menu();
+}
+
+type BossSelectRoots<'w, 's> =
+    Query<'w, 's, Entity, Or<(With<BossSelectRoot>, With<BossConfirmRoot>)>>;
+
+fn despawn_boss_select_ui(mut commands: Commands, roots: BossSelectRoots) {
+    for entity in roots.iter() {
+        commands.entity(entity).despawn();
     }
 }
 
