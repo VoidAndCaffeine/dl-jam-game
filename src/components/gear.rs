@@ -152,7 +152,7 @@ impl GearRecipe {
 pub const RECIPES: [GearRecipe; 4] = [
     GearRecipe {
         set: GearSet::Starter,
-        cost: &[(ItemCost::Crop(CropType::Starter), 10)],
+        cost: &[(ItemCost::Crop(CropType::Starter), 5)],
     },
     GearRecipe {
         set: GearSet::BossA,
@@ -171,9 +171,9 @@ pub const RECIPES: [GearRecipe; 4] = [
     GearRecipe {
         set: GearSet::Master,
         cost: &[
-            (ItemCost::Crop(CropType::Starter), 5),
-            (ItemCost::Crop(CropType::CropA), 5),
-            (ItemCost::Crop(CropType::CropB), 5),
+            (ItemCost::Crop(CropType::Starter), 4),
+            (ItemCost::Crop(CropType::CropA), 4),
+            (ItemCost::Crop(CropType::CropB), 4),
             (ItemCost::Material(MaterialType::BossA), 2),
             (ItemCost::Material(MaterialType::BossB), 2),
         ],
