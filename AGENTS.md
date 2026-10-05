@@ -104,25 +104,32 @@ struct CropSelectMenu {
 - `DayAdvanced(u32)`, `CropUnlocked(CropType)`, `DualBossUnlocked`
 - `SaveRequested`, `LoadRequested`
 
-## 3. Gear System (4 Sets)
+## 3. Gear System (Per-Piece Crafting)
 
-| Set | Weapon | Armor | Requires |
-|-----|--------|-------|----------|
-| **Starter** | Wooden Sword | Cloth Tunic | Starter Crop ×10 |
-| **Boss A** | Boss A Weapon | Boss A Armor | Boss A Crop ×5 + Boss A Material ×3 |
-| **Boss B** | Boss B Weapon | Boss B Armor | Boss B Crop ×5 + Boss B Material ×3 |
-| **Master** | Master Weapon | Master Armor | All Crops ×5 + All Materials ×2 |
+Each piece is crafted individually (8 recipes); a piece is owned once and
+auto-equips when crafted.
 
-- Each set: 1 weapon (affects attack pattern/damage) + 1 armor (affects HP/defense)
-- Crafting UI shows available recipes based on inventory
+| Piece | Cost |
+|-------|------|
+| Starter Spearblade | Starter Crop ×2 |
+| Starter Armor | Starter Crop ×3 |
+| Boss A Spearblade | Crop A ×2 + Boss A Material 1 ×1 |
+| Boss A Armor | Crop A ×3 + Boss A Material 2 ×2 |
+| Boss B Spearblade | Crop B ×2 + Boss B Material 1 ×1 |
+| Boss B Armor | Crop B ×3 + Boss B Material 2 ×2 |
+| Master Spearblade | each Crop ×1 + both bosses' Material 1 ×2 |
+| Master Armor | each Crop ×3 + both bosses' Material 2 ×3 |
+
+- 4 sets, each 1 weapon (affects attack pattern/damage) + 1 armor (affects HP/defense)
+- Crafting UI shows one recipe row per piece; owned pieces get an equip row
 - No currency — pure material gating
 
 ## 4. Boss Design
 
 | Boss | Access           | Patterns | Drops |
 |------|------------------|----------|-------|
-| **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material, unlocks Boss A Crop |
-| **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material, unlocks Boss B Crop |
+| **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material 1 ×1 + Boss A Material 2 ×2, unlocks Boss A Crop |
+| **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material 1 ×1 + Boss B Material 2 ×2, unlocks Boss B Crop |
 | **Dual Boss** | After A+B beaten | Combined patterns, shared HP | Victory |
 
 ## 5. Development Workflow

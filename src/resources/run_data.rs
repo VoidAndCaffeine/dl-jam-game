@@ -1,4 +1,4 @@
-use crate::components::gear::{GearPiece, GearSet, GearSlot, recipe_for_set};
+use crate::components::gear::{GearPiece, GearSet, GearSlot};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -28,12 +28,9 @@ impl PlayerGear {
         self.owned.contains(piece)
     }
 
-    /// A set counts as owned only once every piece its recipe grants is owned.
+    /// A set counts as owned only once every piece it grants is owned.
     pub fn owns_set(&self, set: GearSet) -> bool {
-        recipe_for_set(set)
-            .pieces()
-            .iter()
-            .all(|piece| self.owns(piece))
+        set.pieces().iter().all(|piece| self.owns(piece))
     }
 
     pub fn own(&mut self, piece: GearPiece) -> bool {
@@ -74,7 +71,6 @@ impl PlayerGear {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::gear::RECIPES;
 
     fn starter_weapon() -> GearPiece {
         GearPiece::new(GearSet::Starter, GearSlot::Weapon)
@@ -90,7 +86,7 @@ mod tests {
 
     fn gear_owned_from(recipe_index: usize) -> PlayerGear {
         let mut gear = PlayerGear::default();
-        for piece in RECIPES[recipe_index].pieces() {
+        for piece in GearSet::ALL[recipe_index].pieces() {
             gear.own(piece);
         }
         gear
@@ -219,7 +215,7 @@ mod tests {
         assert!(geared.equip(&starter_weapon()));
         assert!(geared.equip(&starter_armor()));
         let summary = geared.equipped_summary();
-        assert!(summary.contains("Weapon: Wooden Sword"));
+        assert!(summary.contains("Weapon: Starter Spearblade"));
         assert!(summary.contains("Armor: Cloth Tunic"));
     }
 }

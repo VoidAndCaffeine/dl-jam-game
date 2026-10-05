@@ -85,7 +85,15 @@ impl Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::gear::{GearSet, recipe_for_set};
+    use crate::components::gear::{GearPiece, GearSet, GearSlot, RECIPES, recipe_for_piece};
+
+    fn weapon(set: GearSet) -> GearPiece {
+        GearPiece::new(set, GearSlot::Weapon)
+    }
+
+    fn armor(set: GearSet) -> GearPiece {
+        GearPiece::new(set, GearSlot::Armor)
+    }
 
     fn inventory_with_crops(crops: &[(CropType, u32)]) -> Inventory {
         let mut inventory = Inventory::default();
@@ -109,7 +117,7 @@ mod tests {
         assert!(inventory.crops.is_empty());
         assert!(inventory.materials.is_empty());
         assert_eq!(inventory.crop_count(CropType::Starter), 0);
-        assert_eq!(inventory.material_count(MaterialType::BossA), 0);
+        assert_eq!(inventory.material_count(MaterialType::BossA1), 0);
     }
 
     #[test]
@@ -124,126 +132,134 @@ mod tests {
     #[test]
     fn add_material_accumulates_per_type() {
         let mut inventory = Inventory::default();
-        inventory.add_material(MaterialType::BossA, 2);
-        inventory.add_material(MaterialType::BossB, 5);
-        assert_eq!(inventory.material_count(MaterialType::BossA), 2);
-        assert_eq!(inventory.material_count(MaterialType::BossB), 5);
+        inventory.add_material(MaterialType::BossA1, 2);
+        inventory.add_material(MaterialType::BossB2, 5);
+        assert_eq!(inventory.material_count(MaterialType::BossA1), 2);
+        assert_eq!(inventory.material_count(MaterialType::BossB2), 5);
     }
 
     #[test]
     fn count_dispatches_on_cost_kind() {
         let mut inventory = Inventory::default();
         inventory.add_crop(CropType::CropA, 6);
-        inventory.add_material(MaterialType::BossA, 1);
+        inventory.add_material(MaterialType::BossA1, 1);
 
         assert_eq!(inventory.count(&ItemCost::Crop(CropType::CropA)), 6);
-        assert_eq!(inventory.count(&ItemCost::Material(MaterialType::BossA)), 1);
+        assert_eq!(
+            inventory.count(&ItemCost::Material(MaterialType::BossA1)),
+            1
+        );
         assert_eq!(inventory.count(&ItemCost::Crop(CropType::CropB)), 0);
     }
 
     #[test]
     fn empty_inventory_cannot_craft_anything() {
         let inventory = Inventory::default();
-        for set in GearSet::ALL {
-            assert!(!inventory.can_craft(recipe_for_set(set)));
+        for recipe in RECIPES.iter() {
+            assert!(!inventory.can_craft(recipe));
         }
     }
 
     #[test]
-    fn can_craft_starter_at_exact_cost() {
-        let inventory = inventory_with_crops(&[(CropType::Starter, 10)]);
-        assert!(inventory.can_craft(recipe_for_set(GearSet::Starter)));
+    fn can_craft_starter_weapon_at_exact_cost() {
+        let inventory = inventory_with_crops(&[(CropType::Starter, 2)]);
+        assert!(inventory.can_craft(recipe_for_piece(weapon(GearSet::Starter))));
     }
 
     #[test]
     fn can_craft_one_short_is_false() {
-        let inventory = inventory_with_crops(&[(CropType::Starter, 9)]);
-        assert!(!inventory.can_craft(recipe_for_set(GearSet::Starter)));
+        let inventory = inventory_with_crops(&[(CropType::Starter, 1)]);
+        assert!(!inventory.can_craft(recipe_for_piece(weapon(GearSet::Starter))));
     }
 
     #[test]
     fn missing_reports_shortfall_per_item() {
-        let inventory = inventory_with_crops(&[(CropType::CropA, 3)]);
-        let missing = inventory.missing(recipe_for_set(GearSet::BossA));
+        let inventory = inventory_with_crops(&[(CropType::CropA, 1)]);
+        let missing = inventory.missing(recipe_for_piece(weapon(GearSet::BossA)));
         assert_eq!(missing.len(), 2);
-        assert!(missing.contains(&(ItemCost::Crop(CropType::CropA), 2)));
-        assert!(missing.contains(&(ItemCost::Material(MaterialType::BossA), 3)));
+        assert!(missing.contains(&(ItemCost::Crop(CropType::CropA), 1)));
+        assert!(missing.contains(&(ItemCost::Material(MaterialType::BossA1), 1)));
     }
 
     #[test]
     fn missing_is_empty_when_affordable() {
-        let mut inventory = inventory_with_crops(&[(CropType::CropA, 5)]);
-        inventory.add_material(MaterialType::BossA, 3);
-        assert!(inventory.missing(recipe_for_set(GearSet::BossA)).is_empty());
+        let mut inventory = inventory_with_crops(&[(CropType::CropA, 2)]);
+        inventory.add_material(MaterialType::BossA1, 1);
+        assert!(
+            inventory
+                .missing(recipe_for_piece(weapon(GearSet::BossA)))
+                .is_empty()
+        );
     }
 
     #[test]
     fn consume_deducts_every_cost_line() {
-        let mut inventory = inventory_with_crops(&[(CropType::CropA, 7)]);
-        inventory.add_material(MaterialType::BossA, 4);
+        let mut inventory = inventory_with_crops(&[(CropType::CropA, 4)]);
+        inventory.add_material(MaterialType::BossA1, 2);
 
-        assert!(inventory.consume(recipe_for_set(GearSet::BossA)));
+        assert!(inventory.consume(recipe_for_piece(weapon(GearSet::BossA))));
         assert_eq!(inventory.crop_count(CropType::CropA), 2);
-        assert_eq!(inventory.material_count(MaterialType::BossA), 1);
+        assert_eq!(inventory.material_count(MaterialType::BossA1), 1);
     }
 
     #[test]
     fn consume_fails_and_keeps_inventory_when_short() {
-        let mut inventory = inventory_with_crops(&[(CropType::Starter, 9)]);
+        let mut inventory = inventory_with_crops(&[(CropType::Starter, 1)]);
         let before = inventory.clone();
 
-        assert!(!inventory.consume(recipe_for_set(GearSet::Starter)));
-        assert_eq!(inventory.crop_count(CropType::Starter), 9);
+        assert!(!inventory.consume(recipe_for_piece(weapon(GearSet::Starter))));
+        assert_eq!(inventory.crop_count(CropType::Starter), 1);
         assert_eq!(inventory.crops, before.crops);
         assert_eq!(inventory.materials, before.materials);
     }
 
     #[test]
     fn consume_does_not_partially_spend_a_multi_item_recipe() {
-        let mut inventory = inventory_with_crops(&[(CropType::CropA, 5)]);
-        assert!(!inventory.consume(recipe_for_set(GearSet::BossA)));
-        assert_eq!(inventory.crop_count(CropType::CropA), 5);
-        assert_eq!(inventory.material_count(MaterialType::BossA), 0);
+        let mut inventory = inventory_with_crops(&[(CropType::CropA, 2)]);
+        assert!(!inventory.consume(recipe_for_piece(weapon(GearSet::BossA))));
+        assert_eq!(inventory.crop_count(CropType::CropA), 2);
+        assert_eq!(inventory.material_count(MaterialType::BossA1), 0);
     }
 
     #[test]
-    fn starter_cannot_be_crafted_twice_from_exact_stock() {
-        let mut inventory = inventory_with_crops(&[(CropType::Starter, 10)]);
-        assert!(inventory.consume(recipe_for_set(GearSet::Starter)));
-        assert!(!inventory.can_craft(recipe_for_set(GearSet::Starter)));
+    fn starter_weapon_cannot_be_crafted_twice_from_exact_stock() {
+        let mut inventory = inventory_with_crops(&[(CropType::Starter, 2)]);
+        assert!(inventory.consume(recipe_for_piece(weapon(GearSet::Starter))));
+        assert!(!inventory.can_craft(recipe_for_piece(weapon(GearSet::Starter))));
     }
 
     #[test]
     fn consume_leaves_unrelated_items_untouched() {
-        let mut inventory = inventory_with_crops(&[(CropType::Starter, 20), (CropType::CropB, 4)]);
-        assert!(inventory.consume(recipe_for_set(GearSet::Starter)));
+        let mut inventory = inventory_with_crops(&[(CropType::Starter, 5), (CropType::CropB, 4)]);
+        assert!(inventory.consume(recipe_for_piece(armor(GearSet::Starter))));
         assert_eq!(inventory.crop_count(CropType::CropB), 4);
     }
 
     #[test]
-    fn master_recipe_needs_every_crop_and_material() {
+    fn master_weapon_needs_every_crop_and_both_material_ones() {
         let inventory = inventory_with_crops(&[
-            (CropType::Starter, 5),
-            (CropType::CropA, 5),
-            (CropType::CropB, 5),
+            (CropType::Starter, 1),
+            (CropType::CropA, 1),
+            (CropType::CropB, 1),
         ]);
-        assert!(!inventory.can_craft(recipe_for_set(GearSet::Master)));
+        let recipe = recipe_for_piece(weapon(GearSet::Master));
+        assert!(!inventory.can_craft(recipe));
 
-        let mut materials = inventory_with_materials(&[(MaterialType::BossA, 2)]);
+        let mut materials = inventory_with_materials(&[(MaterialType::BossA1, 2)]);
         for (crop, amount) in inventory.crops.clone() {
             materials.add_crop(crop, amount);
         }
-        assert!(!materials.can_craft(recipe_for_set(GearSet::Master)));
+        assert!(!materials.can_craft(recipe));
 
-        materials.add_material(MaterialType::BossB, 2);
-        assert!(materials.can_craft(recipe_for_set(GearSet::Master)));
+        materials.add_material(MaterialType::BossB1, 2);
+        assert!(materials.can_craft(recipe));
     }
 
     #[test]
     fn summary_lists_every_crop_and_material() {
         let mut inventory = Inventory::default();
         inventory.add_crop(CropType::Starter, 7);
-        inventory.add_material(MaterialType::BossB, 1);
+        inventory.add_material(MaterialType::BossB1, 1);
 
         let summary = inventory.summary();
         for crop in CropType::ALL {
@@ -257,6 +273,6 @@ mod tests {
             );
         }
         assert!(summary.contains("Starter Crop 7"));
-        assert!(summary.contains("Boss B Material 1"));
+        assert!(summary.contains("Boss B Material 1 1"));
     }
 }

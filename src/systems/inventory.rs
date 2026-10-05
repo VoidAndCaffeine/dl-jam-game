@@ -460,10 +460,10 @@ mod tests {
         let mut app = setup_app();
         app.world_mut()
             .resource_mut::<Inventory>()
-            .add_material(MaterialType::BossB, 4);
+            .add_material(MaterialType::BossB2, 4);
 
-        assert!(rows(&app).contains(&InventoryRow::Material(MaterialType::BossB)));
-        assert!(!rows(&app).contains(&InventoryRow::Material(MaterialType::BossA)));
+        assert!(rows(&app).contains(&InventoryRow::Material(MaterialType::BossB2)));
+        assert!(!rows(&app).contains(&InventoryRow::Material(MaterialType::BossA1)));
     }
 
     #[test]
@@ -490,12 +490,12 @@ mod tests {
             "Starter Crop"
         );
         assert_eq!(
-            InventoryRow::Material(MaterialType::BossA).label(),
-            "Boss A Material"
+            InventoryRow::Material(MaterialType::BossA1).label(),
+            "Boss A Material 1"
         );
         assert_eq!(
             InventoryRow::Gear(GearPiece::new(GearSet::Starter, GearSlot::Weapon)).label(),
-            "Wooden Sword (Starter Set)"
+            "Starter Spearblade (Starter Set)"
         );
     }
 
@@ -507,7 +507,7 @@ mod tests {
             .add_crop(CropType::Starter, 6);
         app.world_mut()
             .resource_mut::<Inventory>()
-            .add_material(MaterialType::BossA, 2);
+            .add_material(MaterialType::BossA1, 2);
         owned(&mut app, GearSet::Starter, GearSlot::Weapon);
 
         assert_eq!(
@@ -515,7 +515,7 @@ mod tests {
             Some(6)
         );
         assert_eq!(
-            InventoryRow::Material(MaterialType::BossA).count(inventory(&app)),
+            InventoryRow::Material(MaterialType::BossA1).count(inventory(&app)),
             Some(2)
         );
         assert_eq!(
@@ -715,8 +715,8 @@ mod tests {
     #[test]
     fn arrow_keys_move_the_selection_within_bounds() {
         let mut app = setup_app();
-        grant_materials(&mut app, MaterialType::BossA, 1);
-        grant_materials(&mut app, MaterialType::BossB, 1);
+        grant_materials(&mut app, MaterialType::BossA1, 1);
+        grant_materials(&mut app, MaterialType::BossB1, 1);
         open_panel(&mut app);
 
         press(&mut app, KeyCode::ArrowUp);
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn the_selection_stops_at_the_last_row() {
         let mut app = setup_app();
-        grant_materials(&mut app, MaterialType::BossA, 1);
+        grant_materials(&mut app, MaterialType::BossA1, 1);
         open_panel(&mut app);
         select(&mut app, 1);
 
@@ -771,7 +771,10 @@ mod tests {
             Some(GearPiece::new(GearSet::Master, GearSlot::Weapon))
         );
         assert_eq!(equipped(&app), vec![GearSlot::Weapon]);
-        assert_eq!(panel(&app).notice, "Equipped Dreamlayer Blade (Master Set)");
+        assert_eq!(
+            panel(&app).notice,
+            "Equipped Master Spearblade (Master Set)"
+        );
     }
 
     #[test]
@@ -882,7 +885,10 @@ mod tests {
             gear(&app).equipped(GearSlot::Weapon),
             Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
         );
-        assert_eq!(panel(&app).notice, "Equipped Wooden Sword (Starter Set)");
+        assert_eq!(
+            panel(&app).notice,
+            "Equipped Starter Spearblade (Starter Set)"
+        );
     }
 
     #[test]

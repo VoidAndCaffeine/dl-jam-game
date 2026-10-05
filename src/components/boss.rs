@@ -1,3 +1,4 @@
+use crate::components::gear::MaterialType;
 use crate::levels::LevelId;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,16 @@ impl BossId {
             BossId::BossA => Color::srgb(0.85, 0.25, 0.25),
             BossId::BossB => Color::srgb(0.25, 0.5, 0.85),
             BossId::Dual => Color::srgb(0.60, 0.25, 0.75),
+        }
+    }
+
+    /// The materials a defeat drops. Each boss yields enough of its own
+    /// materials to craft that boss's weapon and armor.
+    pub fn material_drops(self) -> &'static [(MaterialType, u32)] {
+        match self {
+            BossId::BossA => &[(MaterialType::BossA1, 1), (MaterialType::BossA2, 2)],
+            BossId::BossB => &[(MaterialType::BossB1, 1), (MaterialType::BossB2, 2)],
+            BossId::Dual => &[],
         }
     }
 }
@@ -118,5 +129,18 @@ mod tests {
     #[test]
     fn boss_default_id_is_boss_a() {
         assert_eq!(BossId::default(), BossId::BossA);
+    }
+
+    #[test]
+    fn bosses_drop_their_own_materials() {
+        assert_eq!(
+            BossId::BossA.material_drops(),
+            &[(MaterialType::BossA1, 1), (MaterialType::BossA2, 2)]
+        );
+        assert_eq!(
+            BossId::BossB.material_drops(),
+            &[(MaterialType::BossB1, 1), (MaterialType::BossB2, 2)]
+        );
+        assert!(BossId::Dual.material_drops().is_empty());
     }
 }

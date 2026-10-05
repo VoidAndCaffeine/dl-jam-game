@@ -1,5 +1,5 @@
 use crate::components::boss::BossId;
-use crate::components::gear::{GearPiece, GearSet, RECIPE_COUNT, recipe_for_set};
+use crate::components::gear::{GearPiece, RECIPE_COUNT, recipe_for_piece};
 use crate::components::pot::CropType;
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
@@ -290,21 +290,21 @@ fn spawn_row(
 
 fn row_title(index: usize, gear: &PlayerGear) -> String {
     match row_action(index, &gear.owned) {
-        Some(RowAction::Craft(set)) => set.label().to_string(),
+        Some(RowAction::Craft(piece)) => piece.name().to_string(),
         Some(RowAction::Equip(piece)) => piece.name().to_string(),
         None => String::new(),
     }
 }
 
-fn recipe_status(set: GearSet, inventory: &Inventory, gear: &PlayerGear) -> (String, Color) {
-    let recipe = recipe_for_set(set);
+fn recipe_status(piece: GearPiece, inventory: &Inventory, gear: &PlayerGear) -> (String, Color) {
+    let recipe = recipe_for_piece(piece);
     let have = recipe
         .cost
         .iter()
         .map(|(item, required)| format!("{} {}/{}", item.label(), inventory.count(item), required))
         .collect::<Vec<String>>()
         .join(", ");
-    if gear.owns_set(set) {
+    if gear.owns(&piece) {
         (format!("{have}  -  Owned"), TEXT_DIM)
     } else if inventory.can_craft(recipe) {
         (format!("{have}  -  Craft"), TEXT_CRAFTABLE)
@@ -324,7 +324,7 @@ fn owned_status(piece: GearPiece, gear: &PlayerGear) -> (String, Color) {
 
 fn row_status(index: usize, inventory: &Inventory, gear: &PlayerGear) -> (String, Color) {
     match row_action(index, &gear.owned) {
-        Some(RowAction::Craft(set)) => recipe_status(set, inventory, gear),
+        Some(RowAction::Craft(piece)) => recipe_status(piece, inventory, gear),
         Some(RowAction::Equip(piece)) => owned_status(piece, gear),
         None => (String::new(), TEXT_DIM),
     }
@@ -1225,7 +1225,7 @@ fn despawn_crop_select_ui(mut commands: Commands, roots: Query<Entity, With<Crop
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::gear::{GearSlot, MaterialType};
+    use crate::components::gear::{GearSet, GearSlot, MaterialType};
     use crate::components::pot::CropType;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
@@ -1502,7 +1502,7 @@ mod tests {
         assert_eq!(rows.last().unwrap().0, RECIPE_COUNT);
         assert_eq!(
             row_text(&mut app, RECIPE_COUNT),
-            vec!["Wooden Sword".to_string()]
+            vec!["Starter Spearblade".to_string()]
         );
     }
 
@@ -1526,7 +1526,10 @@ mod tests {
         open_menu(&mut app);
 
         for (index, set) in GearSet::ALL.iter().enumerate() {
-            assert_eq!(row_text(&mut app, index), vec![set.label().to_string()]);
+            for (slot_index, piece) in set.pieces().iter().enumerate() {
+                let row = index * 2 + slot_index;
+                assert_eq!(row_text(&mut app, row), vec![piece.name().to_string()]);
+            }
         }
     }
 
@@ -1541,7 +1544,7 @@ mod tests {
 
         let statuses = status_text(&mut app, 0);
         assert_eq!(statuses.len(), 1);
-        assert!(statuses[0].contains("Starter Crop 12/10"));
+        assert!(statuses[0].contains("Starter Crop 12/2"));
         assert!(statuses[0].contains("Craft"));
     }
 
@@ -1551,14 +1554,14 @@ mod tests {
         enter_playing(&mut app);
         open_menu(&mut app);
 
-        let statuses = status_text(&mut app, 1);
-        assert!(statuses[0].contains("Crop A 0/5"));
-        assert!(statuses[0].contains("Boss A Material 0/3"));
+        let statuses = status_text(&mut app, 2);
+        assert!(statuses[0].contains("Crop A 0/2"));
+        assert!(statuses[0].contains("Boss A Material 1 0/1"));
         assert!(statuses[0].contains("Missing"));
     }
 
     #[test]
-    fn owned_sets_are_marked_owned_instead_of_craftable() {
+    fn owned_pieces_are_marked_owned_instead_of_craftable() {
         let mut app = setup_app();
         enter_playing(&mut app);
         app.world_mut()
@@ -1626,7 +1629,7 @@ mod tests {
         open_menu(&mut app);
 
         let lines = line_text(&mut app, MenuLine::Equipped);
-        assert!(lines[0].contains("Weapon: Wooden Sword"));
+        assert!(lines[0].contains("Weapon: Starter Spearblade"));
         assert!(lines[0].contains("Armor: -"));
     }
 
@@ -1643,7 +1646,7 @@ mod tests {
         assert!(status_text(&mut app, RECIPE_COUNT + 1)[0].contains("Armor  -  Equip"));
         assert_eq!(
             row_text(&mut app, RECIPE_COUNT),
-            vec!["Wooden Sword".to_string()]
+            vec!["Starter Spearblade".to_string()]
         );
     }
 
@@ -1733,8 +1736,11 @@ mod tests {
     fn notice_colours_distinguish_blocked_from_success() {
         assert_eq!(notice_color(""), TEXT_DIM);
         assert_eq!(notice_color("Missing: Crop B x5"), TEXT_BLOCKED);
-        assert_eq!(notice_color("Starter Set already owned"), TEXT_BLOCKED);
-        assert_eq!(notice_color("Crafted Starter Set"), TEXT_CRAFTABLE);
+        assert_eq!(
+            notice_color("Starter Spearblade already owned"),
+            TEXT_BLOCKED
+        );
+        assert_eq!(notice_color("Crafted Starter Spearblade"), TEXT_CRAFTABLE);
     }
 
     #[test]
@@ -1742,39 +1748,52 @@ mod tests {
         let mut inventory = Inventory::default();
         inventory.add_crop(CropType::Starter, 12);
         assert!(
-            recipe_status(GearSet::Starter, &inventory, &PlayerGear::default())
-                .0
-                .contains("Craft")
+            recipe_status(
+                GearPiece::new(GearSet::Starter, GearSlot::Weapon),
+                &inventory,
+                &PlayerGear::default()
+            )
+            .0
+            .contains("Craft")
         );
 
         let gear = gear_with_starter_set();
         assert!(
-            recipe_status(GearSet::Starter, &inventory, &gear)
-                .0
-                .contains("Owned")
+            recipe_status(
+                GearPiece::new(GearSet::Starter, GearSlot::Weapon),
+                &inventory,
+                &gear
+            )
+            .0
+            .contains("Owned")
         );
 
         let (blocked, color) = recipe_status(
-            GearSet::Starter,
+            GearPiece::new(GearSet::Starter, GearSlot::Weapon),
             &Inventory::default(),
             &PlayerGear::default(),
         );
-        assert!(blocked.contains("Starter Crop 0/10"));
+        assert!(blocked.contains("Starter Crop 0/2"));
         assert!(blocked.contains("Missing"));
         assert_eq!(color, TEXT_BLOCKED);
     }
 
     #[test]
-    fn master_row_lists_every_cost_line() {
+    fn master_rows_list_every_cost_line() {
         let mut inventory = Inventory::default();
-        inventory.add_crop(CropType::Starter, 5);
-        inventory.add_material(MaterialType::BossA, 2);
-        let (status, _) = recipe_status(GearSet::Master, &inventory, &PlayerGear::default());
+        inventory.add_crop(CropType::Starter, 1);
+        inventory.add_material(MaterialType::BossA1, 2);
+        let (status, _) = recipe_status(
+            GearPiece::new(GearSet::Master, GearSlot::Weapon),
+            &inventory,
+            &PlayerGear::default(),
+        );
 
-        assert!(status.contains("Starter Crop 5/5"));
-        assert!(status.contains("Crop A 0/5"));
-        assert!(status.contains("Boss A Material 2/2"));
-        assert!(status.contains("Boss B Material 0/2"));
+        assert!(status.contains("Starter Crop 1/1"));
+        assert!(status.contains("Crop A 0/1"));
+        assert!(status.contains("Crop B 0/1"));
+        assert!(status.contains("Boss A Material 1 2/2"));
+        assert!(status.contains("Boss B Material 1 0/2"));
     }
 
     #[test]
@@ -1788,7 +1807,7 @@ mod tests {
 
     #[test]
     fn row_title_falls_back_to_empty_for_unknown_rows() {
-        assert_eq!(row_title(0, &PlayerGear::default()), "Starter Set");
+        assert_eq!(row_title(0, &PlayerGear::default()), "Starter Spearblade");
         assert_eq!(row_title(RECIPE_COUNT, &PlayerGear::default()), "");
     }
 
@@ -1879,11 +1898,14 @@ mod tests {
     fn stocked_materials_gain_a_row_while_others_stay_hidden() {
         let mut app = setup_app();
         enter_playing(&mut app);
-        add_material(&mut app, MaterialType::BossA, 3);
+        add_material(&mut app, MaterialType::BossA1, 3);
         open_inventory(&mut app);
 
         assert_eq!(item_row_entities(&mut app).len(), 2);
-        assert_eq!(item_name(&mut app, 1), vec!["Boss A Material".to_string()]);
+        assert_eq!(
+            item_name(&mut app, 1),
+            vec!["Boss A Material 1".to_string()]
+        );
         assert_eq!(item_detail_text(&mut app, 1), vec!["x3".to_string()]);
     }
 
@@ -1896,12 +1918,15 @@ mod tests {
 
         add_crop(&mut app, CropType::Starter, 4);
         app.update();
-        add_material(&mut app, MaterialType::BossB, 1);
+        add_material(&mut app, MaterialType::BossB1, 1);
         app.update();
 
         assert_eq!(inventory_root_entities(&mut app).len(), 1);
         assert_eq!(item_row_entities(&mut app).len(), 2);
-        assert_eq!(item_name(&mut app, 1), vec!["Boss B Material".to_string()]);
+        assert_eq!(
+            item_name(&mut app, 1),
+            vec!["Boss B Material 1".to_string()]
+        );
     }
 
     #[test]
@@ -1923,7 +1948,7 @@ mod tests {
         );
         assert_eq!(
             item_name(&mut app, 1),
-            vec!["Dreamlayer Blade (Master Set)".to_string()]
+            vec!["Master Spearblade (Master Set)".to_string()]
         );
         assert_eq!(
             item_detail_text(&mut app, 1),
@@ -1964,7 +1989,7 @@ mod tests {
     fn the_selected_row_gets_the_highlighted_border() {
         let mut app = setup_app();
         enter_playing(&mut app);
-        add_material(&mut app, MaterialType::BossA, 1);
+        add_material(&mut app, MaterialType::BossA1, 1);
         own(&mut app, GearSet::Starter, GearSlot::Armor);
         open_inventory(&mut app);
         app.world_mut().resource_mut::<InventoryPanel>().selected = 2;
@@ -2012,12 +2037,12 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<InventoryPanel>()
-            .set_notice("Equipped Wooden Sword (Starter Set)");
+            .set_notice("Equipped Starter Spearblade (Starter Set)");
         app.update();
 
         assert_eq!(
             notice_text(&mut app),
-            vec!["Equipped Wooden Sword (Starter Set)".to_string()]
+            vec!["Equipped Starter Spearblade (Starter Set)".to_string()]
         );
     }
 
@@ -2033,7 +2058,7 @@ mod tests {
         app.world_mut().resource_mut::<PlayerGear>().equip(&piece);
         app.update();
 
-        assert!(equipped_text(&mut app)[0].contains("Weapon: Wooden Sword"));
+        assert!(equipped_text(&mut app)[0].contains("Weapon: Starter Spearblade"));
     }
 
     #[test]
@@ -2069,7 +2094,7 @@ mod tests {
     fn running_frames_with_the_panel_open_keeps_it_stable() {
         let mut app = setup_app();
         enter_playing(&mut app);
-        add_material(&mut app, MaterialType::BossA, 2);
+        add_material(&mut app, MaterialType::BossA1, 2);
         open_inventory(&mut app);
         let root = inventory_root_entities(&mut app)[0];
 
@@ -2084,14 +2109,14 @@ mod tests {
     #[test]
     fn item_detail_line_covers_every_row_kind() {
         let mut inventory = Inventory::default();
-        inventory.add_material(MaterialType::BossB, 5);
+        inventory.add_material(MaterialType::BossB1, 5);
         let gear = gear_with_starter_set();
 
         let crop = InventoryRow::Crop(CropType::Starter);
         assert_eq!(item_detail(&crop, &inventory, &gear).0, "x0");
         assert_eq!(item_detail(&crop, &inventory, &gear).1, TEXT_PRIMARY);
 
-        let material = InventoryRow::Material(MaterialType::BossB);
+        let material = InventoryRow::Material(MaterialType::BossB1);
         assert_eq!(item_detail(&material, &inventory, &gear).0, "x5");
 
         let armor = InventoryRow::Gear(GearPiece::new(GearSet::Starter, GearSlot::Armor));

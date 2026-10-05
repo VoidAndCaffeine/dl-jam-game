@@ -29,6 +29,14 @@ impl GearSet {
             GearSet::Master => "Master Set",
         }
     }
+
+    /// The weapon and armor pieces that make up this set.
+    pub fn pieces(&self) -> [GearPiece; 2] {
+        [
+            GearPiece::new(*self, GearSlot::Weapon),
+            GearPiece::new(*self, GearSlot::Armor),
+        ]
+    }
 }
 
 #[derive(
@@ -63,17 +71,26 @@ pub enum WeaponType {
 #[derive(Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Default, Debug)]
 pub enum MaterialType {
     #[default]
-    BossA,
-    BossB,
+    BossA1,
+    BossA2,
+    BossB1,
+    BossB2,
 }
 
 impl MaterialType {
-    pub const ALL: [MaterialType; 2] = [MaterialType::BossA, MaterialType::BossB];
+    pub const ALL: [MaterialType; 4] = [
+        MaterialType::BossA1,
+        MaterialType::BossA2,
+        MaterialType::BossB1,
+        MaterialType::BossB2,
+    ];
 
     pub fn label(&self) -> &'static str {
         match self {
-            MaterialType::BossA => "Boss A Material",
-            MaterialType::BossB => "Boss B Material",
+            MaterialType::BossA1 => "Boss A Material 1",
+            MaterialType::BossA2 => "Boss A Material 2",
+            MaterialType::BossB1 => "Boss B Material 1",
+            MaterialType::BossB2 => "Boss B Material 2",
         }
     }
 }
@@ -100,7 +117,7 @@ pub struct GearPiece {
 }
 
 impl GearPiece {
-    pub fn new(set: GearSet, slot: GearSlot) -> Self {
+    pub const fn new(set: GearSet, slot: GearSlot) -> Self {
         Self { set, slot }
     }
 
@@ -118,13 +135,13 @@ impl GearPiece {
 
     pub fn name(&self) -> &'static str {
         match (self.set, self.slot) {
-            (GearSet::Starter, GearSlot::Weapon) => "Wooden Sword",
+            (GearSet::Starter, GearSlot::Weapon) => "Starter Spearblade",
             (GearSet::Starter, GearSlot::Armor) => "Cloth Tunic",
-            (GearSet::BossA, GearSlot::Weapon) => "Ember Saber",
+            (GearSet::BossA, GearSlot::Weapon) => "Boss A Spearblade",
             (GearSet::BossA, GearSlot::Armor) => "Ember Mail",
-            (GearSet::BossB, GearSlot::Weapon) => "Gloom Spear",
+            (GearSet::BossB, GearSlot::Weapon) => "Boss B Spearblade",
             (GearSet::BossB, GearSlot::Armor) => "Gloom Robe",
-            (GearSet::Master, GearSlot::Weapon) => "Dreamlayer Blade",
+            (GearSet::Master, GearSlot::Weapon) => "Master Spearblade",
             (GearSet::Master, GearSlot::Armor) => "Dreamlayer Aegis",
         }
     }
@@ -136,57 +153,86 @@ impl GearPiece {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct GearRecipe {
-    pub set: GearSet,
+    pub piece: GearPiece,
     pub cost: &'static [(ItemCost, u32)],
 }
 
 impl GearRecipe {
-    pub fn pieces(&self) -> [GearPiece; 2] {
-        [
-            GearPiece::new(self.set, GearSlot::Weapon),
-            GearPiece::new(self.set, GearSlot::Armor),
-        ]
+    pub fn slot(&self) -> GearSlot {
+        self.piece.slot
     }
 }
 
-pub const RECIPES: [GearRecipe; 4] = [
+pub const RECIPES: [GearRecipe; 8] = [
+    // Starter
     GearRecipe {
-        set: GearSet::Starter,
-        cost: &[(ItemCost::Crop(CropType::Starter), 5)],
+        piece: GearPiece::new(GearSet::Starter, GearSlot::Weapon),
+        cost: &[(ItemCost::Crop(CropType::Starter), 2)],
     },
     GearRecipe {
-        set: GearSet::BossA,
+        piece: GearPiece::new(GearSet::Starter, GearSlot::Armor),
+        cost: &[(ItemCost::Crop(CropType::Starter), 3)],
+    },
+    // Boss A
+    GearRecipe {
+        piece: GearPiece::new(GearSet::BossA, GearSlot::Weapon),
         cost: &[
-            (ItemCost::Crop(CropType::CropA), 5),
-            (ItemCost::Material(MaterialType::BossA), 3),
+            (ItemCost::Crop(CropType::CropA), 2),
+            (ItemCost::Material(MaterialType::BossA1), 1),
         ],
     },
     GearRecipe {
-        set: GearSet::BossB,
+        piece: GearPiece::new(GearSet::BossA, GearSlot::Armor),
         cost: &[
-            (ItemCost::Crop(CropType::CropB), 5),
-            (ItemCost::Material(MaterialType::BossB), 3),
+            (ItemCost::Crop(CropType::CropA), 3),
+            (ItemCost::Material(MaterialType::BossA2), 2),
+        ],
+    },
+    // Boss B
+    GearRecipe {
+        piece: GearPiece::new(GearSet::BossB, GearSlot::Weapon),
+        cost: &[
+            (ItemCost::Crop(CropType::CropB), 2),
+            (ItemCost::Material(MaterialType::BossB1), 1),
         ],
     },
     GearRecipe {
-        set: GearSet::Master,
+        piece: GearPiece::new(GearSet::BossB, GearSlot::Armor),
         cost: &[
-            (ItemCost::Crop(CropType::Starter), 4),
-            (ItemCost::Crop(CropType::CropA), 4),
-            (ItemCost::Crop(CropType::CropB), 4),
-            (ItemCost::Material(MaterialType::BossA), 2),
-            (ItemCost::Material(MaterialType::BossB), 2),
+            (ItemCost::Crop(CropType::CropB), 3),
+            (ItemCost::Material(MaterialType::BossB2), 2),
+        ],
+    },
+    // Master
+    GearRecipe {
+        piece: GearPiece::new(GearSet::Master, GearSlot::Weapon),
+        cost: &[
+            (ItemCost::Crop(CropType::Starter), 1),
+            (ItemCost::Crop(CropType::CropA), 1),
+            (ItemCost::Crop(CropType::CropB), 1),
+            (ItemCost::Material(MaterialType::BossA1), 2),
+            (ItemCost::Material(MaterialType::BossB1), 2),
+        ],
+    },
+    GearRecipe {
+        piece: GearPiece::new(GearSet::Master, GearSlot::Armor),
+        cost: &[
+            (ItemCost::Crop(CropType::Starter), 3),
+            (ItemCost::Crop(CropType::CropA), 3),
+            (ItemCost::Crop(CropType::CropB), 3),
+            (ItemCost::Material(MaterialType::BossA2), 4),
+            (ItemCost::Material(MaterialType::BossB2), 4),
         ],
     },
 ];
 
 pub const RECIPE_COUNT: usize = RECIPES.len();
 
-pub fn recipe_for_set(set: GearSet) -> &'static GearRecipe {
+pub fn recipe_for_piece(piece: GearPiece) -> &'static GearRecipe {
     RECIPES
         .iter()
-        .find(|recipe| recipe.set == set)
-        .expect("every gear set has a recipe")
+        .find(|recipe| recipe.piece == piece)
+        .expect("every gear piece has a recipe")
 }
 
 #[cfg(test)]
@@ -204,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn material_type_default_is_boss_a() {
-        assert_eq!(MaterialType::default(), MaterialType::BossA);
+    fn material_type_default_is_boss_a1() {
+        assert_eq!(MaterialType::default(), MaterialType::BossA1);
     }
 
     #[test]
@@ -225,9 +271,13 @@ mod tests {
 
     #[test]
     fn all_material_types_are_listed_once() {
-        assert_eq!(MaterialType::ALL.len(), 2);
-        assert!(MaterialType::ALL.contains(&MaterialType::BossA));
-        assert!(MaterialType::ALL.contains(&MaterialType::BossB));
+        assert_eq!(MaterialType::ALL.len(), 4);
+        for material in MaterialType::ALL {
+            assert_eq!(
+                MaterialType::ALL.iter().filter(|m| **m == material).count(),
+                1
+            );
+        }
     }
 
     #[test]
@@ -271,73 +321,92 @@ mod tests {
     }
 
     #[test]
-    fn there_is_a_recipe_per_set() {
-        assert_eq!(RECIPES.len(), GearSet::ALL.len());
+    fn there_is_a_recipe_per_piece() {
+        assert_eq!(RECIPES.len(), 8);
+        assert_eq!(RECIPE_COUNT, 8);
         for set in GearSet::ALL {
-            let recipe = recipe_for_set(set);
-            assert_eq!(recipe.set, set);
-            assert_eq!(RECIPE_COUNT, 4);
-        }
-    }
-
-    #[test]
-    fn each_recipe_yields_one_weapon_and_one_armor() {
-        for recipe in RECIPES.iter() {
-            let pieces = recipe.pieces();
-            assert_eq!(pieces.len(), 2);
-            assert_eq!(pieces[0].slot, GearSlot::Weapon);
-            assert_eq!(pieces[1].slot, GearSlot::Armor);
-            for piece in pieces {
-                assert_eq!(piece.set, recipe.set);
+            for piece in set.pieces() {
+                let recipe = recipe_for_piece(piece);
+                assert_eq!(recipe.piece, piece);
             }
         }
     }
 
     #[test]
-    fn starter_recipe_costs_ten_starter_crops() {
-        let recipe = recipe_for_set(GearSet::Starter);
-        assert_eq!(recipe.cost.len(), 1);
-        assert_eq!(recipe.cost[0], (ItemCost::Crop(CropType::Starter), 10));
+    fn every_recipe_targets_a_single_named_piece() {
+        for recipe in RECIPES.iter() {
+            assert_eq!(recipe.piece, recipe_for_piece(recipe.piece).piece);
+            assert!(!recipe.piece.name().is_empty());
+        }
     }
 
     #[test]
-    fn boss_recipes_cost_crop_plus_material() {
-        let recipe_a = recipe_for_set(GearSet::BossA);
-        assert_eq!(recipe_a.cost.len(), 2);
-        assert!(
-            recipe_a
-                .cost
-                .contains(&(ItemCost::Crop(CropType::CropA), 5))
-        );
-        assert!(
-            recipe_a
-                .cost
-                .contains(&(ItemCost::Material(MaterialType::BossA), 3))
-        );
-
-        let recipe_b = recipe_for_set(GearSet::BossB);
-        assert_eq!(recipe_b.cost.len(), 2);
-        assert!(
-            recipe_b
-                .cost
-                .contains(&(ItemCost::Crop(CropType::CropB), 5))
-        );
-        assert!(
-            recipe_b
-                .cost
-                .contains(&(ItemCost::Material(MaterialType::BossB), 3))
-        );
+    fn starter_recipes_cost_two_and_three_crops() {
+        let weapon = recipe_for_piece(GearPiece::new(GearSet::Starter, GearSlot::Weapon));
+        assert_eq!(weapon.cost, &[(ItemCost::Crop(CropType::Starter), 2)]);
+        let armor = recipe_for_piece(GearPiece::new(GearSet::Starter, GearSlot::Armor));
+        assert_eq!(armor.cost, &[(ItemCost::Crop(CropType::Starter), 3)]);
     }
 
     #[test]
-    fn master_recipe_costs_all_crops_and_all_materials() {
-        let recipe = recipe_for_set(GearSet::Master);
+    fn boss_weapons_cost_two_crops_and_one_material_one() {
+        for (crop, material) in [
+            (CropType::CropA, MaterialType::BossA1),
+            (CropType::CropB, MaterialType::BossB1),
+        ] {
+            let set = if crop == CropType::CropA {
+                GearSet::BossA
+            } else {
+                GearSet::BossB
+            };
+            let recipe = recipe_for_piece(GearPiece::new(set, GearSlot::Weapon));
+            assert_eq!(
+                recipe.cost,
+                &[(ItemCost::Crop(crop), 2), (ItemCost::Material(material), 1),]
+            );
+        }
+    }
+
+    #[test]
+    fn boss_armor_costs_three_crops_and_two_material_two() {
+        for (crop, material) in [
+            (CropType::CropA, MaterialType::BossA2),
+            (CropType::CropB, MaterialType::BossB2),
+        ] {
+            let set = if crop == CropType::CropA {
+                GearSet::BossA
+            } else {
+                GearSet::BossB
+            };
+            let recipe = recipe_for_piece(GearPiece::new(set, GearSlot::Armor));
+            assert_eq!(
+                recipe.cost,
+                &[(ItemCost::Crop(crop), 3), (ItemCost::Material(material), 2),]
+            );
+        }
+    }
+
+    #[test]
+    fn master_weapon_costs_every_crop_and_both_material_ones() {
+        let recipe = recipe_for_piece(GearPiece::new(GearSet::Master, GearSlot::Weapon));
         assert_eq!(recipe.cost.len(), 5);
         for crop in [CropType::Starter, CropType::CropA, CropType::CropB] {
-            assert!(recipe.cost.contains(&(ItemCost::Crop(crop), 5)));
+            assert!(recipe.cost.contains(&(ItemCost::Crop(crop), 1)));
         }
-        for material in MaterialType::ALL {
+        for material in [MaterialType::BossA1, MaterialType::BossB1] {
             assert!(recipe.cost.contains(&(ItemCost::Material(material), 2)));
+        }
+    }
+
+    #[test]
+    fn master_armor_costs_every_crop_and_both_material_twos() {
+        let recipe = recipe_for_piece(GearPiece::new(GearSet::Master, GearSlot::Armor));
+        assert_eq!(recipe.cost.len(), 5);
+        for crop in [CropType::Starter, CropType::CropA, CropType::CropB] {
+            assert!(recipe.cost.contains(&(ItemCost::Crop(crop), 3)));
+        }
+        for material in [MaterialType::BossA2, MaterialType::BossB2] {
+            assert!(recipe.cost.contains(&(ItemCost::Material(material), 3)));
         }
     }
 
@@ -363,21 +432,24 @@ mod tests {
     }
 
     #[test]
-    fn recipes_are_ordered_by_gear_set() {
-        for (recipe, set) in RECIPES.iter().zip(GearSet::ALL) {
-            assert_eq!(recipe.set, set);
-        }
+    fn recipes_are_ordered_by_set_then_slot() {
+        let expected: Vec<GearPiece> = GearSet::ALL.iter().flat_map(|set| set.pieces()).collect();
+        let actual: Vec<GearPiece> = RECIPES.iter().map(|recipe| recipe.piece).collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
     fn item_cost_labels_are_distinct_and_non_empty() {
-        let labels = [
+        let mut labels = vec![
             ItemCost::Crop(CropType::Starter).label(),
             ItemCost::Crop(CropType::CropA).label(),
             ItemCost::Crop(CropType::CropB).label(),
-            ItemCost::Material(MaterialType::BossA).label(),
-            ItemCost::Material(MaterialType::BossB).label(),
         ];
+        labels.extend(
+            MaterialType::ALL
+                .iter()
+                .map(|material| ItemCost::Material(*material).label()),
+        );
         for (index, first) in labels.iter().enumerate() {
             assert!(!first.is_empty());
             for second in labels.iter().skip(index + 1) {

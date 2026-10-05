@@ -1,6 +1,4 @@
-use crate::components::gear::{
-    GearPiece, GearSet, ItemCost, RECIPE_COUNT, RECIPES, recipe_for_set,
-};
+use crate::components::gear::{GearPiece, ItemCost, RECIPE_COUNT, RECIPES, recipe_for_piece};
 use crate::events::{GearCrafted, GearEquipped, InteractionEvent, InteractionType};
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
@@ -14,28 +12,28 @@ pub const OWNED_ROW_OFFSET: usize = RECIPE_COUNT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAction {
-    Craft(GearSet),
+    Craft(GearPiece),
     Equip(GearPiece),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CraftOutcome {
-    Crafted { set: GearSet },
+    Crafted { piece: GearPiece },
     Equipped { piece: GearPiece },
     AlreadyEquipped { piece: GearPiece },
-    AlreadyOwned { set: GearSet },
+    AlreadyOwned { piece: GearPiece },
     Missing { items: Vec<(ItemCost, u32)> },
 }
 
 impl CraftOutcome {
     pub fn notice(&self) -> String {
         match self {
-            CraftOutcome::Crafted { set } => format!("Crafted {}", set.label()),
+            CraftOutcome::Crafted { piece } => format!("Crafted {}", piece.name()),
             CraftOutcome::Equipped { piece } => format!("Equipped {}", piece.describe()),
             CraftOutcome::AlreadyEquipped { piece } => {
                 format!("{} is already equipped", piece.name())
             }
-            CraftOutcome::AlreadyOwned { set } => format!("{} already owned", set.label()),
+            CraftOutcome::AlreadyOwned { piece } => format!("{} already owned", piece.name()),
             CraftOutcome::Missing { items } => {
                 let parts: Vec<String> = items
                     .iter()
@@ -64,7 +62,7 @@ pub fn row_count(owned: &[GearPiece]) -> usize {
 pub fn row_action(row: usize, owned: &[GearPiece]) -> Option<RowAction> {
     if row < OWNED_ROW_OFFSET {
         let recipe = RECIPES.get(row)?;
-        return Some(RowAction::Craft(recipe.set));
+        return Some(RowAction::Craft(recipe.piece));
     }
     owned
         .get(row - OWNED_ROW_OFFSET)
@@ -77,22 +75,20 @@ pub fn perform(
     gear: &mut PlayerGear,
 ) -> CraftOutcome {
     match action {
-        RowAction::Craft(set) => {
-            if gear.owns_set(set) {
-                return CraftOutcome::AlreadyOwned { set };
+        RowAction::Craft(piece) => {
+            if gear.owns(&piece) {
+                return CraftOutcome::AlreadyOwned { piece };
             }
-            let recipe = recipe_for_set(set);
+            let recipe = recipe_for_piece(piece);
             if !inventory.can_craft(recipe) {
                 return CraftOutcome::Missing {
                     items: inventory.missing(recipe),
                 };
             }
             inventory.consume(recipe);
-            for piece in recipe.pieces() {
-                gear.own(piece);
-                gear.equip(&piece);
-            }
-            CraftOutcome::Crafted { set }
+            gear.own(piece);
+            gear.equip(&piece);
+            CraftOutcome::Crafted { piece }
         }
         RowAction::Equip(piece) => {
             if gear.is_equipped(&piece) {
@@ -118,11 +114,9 @@ pub fn apply(
 ) -> CraftOutcome {
     let outcome = perform(action, inventory, gear);
     match &outcome {
-        CraftOutcome::Crafted { set } => {
-            for piece in recipe_for_set(*set).pieces() {
-                crafted_events.write(GearCrafted(piece));
-                equipped_events.write(GearEquipped(piece.slot));
-            }
+        CraftOutcome::Crafted { piece } => {
+            crafted_events.write(GearCrafted(*piece));
+            equipped_events.write(GearEquipped(piece.slot));
         }
         CraftOutcome::Equipped { piece } => {
             equipped_events.write(GearEquipped(piece.slot));
@@ -268,11 +262,23 @@ pub fn craft_row_on_click(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::gear::{GearSlot, MaterialType, RECIPES};
+    use crate::components::gear::{GearSet, GearSlot, MaterialType, RECIPES};
     use crate::components::pot::CropType;
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
+
+    fn starter_weapon() -> GearPiece {
+        GearPiece::new(GearSet::Starter, GearSlot::Weapon)
+    }
+
+    fn starter_armor() -> GearPiece {
+        GearPiece::new(GearSet::Starter, GearSlot::Armor)
+    }
+
+    fn master_weapon() -> GearPiece {
+        GearPiece::new(GearSet::Master, GearSlot::Weapon)
+    }
 
     #[derive(Resource, Default)]
     struct CapturedCrafted(Vec<GearPiece>);
@@ -408,14 +414,14 @@ mod tests {
         for (index, recipe) in RECIPES.iter().enumerate() {
             assert_eq!(
                 row_action(index, &owned),
-                Some(RowAction::Craft(recipe.set))
+                Some(RowAction::Craft(recipe.piece))
             );
         }
     }
 
     #[test]
     fn owned_rows_map_to_equip_actions() {
-        let owned = vec![GearPiece::new(GearSet::Starter, GearSlot::Weapon)];
+        let owned = vec![starter_weapon()];
         assert_eq!(row_count(&owned), RECIPE_COUNT + 1);
         assert_eq!(
             row_action(OWNED_ROW_OFFSET, &owned),
@@ -431,13 +437,13 @@ mod tests {
     }
 
     #[test]
-    fn perform_craft_consumes_owns_and_equips_both_pieces() {
+    fn perform_craft_consumes_owns_and_equips_one_piece() {
         let mut inventory = Inventory::default();
-        inventory.add_crop(CropType::Starter, 10);
+        inventory.add_crop(CropType::Starter, 2);
         let mut gear = PlayerGear::default();
 
         let outcome = perform(
-            RowAction::Craft(GearSet::Starter),
+            RowAction::Craft(starter_weapon()),
             &mut inventory,
             &mut gear,
         );
@@ -445,56 +451,50 @@ mod tests {
         assert_eq!(
             outcome,
             CraftOutcome::Crafted {
-                set: GearSet::Starter
+                piece: starter_weapon()
             }
         );
         assert_eq!(inventory.crop_count(CropType::Starter), 0);
-        assert_eq!(gear.owned.len(), 2);
-        assert_eq!(
-            gear.equipped(GearSlot::Weapon),
-            Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
-        );
-        assert_eq!(
-            gear.equipped(GearSlot::Armor),
-            Some(GearPiece::new(GearSet::Starter, GearSlot::Armor))
-        );
+        assert_eq!(gear.owned.len(), 1);
+        assert_eq!(gear.equipped(GearSlot::Weapon), Some(starter_weapon()));
+        assert_eq!(gear.equipped(GearSlot::Armor), None);
     }
 
     #[test]
     fn perform_craft_reports_missing_without_spending() {
         let mut inventory = Inventory::default();
-        inventory.add_crop(CropType::Starter, 4);
+        inventory.add_crop(CropType::Starter, 1);
         let mut gear = PlayerGear::default();
 
         let outcome = perform(
-            RowAction::Craft(GearSet::Starter),
+            RowAction::Craft(starter_weapon()),
             &mut inventory,
             &mut gear,
         );
 
         match outcome {
             CraftOutcome::Missing { items } => {
-                assert_eq!(items, vec![(ItemCost::Crop(CropType::Starter), 6)])
+                assert_eq!(items, vec![(ItemCost::Crop(CropType::Starter), 1)])
             }
             other => panic!("unexpected outcome {other:?}"),
         }
-        assert_eq!(inventory.crop_count(CropType::Starter), 4);
+        assert_eq!(inventory.crop_count(CropType::Starter), 1);
         assert!(gear.owned.is_empty());
     }
 
     #[test]
-    fn perform_craft_refuses_a_set_that_is_already_owned() {
+    fn perform_craft_refuses_a_piece_that_is_already_owned() {
         let mut inventory = Inventory::default();
-        inventory.add_crop(CropType::Starter, 30);
+        inventory.add_crop(CropType::Starter, 4);
         let mut gear = PlayerGear::default();
         perform(
-            RowAction::Craft(GearSet::Starter),
+            RowAction::Craft(starter_weapon()),
             &mut inventory,
             &mut gear,
         );
 
         let outcome = perform(
-            RowAction::Craft(GearSet::Starter),
+            RowAction::Craft(starter_weapon()),
             &mut inventory,
             &mut gear,
         );
@@ -502,35 +502,32 @@ mod tests {
         assert_eq!(
             outcome,
             CraftOutcome::AlreadyOwned {
-                set: GearSet::Starter
+                piece: starter_weapon()
             }
         );
-        assert_eq!(inventory.crop_count(CropType::Starter), 20);
-        assert_eq!(gear.owned.len(), 2);
+        assert_eq!(inventory.crop_count(CropType::Starter), 2);
+        assert_eq!(gear.owned.len(), 1);
     }
 
     #[test]
     fn perform_equip_allows_mixing_sets() {
         let mut inventory = Inventory::default();
-        inventory.add_crop(CropType::Starter, 10);
+        inventory.add_crop(CropType::Starter, 5);
         let mut gear = PlayerGear::default();
         perform(
-            RowAction::Craft(GearSet::Starter),
+            RowAction::Craft(starter_weapon()),
             &mut inventory,
             &mut gear,
         );
-        gear.own(GearPiece::new(GearSet::Master, GearSlot::Weapon));
+        perform(RowAction::Craft(starter_armor()), &mut inventory, &mut gear);
+        gear.own(master_weapon());
 
-        let outcome = perform(
-            RowAction::Equip(GearPiece::new(GearSet::Master, GearSlot::Weapon)),
-            &mut inventory,
-            &mut gear,
-        );
+        let outcome = perform(RowAction::Equip(master_weapon()), &mut inventory, &mut gear);
 
         assert_eq!(
             outcome,
             CraftOutcome::Equipped {
-                piece: GearPiece::new(GearSet::Master, GearSlot::Weapon)
+                piece: master_weapon()
             }
         );
         assert_eq!(gear.weapon.unwrap().set, GearSet::Master);
@@ -556,34 +553,34 @@ mod tests {
     fn outcome_notices_mention_the_reason() {
         assert_eq!(
             CraftOutcome::Crafted {
-                set: GearSet::BossA
+                piece: GearPiece::new(GearSet::BossA, GearSlot::Weapon)
             }
             .notice(),
-            "Crafted Boss A Set"
+            "Crafted Boss A Spearblade"
         );
         assert_eq!(
             CraftOutcome::Equipped {
-                piece: GearPiece::new(GearSet::Starter, GearSlot::Weapon)
+                piece: starter_weapon()
             }
             .notice(),
-            "Equipped Wooden Sword (Starter Set)"
+            "Equipped Starter Spearblade (Starter Set)"
         );
         assert_eq!(
             CraftOutcome::Missing {
                 items: vec![
-                    (ItemCost::Crop(CropType::CropB), 5),
-                    (ItemCost::Material(MaterialType::BossB), 3),
+                    (ItemCost::Crop(CropType::CropB), 2),
+                    (ItemCost::Material(MaterialType::BossB1), 1),
                 ]
             }
             .notice(),
-            "Missing: Crop B x5, Boss B Material x3"
+            "Missing: Crop B x2, Boss B Material 1 x1"
         );
         assert_eq!(
             CraftOutcome::AlreadyOwned {
-                set: GearSet::Master
+                piece: master_weapon()
             }
             .notice(),
-            "Master Set already owned"
+            "Master Spearblade already owned"
         );
     }
 
@@ -644,7 +641,7 @@ mod tests {
     #[test]
     fn closing_clears_a_pending_notice() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
         assert!(!menu(&app).notice.is_empty());
@@ -680,40 +677,40 @@ mod tests {
     #[test]
     fn selection_covers_owned_rows_after_crafting() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
-        assert_eq!(gear(&app).owned.len(), 2);
+        assert_eq!(gear(&app).owned.len(), 1);
 
-        for _ in 0..4 {
+        for _ in 0..RECIPE_COUNT {
             press(&mut app, KeyCode::ArrowDown);
         }
         assert_eq!(menu(&app).selected, RECIPE_COUNT);
         press(&mut app, KeyCode::ArrowDown);
-        assert_eq!(menu(&app).selected, RECIPE_COUNT + 1);
+        assert_eq!(menu(&app).selected, RECIPE_COUNT);
     }
 
     #[test]
-    fn enter_crafts_affordable_recipe_and_emits_messages() {
+    fn enter_crafts_affordable_piece_and_emits_messages() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
 
-        assert_eq!(inventory(&app).crop_count(CropType::Starter), 0);
-        assert_eq!(gear(&app).owned.len(), 2);
-        assert_eq!(crafted(&app).len(), 2);
-        assert_eq!(equipped(&app), vec![GearSlot::Weapon, GearSlot::Armor]);
-        assert_eq!(menu(&app).notice, "Crafted Starter Set");
+        assert_eq!(inventory(&app).crop_count(CropType::Starter), 3);
+        assert_eq!(gear(&app).owned.len(), 1);
+        assert_eq!(crafted(&app), vec![starter_weapon()]);
+        assert_eq!(equipped(&app), vec![GearSlot::Weapon]);
+        assert_eq!(menu(&app).notice, "Crafted Starter Spearblade");
     }
 
     #[test]
     fn e_key_also_crafts() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         open_menu(&mut app);
         press(&mut app, KeyCode::KeyE);
-        assert_eq!(gear(&app).owned.len(), 2);
+        assert_eq!(gear(&app).owned.len(), 1);
     }
 
     #[test]
@@ -724,45 +721,43 @@ mod tests {
 
         assert!(gear(&app).owned.is_empty());
         assert!(crafted(&app).is_empty());
-        assert_eq!(menu(&app).notice, "Missing: Starter Crop x10");
+        assert_eq!(menu(&app).notice, "Missing: Starter Crop x2");
     }
 
     #[test]
     fn enter_equips_an_owned_piece_row() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
-        assert_eq!(menu(&app).notice, "Crafted Starter Set");
+        select(&mut app, 1);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(menu(&app).notice, "Crafted Cloth Tunic");
 
         app.world_mut()
             .resource_mut::<PlayerGear>()
-            .own(GearPiece::new(GearSet::Master, GearSlot::Weapon));
+            .own(master_weapon());
         select(&mut app, OWNED_ROW_OFFSET + 2);
         press(&mut app, KeyCode::Enter);
 
-        assert_eq!(menu(&app).notice, "Equipped Dreamlayer Blade (Master Set)");
+        assert_eq!(menu(&app).notice, "Equipped Master Spearblade (Master Set)");
         let gear = gear(&app);
-        assert_eq!(
-            gear.weapon,
-            Some(GearPiece::new(GearSet::Master, GearSlot::Weapon))
-        );
-        assert_eq!(
-            gear.armor,
-            Some(GearPiece::new(GearSet::Starter, GearSlot::Armor))
-        );
+        assert_eq!(gear.weapon, Some(master_weapon()));
+        assert_eq!(gear.armor, Some(starter_armor()));
     }
 
     #[test]
     fn enter_on_an_already_equipped_piece_reports_it() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
+        press(&mut app, KeyCode::Enter);
+        select(&mut app, 1);
         press(&mut app, KeyCode::Enter);
 
         select(&mut app, OWNED_ROW_OFFSET);
         press(&mut app, KeyCode::Enter);
-        assert_eq!(menu(&app).notice, "Wooden Sword is already equipped");
+        assert_eq!(menu(&app).notice, "Starter Spearblade is already equipped");
 
         select(&mut app, OWNED_ROW_OFFSET + 1);
         press(&mut app, KeyCode::Enter);
@@ -770,22 +765,22 @@ mod tests {
     }
 
     #[test]
-    fn entering_on_an_owned_set_does_not_craft_twice() {
+    fn entering_on_an_owned_piece_does_not_craft_twice() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 30);
+        grant_starter_crops(&mut app, 4);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Enter);
 
-        assert_eq!(menu(&app).notice, "Starter Set already owned");
-        assert_eq!(crafted(&app).len(), 2);
-        assert_eq!(inventory(&app).crop_count(CropType::Starter), 20);
+        assert_eq!(menu(&app).notice, "Starter Spearblade already owned");
+        assert_eq!(crafted(&app).len(), 1);
+        assert_eq!(inventory(&app).crop_count(CropType::Starter), 2);
     }
 
     #[test]
     fn crafting_is_ignored_while_menu_is_closed() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         press(&mut app, KeyCode::Enter);
         assert!(gear(&app).owned.is_empty());
     }
@@ -793,7 +788,7 @@ mod tests {
     #[test]
     fn crafting_is_ignored_outside_farming_phase() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         open_menu(&mut app);
         app.world_mut()
             .resource_mut::<NextState<DayPhase>>()
@@ -806,7 +801,7 @@ mod tests {
     #[test]
     fn clicking_a_recipe_row_crafts_it() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         open_menu(&mut app);
 
         let row = app
@@ -818,15 +813,15 @@ mod tests {
         *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::Pressed;
         app.update();
 
-        assert_eq!(gear(&app).owned.len(), 2);
+        assert_eq!(gear(&app).owned.len(), 1);
         assert_eq!(menu(&app).selected, 0);
-        assert_eq!(menu(&app).notice, "Crafted Starter Set");
+        assert_eq!(menu(&app).notice, "Crafted Starter Spearblade");
     }
 
     #[test]
     fn clicking_an_owned_row_equips_that_piece() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
         open_menu(&mut app);
         press(&mut app, KeyCode::Enter);
 
@@ -843,17 +838,17 @@ mod tests {
         *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::Pressed;
         app.update();
 
-        assert_eq!(menu(&app).notice, "Wooden Sword is already equipped");
+        assert_eq!(menu(&app).notice, "Starter Spearblade is already equipped");
         assert_eq!(
             gear(&app).equipped(GearSlot::Weapon),
-            Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
+            Some(starter_weapon())
         );
     }
 
     #[test]
     fn clicking_while_menu_is_closed_does_nothing() {
         let mut app = setup_app();
-        grant_starter_crops(&mut app, 10);
+        grant_starter_crops(&mut app, 2);
 
         let row = app
             .world_mut()

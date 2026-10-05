@@ -54,7 +54,7 @@ impl Plugin for GamePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::gear::{GearSet, GearSlot};
+    use crate::components::gear::{GearPiece, GearSet, GearSlot, RECIPE_COUNT};
     use crate::components::pot::{CropType, Pot, PotState};
     use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::CraftingStation;
@@ -196,20 +196,29 @@ mod tests {
         station_interaction(&mut app);
         assert!(menu(&app).open);
         assert_eq!(menu_roots(&mut app).len(), 1);
-        assert_eq!(menu_rows(&mut app), 4);
+        assert_eq!(menu_rows(&mut app), RECIPE_COUNT);
 
         tap_key(&mut app, KeyCode::Enter);
-        assert_eq!(menu(&app).notice, "Crafted Starter Set");
+        assert_eq!(menu(&app).notice, "Crafted Starter Spearblade");
+        assert!(gear(&app).owns(&GearPiece::new(GearSet::Starter, GearSlot::Weapon)));
+
+        app.world_mut().resource_mut::<CraftingMenu>().selected = 1;
+        tap_key(&mut app, KeyCode::Enter);
         assert!(gear(&app).owns_set(GearSet::Starter));
         assert_eq!(
             gear(&app).equipped(GearSlot::Weapon),
-            Some(crate::components::gear::GearPiece::new(
-                GearSet::Starter,
-                GearSlot::Weapon
-            ))
+            Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
+        );
+        assert_eq!(
+            gear(&app).equipped(GearSlot::Armor),
+            Some(GearPiece::new(GearSet::Starter, GearSlot::Armor))
         );
 
-        assert_eq!(menu_rows(&mut app), 6, "both owned pieces get rows");
+        assert_eq!(
+            menu_rows(&mut app),
+            RECIPE_COUNT + 2,
+            "both owned pieces get rows"
+        );
 
         tap_key(&mut app, KeyCode::Escape);
         assert!(!menu(&app).open);
@@ -247,7 +256,7 @@ mod tests {
         assert!(
             texts
                 .iter()
-                .any(|text| text.contains("Starter Crop 12/10") && text.contains("Craft")),
+                .any(|text| text.contains("Starter Crop 12/2") && text.contains("Craft")),
             "craftable row status missing from {texts:?}"
         );
     }
@@ -280,7 +289,7 @@ mod tests {
         }
 
         assert_eq!(menu_roots(&mut app), vec![root]);
-        assert_eq!(menu_rows(&mut app), 4);
+        assert_eq!(menu_rows(&mut app), RECIPE_COUNT);
         assert_eq!(menu(&app).selected, 0);
     }
 
@@ -348,17 +357,14 @@ mod tests {
 
         station_interaction(&mut app);
         tap_key(&mut app, KeyCode::Enter);
-        assert!(gear(&app).owns_set(GearSet::Starter));
+        assert!(gear(&app).owns(&GearPiece::new(GearSet::Starter, GearSlot::Weapon)));
 
         tap_key(&mut app, KeyCode::Escape);
         assert!(!menu(&app).open);
 
         app.world_mut()
             .resource_mut::<PlayerGear>()
-            .own(crate::components::gear::GearPiece::new(
-                GearSet::Master,
-                GearSlot::Weapon,
-            ));
+            .own(GearPiece::new(GearSet::Master, GearSlot::Weapon));
         tap_key(&mut app, KeyCode::KeyI);
         assert!(inventory(&app).open);
 
@@ -372,14 +378,11 @@ mod tests {
 
         assert_eq!(
             gear(&app).equipped(GearSlot::Weapon),
-            Some(crate::components::gear::GearPiece::new(
-                GearSet::Master,
-                GearSlot::Weapon
-            ))
+            Some(GearPiece::new(GearSet::Master, GearSlot::Weapon))
         );
         assert_eq!(
             inventory(&app).notice,
-            "Equipped Dreamlayer Blade (Master Set)"
+            "Equipped Master Spearblade (Master Set)"
         );
     }
 

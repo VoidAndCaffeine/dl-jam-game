@@ -1,5 +1,4 @@
 use crate::components::boss::BossId;
-use crate::components::gear::MaterialType;
 use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
 use crate::resources::boss_progress::BossProgress;
@@ -10,9 +9,6 @@ use crate::resources::level::LevelRequest;
 use crate::states::{DayPhase, GameState, Phase};
 use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
-
-/// How much material a boss drops on defeat.
-pub const BOSS_MATERIAL_DROP: u32 = 3;
 
 pub struct DayCyclePlugin;
 
@@ -49,17 +45,12 @@ fn on_boss_defeated(
         let id = event.0;
         progress.record(id);
         match id {
-            BossId::BossA => {
-                unlocks.unlock_crop_a();
-                inventory.add_material(MaterialType::BossA, BOSS_MATERIAL_DROP);
-            }
-            BossId::BossB => {
-                unlocks.unlock_crop_b();
-                inventory.add_material(MaterialType::BossB, BOSS_MATERIAL_DROP);
-            }
-            BossId::Dual => {
-                day_cycle.run_complete = true;
-            }
+            BossId::BossA => unlocks.unlock_crop_a(),
+            BossId::BossB => unlocks.unlock_crop_b(),
+            BossId::Dual => day_cycle.run_complete = true,
+        }
+        for (material, amount) in id.material_drops() {
+            inventory.add_material(*material, *amount);
         }
         day_cycle.finish(Outcome::Victory);
         next_phase.set(DayPhase::Result);
@@ -157,6 +148,7 @@ fn despawn_result_screen(mut commands: Commands, screens: Query<Entity, With<Res
 mod tests {
     use super::*;
     use crate::components::boss::BossId;
+    use crate::components::gear::MaterialType;
     use crate::components::pot::CropType;
     use crate::resources::boss_progress::BossProgress;
     use crate::resources::farm::CropUnlocks;
@@ -203,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn defeating_boss_a_unlocks_crop_a_and_drops_material() {
+    fn defeating_boss_a_unlocks_crop_a_and_drops_materials() {
         let mut app = setup_app();
         set_phase(&mut app, DayPhase::BossFight);
 
@@ -216,12 +208,10 @@ mod tests {
                 .resource::<CropUnlocks>()
                 .is_unlocked(CropType::CropA)
         );
-        assert_eq!(
-            app.world()
-                .resource::<Inventory>()
-                .material_count(MaterialType::BossA),
-            BOSS_MATERIAL_DROP
-        );
+        let inventory = app.world().resource::<Inventory>();
+        assert_eq!(inventory.material_count(MaterialType::BossA1), 1);
+        assert_eq!(inventory.material_count(MaterialType::BossA2), 2);
+        assert_eq!(inventory.material_count(MaterialType::BossB1), 0);
         assert!(progress(&app).boss_a);
         assert_eq!(day_cycle(&app).outcome, Some(Outcome::Victory));
         assert_eq!(
