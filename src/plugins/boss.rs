@@ -79,10 +79,12 @@ fn boss_combat(
     mut commands: Commands,
     phase: Phase,
 ) {
-    if !phase.is_boss_fight() {
-        return;
-    }
+    // Drain every event even outside the fight so farm clicks are never replayed
+    // against a boss once its fight begins.
     for event in events.read() {
+        if !phase.is_boss_fight() {
+            continue;
+        }
         let Ok(mut boss) = bosses.get_mut(event.entity) else {
             continue;
         };

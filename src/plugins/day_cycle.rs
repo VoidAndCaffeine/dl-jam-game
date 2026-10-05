@@ -3,6 +3,7 @@ use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::day_cycle::{DayCycle, Outcome};
+use crate::resources::drop_rng::DropRng;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::level::LevelRequest;
@@ -16,9 +17,13 @@ impl Plugin for DayCyclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DayCycle>()
             .init_resource::<BossProgress>()
+            .init_resource::<DropRng>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
-            .add_systems(OnEnter(GameState::Playing), begin_first_day)
+            .add_systems(
+                OnEnter(GameState::Playing),
+                (begin_first_day, seed_drop_rng),
+            )
             .add_systems(Update, on_boss_defeated)
             .add_systems(Update, on_player_died)
             .add_systems(OnEnter(DayPhase::Result), spawn_result_screen)
@@ -32,6 +37,11 @@ fn begin_first_day(mut day_cycle: ResMut<DayCycle>) {
     day_cycle.request_advance();
 }
 
+/// Seeds the drop RNG once per run so every run rolls differently.
+fn seed_drop_rng(mut rng: ResMut<DropRng>, time: Res<Time>) {
+    *rng = DropRng::seeded(time.elapsed().as_nanos() as u64);
+}
+
 /// Grants the boss's rewards, marks progress, then shows the result.
 fn on_boss_defeated(
     mut events: MessageReader<BossDefeated>,
@@ -39,6 +49,7 @@ fn on_boss_defeated(
     mut unlocks: ResMut<CropUnlocks>,
     mut inventory: ResMut<Inventory>,
     mut day_cycle: ResMut<DayCycle>,
+    mut drop_rng: ResMut<DropRng>,
     mut next_phase: ResMut<NextState<DayPhase>>,
 ) {
     for event in events.read() {
@@ -49,8 +60,9 @@ fn on_boss_defeated(
             BossId::BossB => unlocks.unlock_crop_b(),
             BossId::Dual => day_cycle.run_complete = true,
         }
-        for (material, amount) in id.material_drops() {
-            inventory.add_material(*material, *amount);
+        for (material, range) in id.material_drops() {
+            let amount = drop_rng.roll(range.clone());
+            inventory.add_material(*material, amount);
         }
         day_cycle.finish(Outcome::Victory);
         next_phase.set(DayPhase::Result);
@@ -194,6 +206,20 @@ mod tests {
         app.world().resource::<BossProgress>()
     }
 
+    /// Defeats Boss A with a pinned seed and returns (material 1, material 2).
+    fn boss_a_drops_for_seed(seed: u64) -> (u32, u32) {
+        let mut app = setup_app();
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().insert_resource(DropRng::seeded(seed));
+        app.world_mut().write_message(BossDefeated(BossId::BossA));
+        app.update();
+        let inventory = app.world().resource::<Inventory>();
+        (
+            inventory.material_count(MaterialType::BossA1),
+            inventory.material_count(MaterialType::BossA2),
+        )
+    }
+
     #[test]
     fn defeating_boss_a_unlocks_crop_a_and_drops_materials() {
         let mut app = setup_app();
@@ -209,8 +235,8 @@ mod tests {
                 .is_unlocked(CropType::CropA)
         );
         let inventory = app.world().resource::<Inventory>();
-        assert_eq!(inventory.material_count(MaterialType::BossA1), 1);
-        assert_eq!(inventory.material_count(MaterialType::BossA2), 2);
+        assert!((0..=2).contains(&inventory.material_count(MaterialType::BossA1)));
+        assert!((1..=3).contains(&inventory.material_count(MaterialType::BossA2)));
         assert_eq!(inventory.material_count(MaterialType::BossB1), 0);
         assert!(progress(&app).boss_a);
         assert_eq!(day_cycle(&app).outcome, Some(Outcome::Victory));
@@ -218,6 +244,26 @@ mod tests {
             app.world().resource::<State<DayPhase>>().get(),
             &DayPhase::Result
         );
+    }
+
+    #[test]
+    fn the_same_seed_repeats_the_drop_amounts() {
+        assert_eq!(boss_a_drops_for_seed(7), boss_a_drops_for_seed(7));
+    }
+
+    #[test]
+    fn drops_stay_within_their_ranges_across_seeds() {
+        for seed in 0..64 {
+            let (material_one, material_two) = boss_a_drops_for_seed(seed);
+            assert!(
+                (0..=2).contains(&material_one),
+                "seed {seed} dropped {material_one} material 1"
+            );
+            assert!(
+                (1..=3).contains(&material_two),
+                "seed {seed} dropped {material_two} material 2"
+            );
+        }
     }
 
     #[test]

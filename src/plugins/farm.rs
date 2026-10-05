@@ -100,10 +100,12 @@ fn pot_interaction_handler(
     mut harvested_events: MessageWriter<CropHarvested>,
     phase: Phase,
 ) {
-    if !phase.is_farming() {
-        return;
-    }
+    // Drain every event even outside farming so clicks made during a boss fight
+    // can never be replayed against the pots once the farm is back.
     for event in events.read() {
+        if !phase.is_farming() {
+            continue;
+        }
         let Ok(mut pot) = pots.get_mut(event.entity) else {
             continue;
         };
@@ -299,6 +301,38 @@ mod tests {
         assert!(!app.world().resource::<CropSelectMenu>().open);
     }
 
+    #[test]
+    fn stale_boss_fight_clicks_do_not_replay_on_the_farm() {
+        let mut app = setup_handler_app();
+        let pot = app.world_mut().spawn(Pot::new(0)).id();
+
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::BossFight);
+        app.update();
+
+        app.world_mut().write_message(InteractionEvent {
+            entity: pot,
+            interaction_type: InteractionType::FarmAction,
+        });
+        app.update();
+
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::Farming);
+        app.update();
+
+        assert_eq!(
+            app.world().get::<Pot>(pot).unwrap().state,
+            PotState::Empty,
+            "a click made during the boss fight must not affect the pot later"
+        );
+        assert!(
+            !app.world().resource::<CropSelectMenu>().open,
+            "the picker must not open from a stale click"
+        );
+    }
+
     fn setup_farm_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
@@ -444,7 +478,7 @@ mod tests {
             .world()
             .get::<Pot>(restored_index)
             .expect("pot is respawned");
-        assert_eq!(restored.state, PotState::Planted);
+        assert_eq!(restored.state, PotState::Watered);
         assert_eq!(restored.crop_type, CropType::CropA);
         assert_eq!(restored.days_remaining, CropType::CropA.growth_days());
     }

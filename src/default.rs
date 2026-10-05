@@ -469,7 +469,7 @@ mod tests {
         tap_key(&mut app, KeyCode::Enter);
 
         let planted = app.world().get::<Pot>(pot).expect("pot still exists");
-        assert_eq!(planted.state, PotState::Planted);
+        assert_eq!(planted.state, PotState::Watered);
         assert_eq!(planted.crop_type, CropType::CropA);
         assert!(!app.world().resource::<CropSelectMenu>().open);
         assert!(crop_roots(&mut app).is_empty());

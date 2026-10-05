@@ -62,11 +62,13 @@ impl Pot {
         }
     }
 
+    /// Plants a crop already watered, so the day it is planted counts as its
+    /// first watered day. It still needs watering again on later days.
     pub fn plant(&mut self, crop_type: CropType) {
-        self.state = PotState::Planted;
+        self.state = PotState::Watered;
         self.crop_type = crop_type;
         self.days_remaining = crop_type.growth_days();
-        self.watered_today = false;
+        self.watered_today = true;
     }
 
     pub fn water(&mut self) -> bool {
@@ -129,10 +131,10 @@ mod tests {
     fn pot_plant_sets_correct_values() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::Starter);
-        assert_eq!(pot.state, PotState::Planted);
+        assert_eq!(pot.state, PotState::Watered);
         assert_eq!(pot.days_remaining, 3);
         assert_eq!(pot.crop_type, CropType::Starter);
-        assert!(!pot.watered_today);
+        assert!(pot.watered_today);
     }
 
     #[test]
@@ -153,10 +155,15 @@ mod tests {
     fn pot_water_works_once_per_day() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::Starter);
-        assert!(pot.water());
+        assert!(!pot.water(), "planting already watered the crop");
         assert_eq!(pot.state, PotState::Watered);
         assert!(pot.watered_today);
-        assert!(!pot.water());
+
+        pot.advance_day();
+        assert_eq!(pot.state, PotState::Planted);
+        assert!(!pot.watered_today);
+        assert!(pot.water());
+        assert!(!pot.water(), "only one watering per day");
     }
 
     #[test]
@@ -229,11 +236,11 @@ mod tests {
         let mut pot = Pot::new(0);
         assert_eq!(pot.color(), Color::srgb(1.0, 0.2, 0.2));
         pot.plant(CropType::Starter);
+        assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
+        pot.advance_day();
         assert_eq!(pot.color(), Color::srgb(0.2, 1.0, 0.2));
         pot.water();
         assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
-        pot.advance_day();
-        pot.water();
         pot.advance_day();
         pot.water();
         pot.advance_day();

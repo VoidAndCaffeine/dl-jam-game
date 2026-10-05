@@ -27,10 +27,12 @@ fn open_boss_select_on_gate(
     mut next_phase: ResMut<NextState<DayPhase>>,
     phase: Phase,
 ) {
-    if !phase.is_farming() {
-        return;
-    }
+    // Drain every event even outside farming so stale clicks cannot reopen the
+    // menu once the farm is back.
     for event in events.read() {
+        if !phase.is_farming() {
+            continue;
+        }
         if event.interaction_type == InteractionType::BossArena {
             menu.open_menu();
             next_phase.set(DayPhase::BossSelect);

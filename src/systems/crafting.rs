@@ -169,10 +169,12 @@ pub fn open_menu_on_station_interaction(
     mut menu: ResMut<CraftingMenu>,
     phase: Phase,
 ) {
-    if !phase.is_farming() {
-        return;
-    }
+    // Drain every event even outside farming so stale clicks cannot reopen the
+    // menu once the farm is back.
     for event in events.read() {
+        if !phase.is_farming() {
+            continue;
+        }
         if event.interaction_type == InteractionType::Crafting {
             menu.open_menu();
         }

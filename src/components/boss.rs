@@ -2,6 +2,7 @@ use crate::components::gear::MaterialType;
 use crate::levels::LevelId;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::ops::RangeInclusive;
 
 pub const BOSS_SIZE: f32 = 64.0;
 /// Placeholder bosses die from a single interaction for now.
@@ -45,12 +46,12 @@ impl BossId {
         }
     }
 
-    /// The materials a defeat drops. Each boss yields enough of its own
-    /// materials to craft that boss's weapon and armor.
-    pub fn material_drops(self) -> &'static [(MaterialType, u32)] {
+    /// The materials a defeat can drop, each with its inclusive roll range.
+    /// Every boss yields its own two materials.
+    pub fn material_drops(self) -> &'static [(MaterialType, RangeInclusive<u32>)] {
         match self {
-            BossId::BossA => &[(MaterialType::BossA1, 1), (MaterialType::BossA2, 2)],
-            BossId::BossB => &[(MaterialType::BossB1, 1), (MaterialType::BossB2, 2)],
+            BossId::BossA => &[(MaterialType::BossA1, 0..=2), (MaterialType::BossA2, 1..=3)],
+            BossId::BossB => &[(MaterialType::BossB1, 0..=2), (MaterialType::BossB2, 1..=3)],
             BossId::Dual => &[],
         }
     }
@@ -135,11 +136,11 @@ mod tests {
     fn bosses_drop_their_own_materials() {
         assert_eq!(
             BossId::BossA.material_drops(),
-            &[(MaterialType::BossA1, 1), (MaterialType::BossA2, 2)]
+            &[(MaterialType::BossA1, 0..=2), (MaterialType::BossA2, 1..=3),]
         );
         assert_eq!(
             BossId::BossB.material_drops(),
-            &[(MaterialType::BossB1, 1), (MaterialType::BossB2, 2)]
+            &[(MaterialType::BossB1, 0..=2), (MaterialType::BossB2, 1..=3),]
         );
         assert!(BossId::Dual.material_drops().is_empty());
     }

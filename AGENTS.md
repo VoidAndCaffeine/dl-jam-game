@@ -118,7 +118,7 @@ auto-equips when crafted.
 | Boss B Spearblade | Crop B ×2 + Boss B Material 1 ×1 |
 | Boss B Armor | Crop B ×3 + Boss B Material 2 ×2 |
 | Master Spearblade | each Crop ×1 + both bosses' Material 1 ×2 |
-| Master Armor | each Crop ×3 + both bosses' Material 2 ×3 |
+| Master Armor | each Crop ×3 + both bosses' Material 2 ×4 |
 
 - 4 sets, each 1 weapon (affects attack pattern/damage) + 1 armor (affects HP/defense)
 - Crafting UI shows one recipe row per piece; owned pieces get an equip row
@@ -128,8 +128,8 @@ auto-equips when crafted.
 
 | Boss | Access           | Patterns | Drops |
 |------|------------------|----------|-------|
-| **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material 1 ×1 + Boss A Material 2 ×2, unlocks Boss A Crop |
-| **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material 1 ×1 + Boss B Material 2 ×2, unlocks Boss B Crop |
+| **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material 1 ×0-2 + Boss A Material 2 ×1-3 (rolled), unlocks Boss A Crop |
+| **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material 1 ×0-2 + Boss B Material 2 ×1-3 (rolled), unlocks Boss B Crop |
 | **Dual Boss** | After A+B beaten | Combined patterns, shared HP | Victory |
 
 ## 5. Development Workflow

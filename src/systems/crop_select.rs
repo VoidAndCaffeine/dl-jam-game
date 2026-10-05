@@ -297,7 +297,7 @@ mod tests {
 
         press(&mut app, KeyCode::Enter);
 
-        assert_eq!(pot(&app, pot_entity).state, PotState::Planted);
+        assert_eq!(pot(&app, pot_entity).state, PotState::Watered);
         assert_eq!(pot(&app, pot_entity).crop_type, CropType::Starter);
         assert_eq!(planted(&app), vec![CropType::Starter]);
         assert!(!menu(&app).open, "planting closes the picker");

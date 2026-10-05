@@ -4,6 +4,7 @@ pub mod camera;
 pub mod crafting_menu;
 pub mod crop_select;
 pub mod day_cycle;
+pub mod drop_rng;
 pub mod farm;
 pub mod inventory;
 pub mod inventory_panel;

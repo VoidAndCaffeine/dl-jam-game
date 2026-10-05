@@ -2294,6 +2294,7 @@ dependencies = [
  "bevy",
  "bincode",
  "log",
+ "rand",
  "serde",
  "serde_json",
  "wasm-bindgen",

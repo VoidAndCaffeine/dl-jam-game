@@ -137,12 +137,12 @@ impl GearPiece {
         match (self.set, self.slot) {
             (GearSet::Starter, GearSlot::Weapon) => "Starter Spearblade",
             (GearSet::Starter, GearSlot::Armor) => "Cloth Tunic",
-            (GearSet::BossA, GearSlot::Weapon) => "Boss A Spearblade",
+            (GearSet::BossA, GearSlot::Weapon) => "Spark Spearblade",
             (GearSet::BossA, GearSlot::Armor) => "Ember Mail",
-            (GearSet::BossB, GearSlot::Weapon) => "Boss B Spearblade",
+            (GearSet::BossB, GearSlot::Weapon) => "Shadow Spearblade",
             (GearSet::BossB, GearSlot::Armor) => "Gloom Robe",
-            (GearSet::Master, GearSlot::Weapon) => "Master Spearblade",
-            (GearSet::Master, GearSlot::Armor) => "Dreamlayer Aegis",
+            (GearSet::Master, GearSlot::Weapon) => "Dreaming Spearblade",
+            (GearSet::Master, GearSlot::Armor) => "Layered Aegis",
         }
     }
 
@@ -406,7 +406,7 @@ mod tests {
             assert!(recipe.cost.contains(&(ItemCost::Crop(crop), 3)));
         }
         for material in [MaterialType::BossA2, MaterialType::BossB2] {
-            assert!(recipe.cost.contains(&(ItemCost::Material(material), 3)));
+            assert!(recipe.cost.contains(&(ItemCost::Material(material), 4)));
         }
     }
 
