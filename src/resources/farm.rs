@@ -1,3 +1,4 @@
+use crate::components::pot::Pot;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,13 @@ impl DayCounter {
     pub fn advance(&mut self) {
         self.0 += 1;
     }
+}
+
+/// The farm's pots, kept across room swaps so planted crops survive boss
+/// fights. Indexed by [`Pot::index`].
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug)]
+pub struct FarmState {
+    pub pots: Vec<Pot>,
 }
 
 #[derive(Resource, Reflect, Serialize, Deserialize, Debug)]

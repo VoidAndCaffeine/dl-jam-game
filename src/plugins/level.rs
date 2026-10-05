@@ -5,6 +5,7 @@ use crate::levels::{LevelId, PropKind, TileKind};
 use crate::plugins::farm::spawn_pot;
 use crate::plugins::gear::spawn_crafting_station;
 use crate::plugins::interaction::{BossArenaEntry, HIGHLIGHT_Z, HighlightMarker, Interactable};
+use crate::resources::farm::FarmState;
 use crate::resources::level::{
     ActiveLevel, BossSpawn, LevelEntity, LevelRequest, LevelSet, PlayerSpawn, build_level,
     prop_position, prop_positions,
@@ -35,6 +36,7 @@ impl Plugin for LevelPlugin {
             .init_resource::<PlayerSpawn>()
             .init_resource::<BossSpawn>()
             .init_resource::<LevelRequest>()
+            .init_resource::<FarmState>()
             .init_resource::<BuiltTiles>()
             .configure_sets(Update, (LevelSet::Load, LevelSet::TileChunk).chain())
             .add_systems(
@@ -53,8 +55,16 @@ fn enter_level(
     mut level: LevelState,
     existing: Query<(Entity, &LevelEntity)>,
     movers: Movers,
+    farm: Res<FarmState>,
 ) {
-    swap_level(&mut commands, LevelId::Farm, &mut level, &existing, movers);
+    swap_level(
+        &mut commands,
+        LevelId::Farm,
+        &mut level,
+        &existing,
+        movers,
+        &farm,
+    );
 }
 
 /// Moves to whatever room was requested, if it is not the one already loaded.
@@ -64,6 +74,7 @@ pub fn apply_level_request(
     mut level: LevelState,
     existing: Query<(Entity, &LevelEntity)>,
     movers: Movers,
+    farm: Res<FarmState>,
 ) {
     let Some(requested) = request.0.take() else {
         return;
@@ -71,7 +82,14 @@ pub fn apply_level_request(
     if requested == level.active.id {
         return;
     }
-    swap_level(&mut commands, requested, &mut level, &existing, movers);
+    swap_level(
+        &mut commands,
+        requested,
+        &mut level,
+        &existing,
+        movers,
+        &farm,
+    );
 }
 
 /// Asks the game to show a different room. Takes effect on the next update.
@@ -85,6 +103,7 @@ fn swap_level(
     level: &mut LevelState,
     existing: &Query<(Entity, &LevelEntity)>,
     mut movers: Movers,
+    farm: &FarmState,
 ) {
     let (def, grid) = build_level(id);
 
@@ -117,7 +136,11 @@ fn swap_level(
     let mut spawned: Vec<Entity> = Vec::new();
 
     for (index, position) in pots.into_iter().enumerate() {
-        spawned.push(spawn_pot(commands, index, position));
+        let entity = spawn_pot(commands, index, position);
+        if let Some(saved) = farm.pots.get(index) {
+            commands.entity(entity).insert(*saved);
+        }
+        spawned.push(entity);
     }
     if let Some(position) = station {
         spawned.push(spawn_crafting_station(commands, position));
@@ -251,14 +274,22 @@ pub fn despawn_all_levels(mut commands: Commands, existing: Query<(Entity, &Leve
 
 /// Flattens a level into the tile data a [`TilemapChunk`] renders.
 ///
-/// No row flipping happens here: `TilemapChunkTileData` is indexed top-down,
-/// exactly like the level file. Only world-space lookups need the flip, which
-/// is why [`SolidGrid`] and the spawn points use bottom-up rows instead.
+/// `TilemapChunkTileData` is indexed in world order: row 0 is the **bottom**
+/// row, matching [`TilemapChunk::calculate_tile_transform`]. Level files are
+/// written top-down, so the rows are flipped here exactly once, the same way
+/// [`SolidGrid`] flips them for collision and spawn points.
 pub fn level_tile_data(def: &crate::utils::level_parse::LevelDef) -> Vec<Option<TileData>> {
-    def.tiles
-        .iter()
-        .map(|kind| Some(TileData::from_tileset_index(kind.tileset_index())))
-        .collect()
+    let width = def.width as usize;
+    let mut data = vec![None; (def.width * def.height) as usize];
+    for file_row in 0..def.height {
+        let world_row = def.world_row(file_row) as usize;
+        for col in 0..def.width {
+            let kind = def.tile(col, file_row).unwrap_or(TileKind::Void);
+            data[world_row * width + col as usize] =
+                Some(TileData::from_tileset_index(kind.tileset_index()));
+        }
+    }
+    data
 }
 
 /// Builds a flat-colour tileset so rooms are visible before the art lands.
@@ -369,18 +400,41 @@ mod tests {
     }
 
     #[test]
-    fn tile_data_keeps_the_file_row_order() {
+    fn tile_data_is_written_in_world_row_order() {
         let def = crate::utils::level_parse::parse("[tiles]\n#\n.\n").unwrap();
         let data = level_tile_data(&def);
         assert_eq!(data.len(), 2);
         assert_eq!(
             data[0].unwrap().tileset_index,
-            TileKind::Wall.tileset_index()
+            TileKind::Dirt.tileset_index(),
+            "row 0 is the bottom row, which is the last row of the file"
         );
         assert_eq!(
             data[1].unwrap().tileset_index,
-            TileKind::Dirt.tileset_index()
+            TileKind::Wall.tileset_index(),
+            "the first row of the file is the top world row"
         );
+    }
+
+    #[test]
+    fn tile_data_rows_follow_the_world_row_mapping() {
+        for id in LevelId::ALL {
+            let def = id.parse().unwrap();
+            let data = level_tile_data(&def);
+            for world_row in 0..def.height {
+                let file_row = def.file_row(world_row);
+                for col in 0..def.width {
+                    let index = (world_row * def.width + col) as usize;
+                    let expected = def.tile(col, file_row).unwrap();
+                    assert_eq!(
+                        data[index].unwrap().tileset_index,
+                        expected.tileset_index(),
+                        "{}: world row {world_row} (file row {file_row}) col {col}",
+                        id.file_name()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

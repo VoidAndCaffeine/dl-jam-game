@@ -3,8 +3,9 @@ use crate::components::pot::{CropType, Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
 use crate::plugins::interaction::{FarmPot, HighlightMarker, Interactable};
 use crate::resources::day_cycle::DayCycle;
-use crate::resources::farm::{CropUnlocks, DayCounter};
+use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::inventory::Inventory;
+use crate::resources::level::LevelSet;
 use crate::states::{GameState, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
@@ -15,6 +16,7 @@ impl Plugin for FarmPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DayCounter>()
             .init_resource::<CropUnlocks>()
+            .init_resource::<FarmState>()
             .init_resource::<Inventory>()
             .init_resource::<DayCycle>()
             .add_message::<CropPlanted>()
@@ -24,9 +26,13 @@ impl Plugin for FarmPlugin {
             .add_systems(OnExit(GameState::Playing), despawn_pots)
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
-            .add_systems(Update, debug_advance_day)
+            .add_systems(Update, begin_next_day.after(LevelSet::Load))
+            .add_systems(Update, debug_advance_day.after(LevelSet::Load))
             .add_systems(Update, harvest_into_inventory)
-            .add_systems(Update, begin_next_day);
+            .add_systems(
+                Update,
+                snapshot_pots.after(begin_next_day).after(debug_advance_day),
+            );
     }
 }
 
@@ -210,9 +216,20 @@ fn update_pot_visuals(
     }
 }
 
+fn snapshot_pots(pots: Query<&Pot>, mut farm: ResMut<FarmState>) {
+    if pots.is_empty() {
+        return;
+    }
+    let mut snapshot: Vec<Pot> = pots.iter().copied().collect();
+    snapshot.sort_by_key(|pot| pot.index);
+    farm.pots = snapshot;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::levels::LevelId;
+    use crate::resources::level::LevelRequest;
     use crate::states::DayPhase;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
@@ -245,6 +262,11 @@ mod tests {
         app.world_mut()
             .resource_mut::<NextState<GameState>>()
             .set(GameState::Victory);
+        app.update();
+    }
+
+    fn request_level(app: &mut App, id: LevelId) {
+        app.world_mut().resource_mut::<LevelRequest>().0 = Some(id);
         app.update();
     }
 
@@ -306,6 +328,117 @@ mod tests {
         app.update();
 
         assert_eq!(pot_indices(&mut app).len(), POT_COUNT);
+    }
+
+    #[test]
+    fn a_fresh_farm_starts_with_empty_pots() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        let farm = app.world().resource::<FarmState>();
+        assert_eq!(farm.pots.len(), POT_COUNT);
+        assert!(farm.pots.iter().all(|pot| pot.state == PotState::Empty));
+    }
+
+    #[test]
+    fn the_farm_state_tracks_planted_and_watered_pots() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        let pot = pot_entity(&mut app, 0);
+        {
+            let mut planted = app.world_mut().get_mut::<Pot>(pot).expect("pot entity");
+            planted.plant(CropType::Starter);
+            planted.water();
+        }
+        app.update();
+
+        let farm = app.world().resource::<FarmState>();
+        assert_eq!(farm.pots.len(), POT_COUNT);
+        assert_eq!(farm.pots[0].state, PotState::Watered);
+        assert!(farm.pots[0].watered_today);
+        assert_eq!(farm.pots[1].state, PotState::Empty);
+    }
+
+    #[test]
+    fn planted_crops_survive_a_boss_fight_round_trip() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        let pot = pot_entity(&mut app, 0);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .expect("pot entity")
+            .plant(CropType::CropA);
+        app.update();
+
+        request_level(&mut app, LevelId::ArenaA);
+        assert!(pot_indices(&mut app).is_empty(), "the farm is left behind");
+
+        request_level(&mut app, LevelId::Farm);
+        let restored_index = pot_entity(&mut app, 0);
+        let restored = app
+            .world()
+            .get::<Pot>(restored_index)
+            .expect("pot is respawned");
+        assert_eq!(restored.state, PotState::Planted);
+        assert_eq!(restored.crop_type, CropType::CropA);
+        assert_eq!(restored.days_remaining, CropType::CropA.growth_days());
+    }
+
+    #[test]
+    fn watered_crops_advance_a_day_when_returning_from_a_boss_fight() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        let pot = pot_entity(&mut app, 0);
+        {
+            let mut planted = app.world_mut().get_mut::<Pot>(pot).expect("pot entity");
+            planted.plant(CropType::Starter);
+            planted.water();
+        }
+        app.update();
+
+        request_level(&mut app, LevelId::ArenaA);
+        app.world_mut().resource_mut::<DayCycle>().request_advance();
+        request_level(&mut app, LevelId::Farm);
+
+        let restored_index = pot_entity(&mut app, 0);
+        let restored = app
+            .world()
+            .get::<Pot>(restored_index)
+            .expect("pot is respawned");
+        assert_eq!(restored.state, PotState::Planted);
+        assert_eq!(restored.days_remaining, CropType::Starter.growth_days() - 1);
+        assert!(!restored.watered_today);
+    }
+
+    #[test]
+    fn harvested_pots_are_still_empty_after_returning_to_the_farm() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        let pot = grow_pot_to_ready(&mut app, 0);
+        let crop = app
+            .world_mut()
+            .get_mut::<Pot>(pot)
+            .expect("pot entity")
+            .harvest()
+            .expect("ripe pot yields a crop");
+        app.world_mut().write_message(CropHarvested(crop));
+        app.update();
+
+        request_level(&mut app, LevelId::ArenaB);
+        request_level(&mut app, LevelId::Farm);
+
+        let restored_index = pot_entity(&mut app, 0);
+        assert_eq!(
+            app.world()
+                .get::<Pot>(restored_index)
+                .expect("pot is respawned")
+                .state,
+            PotState::Empty
+        );
     }
 
     #[test]

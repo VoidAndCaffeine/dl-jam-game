@@ -42,7 +42,7 @@ impl CropType {
     }
 }
 
-#[derive(Component, Reflect, Serialize, Deserialize, Default, Debug)]
+#[derive(Component, Reflect, Serialize, Deserialize, Clone, Copy, Default, Debug)]
 pub struct Pot {
     pub index: usize,
     pub state: PotState,

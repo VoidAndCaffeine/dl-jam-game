@@ -11,7 +11,8 @@ const MAX_PUSH_OUT_STEPS: usize = 4;
 ///
 /// Row 0 is the **bottom** row of the room, matching world space and
 /// `TilemapChunk::calculate_tile_transform`. Level files are written top-down,
-/// so the flip happens once in [`SolidGrid::from_level`] and nowhere else.
+/// so the flip happens once in [`SolidGrid::from_level`]; `level_tile_data`
+/// applies the same flip for rendering.
 /// Anything outside the grid counts as solid so nobody walks off the room.
 #[derive(Resource, Reflect, Clone, Debug, PartialEq)]
 pub struct SolidGrid {

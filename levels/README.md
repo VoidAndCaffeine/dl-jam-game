@@ -119,14 +119,15 @@ There are two row orders in play, and mixing them up flips your level.
 | Where | Row 0 is | Used by |
 |-------|----------|---------|
 | Level file | the **top** row | drawing, `LevelDef::tile`, `LevelDef::is_solid` |
-| World space | the **bottom** row | spawning, movement, `SolidGrid` |
+| World space | the **bottom** row | spawning, movement, rendering, `SolidGrid` |
 
 `LevelDef::world_row(file_row)` converts between them, and `SolidGrid` does the
 conversion once when it is built. Its `is_solid(col, row)` takes a **world** row.
 
-Rendering is the one place where no flip is needed: Bevy's `TilemapChunkTileData`
-is indexed top-down, exactly like the file. Only `TilemapChunk::calculate_tile_transform`
-is y-up.
+Rendering uses the same world order as collision: Bevy's `TilemapChunkTileData`
+is indexed bottom-up (row 0 = bottom), like `TilemapChunk::calculate_tile_transform`.
+`level_tile_data` flips the file's top-down rows into that order once when it
+builds the chunk, so the drawn floor lines up with the props and the `SolidGrid`.
 
 ## What the parser guarantees
 

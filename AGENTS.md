@@ -73,6 +73,11 @@ struct BossProgress {
     dual_boss_unlocked: bool,
     dual_boss_beaten: bool,
 }
+
+#[derive(Resource, Serialize, Deserialize, Reflect, Default)]
+struct FarmState {
+    pots: Vec<Pot>,  // pot state kept across room swaps so crops survive boss fights
+}
 ```
 
 ### Components (all `#[derive(Component, Reflect, Serialize, Deserialize)]`)
@@ -289,8 +294,9 @@ editing or adding a level.
   entities with colliders, which is what keeps collision cheap. Movement resolves
   one axis at a time and sub-steps, so corners slide and nothing tunnels.
 - Bevy 0.19 removed the old tilemap. Tiles use `TilemapChunk` (one draw call) from
-  `bevy::sprite_render`, whose tile data is indexed **top-down** like the files, while
-  `calculate_tile_transform` is y-up.
+  `bevy::sprite_render`, whose tile data is indexed in **world order** (row 0 =
+  bottom), like `calculate_tile_transform` and `SolidGrid`. `level_tile_data`
+  flips the file's top-down rows into that order once when building the chunk.
 - `cargo test levels` validates every level file (sealed border, one player
   spawn, no props inside walls), so a broken level fails the build.
 
