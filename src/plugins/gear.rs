@@ -163,8 +163,8 @@ mod tests {
     }
 
     /// A spot inside the farm that is out of interaction range of everything.
-    fn far_corner(app: &App) -> Vec2 {
-        app.world().resource::<PlayerSpawn>().position
+    fn far_corner(_app: &App) -> Vec2 {
+        Vec2::new(-1000.0, -1000.0)
     }
 
     fn station_position(app: &mut App) -> Vec2 {
@@ -225,6 +225,11 @@ mod tests {
     fn crafting_station_has_hidden_highlight_child() {
         let mut app = setup_gear_app();
         let entity = station_entity(&mut app);
+
+        // Move player far away so highlight stays hidden
+        let far_pos = Vec2::new(-1000.0, -1000.0);
+        move_player(&mut app, far_pos);
+        app.update();
 
         let child_entities: Vec<Entity> = {
             let mut query = app.world_mut().query::<&Children>();

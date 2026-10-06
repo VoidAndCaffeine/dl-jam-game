@@ -377,3 +377,7 @@ cargo llvm-cov --workspace --lcov --output-path lcov.info
 - Simple `setup_app()` helper returning configured `App`
 
 > **Rule**: Tests are only implemented **after** the corresponding feature is implemented. Do not write tests for planned/unimplemented features.
+
+
+## Downloading images from DreamLayer
+- this is how the other agents have successfully downloaded the output images: curl -L -H "Authorization: Bearer $DREAMLAYER_API_KEY" -o file.png "https://"

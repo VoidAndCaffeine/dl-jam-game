@@ -773,7 +773,7 @@ mod tests {
         assert_eq!(equipped(&app), vec![GearSlot::Weapon]);
         assert_eq!(
             panel(&app).notice,
-            "Equipped Master Spearblade (Master Set)"
+            "Equipped Dreaming Spearblade (Master Set)"
         );
     }
 

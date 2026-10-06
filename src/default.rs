@@ -395,7 +395,7 @@ mod tests {
         );
         assert_eq!(
             inventory(&app).notice,
-            "Equipped Master Spearblade (Master Set)"
+            "Equipped Dreaming Spearblade (Master Set)"
         );
     }
 

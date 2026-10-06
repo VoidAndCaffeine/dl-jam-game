@@ -1948,7 +1948,7 @@ mod tests {
         );
         assert_eq!(
             item_name(&mut app, 1),
-            vec!["Master Spearblade (Master Set)".to_string()]
+            vec!["Dreaming Spearblade (Master Set)".to_string()]
         );
         assert_eq!(
             item_detail_text(&mut app, 1),

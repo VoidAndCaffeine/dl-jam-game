@@ -558,7 +558,7 @@ mod tests {
                 piece: GearPiece::new(GearSet::BossA, GearSlot::Weapon)
             }
             .notice(),
-            "Crafted Boss A Spearblade"
+            "Crafted Spark Spearblade"
         );
         assert_eq!(
             CraftOutcome::Equipped {
@@ -582,7 +582,7 @@ mod tests {
                 piece: master_weapon()
             }
             .notice(),
-            "Master Spearblade already owned"
+            "Dreaming Spearblade already owned"
         );
     }
 
@@ -742,7 +742,10 @@ mod tests {
         select(&mut app, OWNED_ROW_OFFSET + 2);
         press(&mut app, KeyCode::Enter);
 
-        assert_eq!(menu(&app).notice, "Equipped Master Spearblade (Master Set)");
+        assert_eq!(
+            menu(&app).notice,
+            "Equipped Dreaming Spearblade (Master Set)"
+        );
         let gear = gear(&app);
         assert_eq!(gear.weapon, Some(master_weapon()));
         assert_eq!(gear.armor, Some(starter_armor()));

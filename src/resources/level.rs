@@ -88,9 +88,9 @@ mod tests {
 
         assert_eq!(pots.len(), 9);
         assert!(!grid.is_solid_at(spawn));
-        assert!(spawn.x < station.x, "player starts left of the station");
+        assert!(spawn.x > station.x, "player starts right of the station");
         assert!(station.x < pots[0].x, "pots sit right of the station");
-        assert!(pots[8].x < gate.x, "the arena gate is the far right");
+        assert!(pots[8].x > gate.x, "pots are to the right of the gate");
         assert!(
             (spawn.y - pots[0].y).abs() > 1.0,
             "pots should not sit on the spawn tile"
