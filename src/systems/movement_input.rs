@@ -2,6 +2,7 @@ use crate::components::player::Movement;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::inventory_panel::InventoryPanel;
+use crate::resources::player_attack_state::PlayerAttackState;
 use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
 
@@ -11,11 +12,13 @@ pub fn movement_input(
     menu: Res<CraftingMenu>,
     inventory: Res<InventoryPanel>,
     crop_select: Res<CropSelectMenu>,
+    attack: Res<PlayerAttackState>,
     phase: Phase,
 ) {
     let frozen = menu.open
         || inventory.open
         || crop_select.open
+        || attack.is_rooted()
         || matches!(phase.day.get(), DayPhase::BossSelect | DayPhase::Result)
         || !phase.is_playing();
     for mut movement in movement_query.iter_mut() {
@@ -53,6 +56,7 @@ mod tests {
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
             .init_resource::<CropSelectMenu>()
+            .init_resource::<PlayerAttackState>()
             .add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .init_state::<GameState>()
             .init_state::<DayPhase>();
@@ -188,6 +192,36 @@ mod tests {
         app.world_mut()
             .resource_mut::<CropSelectMenu>()
             .close_menu();
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
+    }
+
+    #[test]
+    fn movement_is_frozen_while_attacking() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<PlayerAttackState>()
+            .begin(crate::components::attack::AttackType::Light);
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn movement_resumes_once_the_attack_lock_expires() {
+        let mut app = setup_app();
+        app.world_mut()
+            .resource_mut::<PlayerAttackState>()
+            .begin(crate::components::attack::AttackType::Light);
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+
+        app.world_mut()
+            .resource_mut::<PlayerAttackState>()
+            .tick(10.0);
         app.update();
         assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
     }

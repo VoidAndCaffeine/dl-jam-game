@@ -1,15 +1,14 @@
 use crate::components::collider::Collider;
 use crate::components::player::{Health, Movement, Player};
 use crate::resources::level::PlayerSpawn;
+use crate::resources::run_data::PlayerGear;
 use bevy::prelude::*;
 
-pub fn spawn_player(mut commands: Commands, spawn: Res<PlayerSpawn>) {
+pub fn spawn_player(mut commands: Commands, spawn: Res<PlayerSpawn>, gear: Res<PlayerGear>) {
+    let stats = gear.stats();
     commands.spawn((
         Player,
-        Health {
-            current: 100.0,
-            max: 100.0,
-        },
+        Health::new(stats.max_health, stats.armor_reduction),
         Movement::default(),
         Collider {
             size: Vec2::splat(32.0),
@@ -64,6 +63,7 @@ mod tests {
         });
         app.insert_resource(grid);
         app.insert_resource(PlayerSpawn { position: expected });
+        app.init_resource::<PlayerGear>();
         app.add_systems(Update, spawn_player);
         app.update();
 
@@ -80,6 +80,7 @@ mod tests {
     fn despawning_removes_the_player_and_camera() {
         let mut app = App::new();
         app.insert_resource(PlayerSpawn::default());
+        app.init_resource::<PlayerGear>();
         app.add_systems(Update, spawn_player);
         app.update();
         assert_eq!(player_and_camera_count(&mut app), 2);
@@ -94,5 +95,36 @@ mod tests {
             .query_filtered::<Entity, Or<(With<Player>, With<Camera2d>)>>()
             .iter(app.world())
             .count()
+    }
+
+    #[test]
+    fn the_player_starts_with_health_from_equipped_armor() {
+        let mut app = App::new();
+        app.insert_resource(PlayerSpawn::default());
+        let mut gear = PlayerGear::default();
+        let master_armor = crate::components::gear::GearPiece::new(
+            crate::components::gear::GearSet::Master,
+            crate::components::gear::GearSlot::Armor,
+        );
+        gear.own(master_armor);
+        gear.equip(&master_armor);
+        app.insert_resource(gear);
+        app.add_systems(Update, spawn_player);
+        app.update();
+
+        let health = app
+            .world_mut()
+            .query_filtered::<&Health, With<Player>>()
+            .single(app.world())
+            .unwrap();
+        assert_eq!(
+            health.max,
+            crate::components::gear::GearSet::Master.max_health()
+        );
+        assert_eq!(health.current, health.max);
+        assert_eq!(
+            health.armor_reduction,
+            crate::components::gear::GearSet::Master.armor_reduction()
+        );
     }
 }

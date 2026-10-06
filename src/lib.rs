@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
 pub mod components;
+pub mod constants;
 pub mod default;
 pub mod events;
 pub mod levels;

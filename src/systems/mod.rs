@@ -1,9 +1,14 @@
+pub mod boss_ai;
 pub mod boss_select;
 pub mod camera_follow;
+pub mod combat;
 pub mod crafting;
 pub mod crop_select;
+pub mod debug_overlay;
+pub mod hit_effects;
 pub mod inventory;
 pub mod level_movement;
 pub mod movement_input;
+pub mod player_attack;
 pub mod spawn_player;
 pub mod transition;

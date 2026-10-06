@@ -37,6 +37,46 @@ impl GearSet {
             GearPiece::new(*self, GearSlot::Armor),
         ]
     }
+
+    /// Position of this set in the stat tables in [`crate::constants`].
+    pub const fn index(self) -> usize {
+        match self {
+            GearSet::Starter => 0,
+            GearSet::BossA => 1,
+            GearSet::BossB => 2,
+            GearSet::Master => 3,
+        }
+    }
+
+    /// Damage this set's weapon deals per light hit.
+    pub fn weapon_damage(self) -> f32 {
+        crate::constants::SET_DAMAGE[self.index()]
+    }
+
+    /// Flat damage reduction this set's armor provides.
+    pub fn armor_reduction(self) -> f32 {
+        crate::constants::SET_ARMOR[self.index()]
+    }
+
+    /// Total max health this set's armor provides.
+    pub fn max_health(self) -> f32 {
+        crate::constants::SET_MAX_HEALTH[self.index()]
+    }
+
+    /// Reach of this set's light swing.
+    pub fn light_reach(self) -> f32 {
+        crate::constants::SET_LIGHT_REACH[self.index()]
+    }
+
+    /// Reach of this set's heavy swing.
+    pub fn heavy_reach(self) -> f32 {
+        crate::constants::SET_HEAVY_REACH[self.index()]
+    }
+
+    /// Width of this set's heavy swing.
+    pub fn heavy_width(self) -> f32 {
+        crate::constants::SET_HEAVY_WIDTH[self.index()]
+    }
 }
 
 #[derive(
@@ -131,6 +171,36 @@ impl GearPiece {
             GearSet::BossB => WeaponType::BossBSpear,
             GearSet::Master => WeaponType::MasterBlade,
         })
+    }
+
+    /// Damage per light hit, or `None` for armor.
+    pub fn weapon_damage(&self) -> Option<f32> {
+        (self.slot == GearSlot::Weapon).then(|| self.set.weapon_damage())
+    }
+
+    /// Flat damage reduction, or `None` for weapons.
+    pub fn armor_reduction(&self) -> Option<f32> {
+        (self.slot == GearSlot::Armor).then(|| self.set.armor_reduction())
+    }
+
+    /// Total max health, or `None` for weapons.
+    pub fn max_health(&self) -> Option<f32> {
+        (self.slot == GearSlot::Armor).then(|| self.set.max_health())
+    }
+
+    /// Reach of this piece's light swing, or `None` for armor.
+    pub fn light_reach(&self) -> Option<f32> {
+        (self.slot == GearSlot::Weapon).then(|| self.set.light_reach())
+    }
+
+    /// Reach of this piece's heavy swing, or `None` for armor.
+    pub fn heavy_reach(&self) -> Option<f32> {
+        (self.slot == GearSlot::Weapon).then(|| self.set.heavy_reach())
+    }
+
+    /// Width of this piece's heavy swing, or `None` for armor.
+    pub fn heavy_width(&self) -> Option<f32> {
+        (self.slot == GearSlot::Weapon).then(|| self.set.heavy_width())
     }
 
     pub fn name(&self) -> &'static str {
@@ -464,5 +534,60 @@ mod tests {
         let described = piece.describe();
         assert!(described.contains(piece.name()));
         assert!(described.contains(GearSet::BossB.label()));
+    }
+
+    #[test]
+    fn set_indices_are_unique_and_in_order() {
+        for (index, set) in GearSet::ALL.iter().enumerate() {
+            assert_eq!(set.index(), index);
+        }
+    }
+
+    #[test]
+    fn weapons_scale_damage_and_reach_with_the_set() {
+        let damages: Vec<f32> = GearSet::ALL.iter().map(|set| set.weapon_damage()).collect();
+        assert!(damages.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(damages[0], crate::constants::SET_DAMAGE[0]);
+
+        for set in GearSet::ALL {
+            assert!(set.light_reach() > 0.0);
+            assert!(set.heavy_reach() > 0.0);
+            assert!(set.heavy_width() > 0.0);
+        }
+    }
+
+    #[test]
+    fn armor_scales_health_and_reduction_with_the_set() {
+        let health: Vec<f32> = GearSet::ALL.iter().map(|set| set.max_health()).collect();
+        assert!(health.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(health[0], crate::constants::SET_MAX_HEALTH[0]);
+
+        let armor: Vec<f32> = GearSet::ALL
+            .iter()
+            .map(|set| set.armor_reduction())
+            .collect();
+        assert!(armor.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    #[test]
+    fn weapon_and_armor_stats_are_slot_gated() {
+        let weapon = GearPiece::new(GearSet::Master, GearSlot::Weapon);
+        assert_eq!(
+            weapon.weapon_damage(),
+            Some(GearSet::Master.weapon_damage())
+        );
+        assert_eq!(weapon.armor_reduction(), None);
+        assert_eq!(weapon.max_health(), None);
+        assert!(weapon.light_reach().is_some());
+
+        let armor = GearPiece::new(GearSet::Master, GearSlot::Armor);
+        assert_eq!(armor.weapon_damage(), None);
+        assert_eq!(armor.light_reach(), None);
+        assert_eq!(armor.heavy_width(), None);
+        assert_eq!(
+            armor.armor_reduction(),
+            Some(GearSet::Master.armor_reduction())
+        );
+        assert_eq!(armor.max_health(), Some(GearSet::Master.max_health()));
     }
 }

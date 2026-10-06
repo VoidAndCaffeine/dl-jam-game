@@ -47,6 +47,30 @@ pub struct BossDefeated(pub BossId);
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlayerDied;
 
+/// Emitted when a boss crosses into its next phase.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct BossPhaseChanged {
+    pub boss_id: BossId,
+    pub new_phase: u8,
+}
+
+/// Emitted whenever a hit lands, after armor is applied.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct DamageDealt {
+    pub target: Entity,
+    /// Damage actually taken.
+    pub amount: f32,
+    /// Damage before armor.
+    pub raw: f32,
+}
+
+/// Emitted with the world position of an impact, for hit feedback effects.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct HitConfirm {
+    pub target: Entity,
+    pub position: Vec2,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +105,27 @@ mod tests {
             GearEquipped(piece.slot).0,
             crate::components::gear::GearSlot::Weapon
         );
+    }
+
+    #[test]
+    fn combat_messages_carry_their_payload() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn_empty().id();
+
+        let phase = BossPhaseChanged {
+            boss_id: crate::components::boss::BossId::BossB,
+            new_phase: 2,
+        };
+        assert_eq!(phase.boss_id, crate::components::boss::BossId::BossB);
+        assert_eq!(phase.new_phase, 2);
+
+        let damage = DamageDealt {
+            target: entity,
+            amount: 12.0,
+            raw: 22.0,
+        };
+        assert_eq!(damage.target, entity);
+        assert_eq!(damage.amount, 12.0);
+        assert_eq!(damage.raw, 22.0);
     }
 }

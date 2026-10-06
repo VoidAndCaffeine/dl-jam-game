@@ -27,7 +27,7 @@ pub fn grid_movement(
     for (movement, collider, mut transform) in player.iter_mut() {
         let half = collider.size * 0.5;
         let from = transform.translation.truncate();
-        let velocity = movement.input_direction * movement.speed;
+        let velocity = movement.input_direction * movement.speed + movement.velocity;
         let delta = velocity * time.delta_secs();
         if delta == Vec2::ZERO {
             continue;

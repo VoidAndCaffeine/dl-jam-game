@@ -1,6 +1,35 @@
 use crate::components::gear::{GearPiece, GearSet, GearSlot};
+use crate::constants::{
+    PLAYER_BASE_HEALTH, UNARMED_DAMAGE, UNARMED_HEAVY_REACH, UNARMED_HEAVY_WIDTH,
+    UNARMED_LIGHT_REACH,
+};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+
+/// Everything the equipped gear contributes to combat, resolved in one place.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayerStats {
+    pub max_health: f32,
+    pub armor_reduction: f32,
+    pub weapon_damage: f32,
+    pub light_reach: f32,
+    pub heavy_reach: f32,
+    pub heavy_width: f32,
+}
+
+impl PlayerStats {
+    /// The bare-handed baseline used when nothing is equipped.
+    pub fn unarmed() -> Self {
+        Self {
+            max_health: PLAYER_BASE_HEALTH,
+            armor_reduction: 0.0,
+            weapon_damage: UNARMED_DAMAGE,
+            light_reach: UNARMED_LIGHT_REACH,
+            heavy_reach: UNARMED_HEAVY_REACH,
+            heavy_width: UNARMED_HEAVY_WIDTH,
+        }
+    }
+}
 
 #[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone)]
 pub struct PlayerGear {
@@ -65,6 +94,20 @@ impl PlayerGear {
             })
             .collect::<Vec<String>>()
             .join("  |  ")
+    }
+
+    /// Resolves the equipped weapon and armor into combat numbers.
+    pub fn stats(&self) -> PlayerStats {
+        let weapon = self.weapon.map(|piece| piece.set);
+        let armor = self.armor.map(|piece| piece.set);
+        PlayerStats {
+            max_health: armor.map_or(PLAYER_BASE_HEALTH, GearSet::max_health),
+            armor_reduction: armor.map_or(0.0, GearSet::armor_reduction),
+            weapon_damage: weapon.map_or(UNARMED_DAMAGE, GearSet::weapon_damage),
+            light_reach: weapon.map_or(UNARMED_LIGHT_REACH, GearSet::light_reach),
+            heavy_reach: weapon.map_or(UNARMED_HEAVY_REACH, GearSet::heavy_reach),
+            heavy_width: weapon.map_or(UNARMED_HEAVY_WIDTH, GearSet::heavy_width),
+        }
     }
 }
 
@@ -217,5 +260,52 @@ mod tests {
         let summary = geared.equipped_summary();
         assert!(summary.contains("Weapon: Starter Spearblade"));
         assert!(summary.contains("Armor: Cloth Tunic"));
+    }
+
+    #[test]
+    fn unarmoured_player_uses_the_baseline_stats() {
+        let stats = PlayerGear::default().stats();
+        assert_eq!(stats, PlayerStats::unarmed());
+        assert_eq!(stats.max_health, PLAYER_BASE_HEALTH);
+        assert_eq!(stats.armor_reduction, 0.0);
+    }
+
+    #[test]
+    fn stats_follow_the_equipped_weapon_and_armor() {
+        let mut gear = gear_owned_from(0);
+        gear.own(master_weapon());
+        gear.own(GearPiece::new(GearSet::Master, GearSlot::Armor));
+        assert!(gear.equip(&master_weapon()));
+        assert!(gear.equip(&GearPiece::new(GearSet::Master, GearSlot::Armor)));
+
+        let stats = gear.stats();
+        assert_eq!(stats.max_health, GearSet::Master.max_health());
+        assert_eq!(stats.armor_reduction, GearSet::Master.armor_reduction());
+        assert_eq!(stats.weapon_damage, GearSet::Master.weapon_damage());
+        assert_eq!(stats.heavy_width, GearSet::Master.heavy_width());
+    }
+
+    #[test]
+    fn a_weapon_without_armor_keeps_the_base_health() {
+        let mut gear = PlayerGear::default();
+        gear.own(master_weapon());
+        assert!(gear.equip(&master_weapon()));
+
+        let stats = gear.stats();
+        assert_eq!(stats.max_health, PLAYER_BASE_HEALTH);
+        assert_eq!(stats.armor_reduction, 0.0);
+        assert_eq!(stats.weapon_damage, GearSet::Master.weapon_damage());
+    }
+
+    #[test]
+    fn armor_without_a_weapon_keeps_the_unarmed_damage() {
+        let mut gear = PlayerGear::default();
+        let armor = GearPiece::new(GearSet::BossA, GearSlot::Armor);
+        gear.own(armor);
+        assert!(gear.equip(&armor));
+
+        let stats = gear.stats();
+        assert_eq!(stats.weapon_damage, UNARMED_DAMAGE);
+        assert_eq!(stats.max_health, GearSet::BossA.max_health());
     }
 }

@@ -4,6 +4,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::transform::TransformPlugin;
 use dl_jam::GamePlugin;
 use dl_jam::components::boss::{Boss, BossId};
+use dl_jam::components::player::Player;
 use dl_jam::components::pot::CropType;
 use dl_jam::events::{InteractionEvent, InteractionType};
 use dl_jam::levels::LevelId;
@@ -12,6 +13,7 @@ use dl_jam::resources::boss_progress::BossProgress;
 use dl_jam::resources::boss_select::BossSelectMenu;
 use dl_jam::resources::farm::CropUnlocks;
 use dl_jam::resources::level::ActiveLevel;
+use dl_jam::resources::player_attack_state::PlayerAttackState;
 use dl_jam::states::DayPhase;
 
 fn setup_app() -> App {
@@ -75,6 +77,38 @@ fn count<T: Component>(app: &mut App) -> usize {
         .query_filtered::<Entity, With<T>>()
         .iter(app.world())
         .count()
+}
+
+/// Weakens the live boss, stands the player in front of it and lands one light
+/// swing, exercising the real attack, damage and defeat pipeline.
+fn defeat_current_boss(app: &mut App) {
+    let boss = first_of::<Boss>(app);
+    app.world_mut().get_mut::<Boss>(boss).unwrap().health = 1.0;
+    let boss_pos = app
+        .world()
+        .get::<Transform>(boss)
+        .unwrap()
+        .translation
+        .truncate();
+
+    {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&mut Transform, With<Player>>();
+        let mut transform = query.single_mut(app.world_mut()).unwrap();
+        transform.translation.x = boss_pos.x - 40.0;
+        transform.translation.y = boss_pos.y;
+    }
+
+    {
+        let mut state = app.world_mut().resource_mut::<PlayerAttackState>();
+        state.attack_lock = 0.0;
+        state.light_cooldown = 0.0;
+        state.heavy_cooldown = 0.0;
+        state.facing = Vec2::X;
+    }
+    tap(app, KeyCode::KeyQ);
+    step(app, 3);
 }
 
 #[test]
@@ -142,13 +176,8 @@ fn the_full_boss_loop_runs_from_farm_to_result_and_back() {
     assert_eq!(active(&app).id, LevelId::ArenaA);
     assert_eq!(count::<Boss>(&mut app), 1);
 
-    // Attack the placeholder boss.
-    let boss = first_of::<Boss>(&mut app);
-    app.world_mut().write_message(InteractionEvent {
-        entity: boss,
-        interaction_type: InteractionType::FarmAction,
-    });
-    step(&mut app, 3);
+    // Land a lethal swing on the boss.
+    defeat_current_boss(&mut app);
 
     assert_eq!(phase(&app), DayPhase::Result);
     assert!(app.world().resource::<BossProgress>().boss_a);
@@ -189,12 +218,7 @@ fn beating_both_single_bosses_unlocks_the_dual_boss() {
         tap(&mut app, KeyCode::Enter);
         step(&mut app, 3);
 
-        let boss = first_of::<Boss>(&mut app);
-        app.world_mut().write_message(InteractionEvent {
-            entity: boss,
-            interaction_type: InteractionType::FarmAction,
-        });
-        step(&mut app, 3);
+        defeat_current_boss(&mut app);
 
         assert_eq!(phase(&app), DayPhase::Result);
 

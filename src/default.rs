@@ -5,6 +5,7 @@ use crate::plugins::{
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
+use crate::resources::debug_overlay::DebugOverlay;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelSet;
@@ -13,6 +14,7 @@ use crate::states::{DayPhase, GameState};
 use crate::systems::boss_select::BossSelectPlugin;
 use crate::systems::camera_follow::camera_follow;
 use crate::systems::crop_select::CropSelectPlugin;
+use crate::systems::debug_overlay::{debug_aabb_overlay, toggle_debug_overlay};
 use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
 use crate::systems::spawn_player::{despawn_player, spawn_player};
@@ -26,6 +28,7 @@ impl Plugin for GamePlugin {
             .init_state::<DayPhase>()
             .init_resource::<CameraFollowConfig>()
             .init_resource::<CraftingMenu>()
+            .init_resource::<DebugOverlay>()
             .init_resource::<Inventory>()
             .init_resource::<InventoryPanel>()
             .init_resource::<PlayerGear>()
@@ -39,6 +42,7 @@ impl Plugin for GamePlugin {
             .add_plugins(DayCyclePlugin)
             .add_plugins(UIPlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .add_systems(Update, toggle_debug_overlay)
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)
             .add_systems(
                 OnEnter(GameState::Playing),
@@ -48,6 +52,15 @@ impl Plugin for GamePlugin {
             .add_systems(FixedUpdate, movement_input)
             .add_systems(FixedUpdate, grid_movement.after(movement_input))
             .add_systems(FixedUpdate, camera_follow);
+
+        // Gizmos only exist under a renderer; skip the overlay in headless tests.
+        if app
+            .world()
+            .get_resource::<bevy::gizmos::config::GizmoConfigStore>()
+            .is_some()
+        {
+            app.add_systems(Update, debug_aabb_overlay);
+        }
     }
 }
 
