@@ -14,6 +14,9 @@ pub struct PlayerAttackState {
     pub attack_lock: f32,
     /// The direction the next swing will travel.
     pub facing: Vec2,
+    /// The swing being thrown right now, so the sprite can pick the matching
+    /// animation. Cleared when the lock expires.
+    pub current_attack: Option<crate::components::attack::AttackType>,
 }
 
 impl Default for PlayerAttackState {
@@ -23,6 +26,7 @@ impl Default for PlayerAttackState {
             heavy_cooldown: 0.0,
             attack_lock: 0.0,
             facing: Vec2::X,
+            current_attack: None,
         }
     }
 }
@@ -33,6 +37,9 @@ impl PlayerAttackState {
         self.light_cooldown = (self.light_cooldown - dt).max(0.0);
         self.heavy_cooldown = (self.heavy_cooldown - dt).max(0.0);
         self.attack_lock = (self.attack_lock - dt).max(0.0);
+        if self.attack_lock <= 0.0 {
+            self.current_attack = None;
+        }
     }
 
     pub fn is_rooted(&self) -> bool {
@@ -50,6 +57,7 @@ impl PlayerAttackState {
     pub fn begin(&mut self, attack: crate::components::attack::AttackType) {
         use crate::components::attack::AttackType;
         self.attack_lock = crate::constants::ATTACK_DURATION;
+        self.current_attack = Some(attack);
         match attack {
             AttackType::Light => self.light_cooldown = crate::constants::LIGHT_COOLDOWN,
             AttackType::Heavy => self.heavy_cooldown = crate::constants::HEAVY_COOLDOWN,
@@ -99,5 +107,21 @@ mod tests {
         assert_eq!(state.light_cooldown, 0.0);
         assert_eq!(state.heavy_cooldown, 0.0);
         assert_eq!(state.attack_lock, 0.0);
+    }
+
+    #[test]
+    fn begin_records_the_swing_for_the_sprite() {
+        let mut state = PlayerAttackState::default();
+        assert_eq!(state.current_attack, None);
+        state.begin(AttackType::Heavy);
+        assert_eq!(state.current_attack, Some(AttackType::Heavy));
+    }
+
+    #[test]
+    fn the_recorded_swing_clears_once_the_lock_expires() {
+        let mut state = PlayerAttackState::default();
+        state.begin(AttackType::Light);
+        state.tick(crate::constants::ATTACK_DURATION + 0.01);
+        assert_eq!(state.current_attack, None);
     }
 }

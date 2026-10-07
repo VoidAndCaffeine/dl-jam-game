@@ -10,5 +10,6 @@ pub mod inventory;
 pub mod level_movement;
 pub mod movement_input;
 pub mod player_attack;
+pub mod player_sprite;
 pub mod spawn_player;
 pub mod transition;

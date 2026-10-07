@@ -9,6 +9,7 @@ use crate::resources::debug_overlay::DebugOverlay;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelSet;
+use crate::resources::player_sprite::PlayerSpriteAssets;
 use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::boss_select::BossSelectPlugin;
@@ -17,6 +18,9 @@ use crate::systems::crop_select::CropSelectPlugin;
 use crate::systems::debug_overlay::{debug_aabb_overlay, toggle_debug_overlay};
 use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
+use crate::systems::player_sprite::{
+    animate_player_sprite, collect_player_actions, update_player_look,
+};
 use crate::systems::spawn_player::{despawn_player, spawn_player};
 use crate::systems::transition::transition_to_playing;
 
@@ -32,6 +36,7 @@ impl Plugin for GamePlugin {
             .init_resource::<Inventory>()
             .init_resource::<InventoryPanel>()
             .init_resource::<PlayerGear>()
+            .init_resource::<PlayerSpriteAssets>()
             .add_plugins(InteractionPlugin)
             .add_plugins(LevelPlugin)
             .add_plugins(FarmPlugin)
@@ -49,6 +54,11 @@ impl Plugin for GamePlugin {
                 spawn_player.after(LevelSet::Load),
             )
             .add_systems(OnExit(GameState::Playing), despawn_player)
+            .add_systems(Update, (update_player_look, collect_player_actions))
+            .add_systems(
+                Update,
+                animate_player_sprite.after(crate::systems::player_attack::player_attack),
+            )
             .add_systems(FixedUpdate, movement_input)
             .add_systems(FixedUpdate, grid_movement.after(movement_input))
             .add_systems(FixedUpdate, camera_follow);

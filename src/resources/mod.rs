@@ -11,4 +11,5 @@ pub mod inventory;
 pub mod inventory_panel;
 pub mod level;
 pub mod player_attack_state;
+pub mod player_sprite;
 pub mod run_data;

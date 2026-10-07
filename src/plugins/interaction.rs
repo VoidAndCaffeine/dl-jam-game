@@ -59,7 +59,7 @@ pub struct OpenPanels<'w> {
 }
 
 impl OpenPanels<'_> {
-    fn any_open(&self) -> bool {
+    pub fn any_open(&self) -> bool {
         self.menu.open || self.inventory.open || self.crop_select.open
     }
 }

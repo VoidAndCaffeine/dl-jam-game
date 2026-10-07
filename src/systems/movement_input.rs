@@ -1,7 +1,6 @@
 use crate::components::player::Movement;
-use crate::resources::crafting_menu::CraftingMenu;
-use crate::resources::crop_select::CropSelectMenu;
-use crate::resources::inventory_panel::InventoryPanel;
+use crate::components::player_sprite::PlayerAnimation;
+use crate::plugins::interaction::OpenPanels;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
@@ -9,16 +8,17 @@ use bevy::prelude::*;
 pub fn movement_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut movement_query: Query<&mut Movement>,
-    menu: Res<CraftingMenu>,
-    inventory: Res<InventoryPanel>,
-    crop_select: Res<CropSelectMenu>,
+    panels: OpenPanels,
     attack: Res<PlayerAttackState>,
+    animations: Query<&PlayerAnimation>,
     phase: Phase,
 ) {
-    let frozen = menu.open
-        || inventory.open
-        || crop_select.open
+    // A one-shot clip (planting, watering, dying) roots the player just like a
+    // swing does; idle and walk still let them move.
+    let acting = animations.iter().any(PlayerAnimation::is_acting);
+    let frozen = panels.any_open()
         || attack.is_rooted()
+        || acting
         || matches!(phase.day.get(), DayPhase::BossSelect | DayPhase::Result)
         || !phase.is_playing();
     for mut movement in movement_query.iter_mut() {
@@ -48,6 +48,9 @@ pub fn movement_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::crafting_menu::CraftingMenu;
+    use crate::resources::crop_select::CropSelectMenu;
+    use crate::resources::inventory_panel::InventoryPanel;
     use crate::states::GameState;
 
     fn setup_app() -> App {
@@ -222,6 +225,46 @@ mod tests {
         app.world_mut()
             .resource_mut::<PlayerAttackState>()
             .tick(10.0);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
+    }
+
+    #[test]
+    fn movement_is_frozen_while_an_action_animation_plays() {
+        use crate::components::player_sprite::PlayerAnimState;
+
+        let mut app = setup_app();
+        let mut anim = PlayerAnimation::default();
+        anim.start_action(PlayerAnimState::Water);
+        app.world_mut().spawn(anim);
+
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+    }
+
+    #[test]
+    fn movement_resumes_once_an_action_finishes() {
+        use crate::components::player_sprite::PlayerAnimState;
+
+        let mut app = setup_app();
+        let entity = app.world_mut().spawn(PlayerAnimation::default()).id();
+        app.world_mut()
+            .get_mut::<PlayerAnimation>(entity)
+            .unwrap()
+            .start_action(PlayerAnimState::Plant);
+
+        let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        input.press(KeyCode::KeyD);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::ZERO);
+
+        app.world_mut()
+            .get_mut::<PlayerAnimation>(entity)
+            .unwrap()
+            .reset();
         app.update();
         assert_eq!(get_movement(&mut app).input_direction, Vec2::X);
     }

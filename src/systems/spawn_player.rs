@@ -1,5 +1,7 @@
 use crate::components::collider::Collider;
 use crate::components::player::{Health, Movement, Player};
+use crate::components::player_sprite::{PLAYER_SPRITE_SIZE, PlayerAnimation};
+use crate::resources::camera::CAMERA_ZOOM;
 use crate::resources::level::PlayerSpawn;
 use crate::resources::run_data::PlayerGear;
 use bevy::prelude::*;
@@ -8,6 +10,7 @@ pub fn spawn_player(mut commands: Commands, spawn: Res<PlayerSpawn>, gear: Res<P
     let stats = gear.stats();
     commands.spawn((
         Player,
+        PlayerAnimation::default(),
         Health::new(stats.max_health, stats.armor_reduction),
         Movement::default(),
         Collider {
@@ -16,14 +19,23 @@ pub fn spawn_player(mut commands: Commands, spawn: Res<PlayerSpawn>, gear: Res<P
         },
         Sprite {
             color: Color::srgb(0.2, 0.6, 1.0),
-            custom_size: Some(Vec2::splat(32.0)),
+            custom_size: Some(Vec2::splat(PLAYER_SPRITE_SIZE)),
             ..default()
         },
         Transform::from_xyz(spawn.position.x, spawn.position.y, 1.0),
         Name::new("Player"),
     ));
 
-    commands.spawn((Camera2d, Transform::from_xyz(0.0, 0.0, 100.0)));
+    // A 2x zoom so the world reads larger; this only affects rendering, not any
+    // collision or interaction sizes.
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scale: CAMERA_ZOOM,
+            ..OrthographicProjection::default_2d()
+        }),
+        Transform::from_xyz(0.0, 0.0, 100.0),
+    ));
 }
 
 pub fn despawn_player(
@@ -126,5 +138,26 @@ mod tests {
             health.armor_reduction,
             crate::components::gear::GearSet::Master.armor_reduction()
         );
+    }
+
+    #[test]
+    fn the_camera_spawns_with_the_zoom_projection() {
+        let mut app = App::new();
+        app.insert_resource(PlayerSpawn::default());
+        app.init_resource::<PlayerGear>();
+        app.add_systems(Update, spawn_player);
+        app.update();
+
+        let projection = app
+            .world_mut()
+            .query_filtered::<&Projection, With<Camera2d>>()
+            .single(app.world())
+            .unwrap();
+        match projection {
+            Projection::Orthographic(ortho) => {
+                assert_eq!(ortho.scale, crate::resources::camera::CAMERA_ZOOM)
+            }
+            other => panic!("expected an orthographic camera, got {other:?}"),
+        }
     }
 }
