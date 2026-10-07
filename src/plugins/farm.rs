@@ -344,7 +344,10 @@ mod tests {
                 FarmPlugin,
             ))
             .init_state::<GameState>()
-            .init_state::<DayPhase>();
+            .init_state::<DayPhase>()
+            // `FarmPlugin`'s interaction handler reads this message; in the game
+            // `InteractionPlugin` registers it, but this bare test app must too.
+            .add_message::<InteractionEvent>();
         app
     }
 
