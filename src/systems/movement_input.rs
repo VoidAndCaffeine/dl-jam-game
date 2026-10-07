@@ -2,6 +2,7 @@ use crate::components::player::Movement;
 use crate::components::player_sprite::PlayerAnimation;
 use crate::plugins::interaction::OpenPanels;
 use crate::resources::player_attack_state::PlayerAttackState;
+use crate::resources::player_status::PlayerStatus;
 use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
 
@@ -10,6 +11,7 @@ pub fn movement_input(
     mut movement_query: Query<&mut Movement>,
     panels: OpenPanels,
     attack: Res<PlayerAttackState>,
+    status: Res<PlayerStatus>,
     animations: Query<&PlayerAnimation>,
     phase: Phase,
 ) {
@@ -40,7 +42,7 @@ pub fn movement_input(
         movement.input_direction = if frozen {
             Vec2::ZERO
         } else {
-            direction.normalize_or_zero()
+            status.apply_to(direction.normalize_or_zero())
         };
     }
 }
@@ -60,6 +62,7 @@ mod tests {
             .init_resource::<InventoryPanel>()
             .init_resource::<CropSelectMenu>()
             .init_resource::<PlayerAttackState>()
+            .init_resource::<PlayerStatus>()
             .add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
             .init_state::<GameState>()
             .init_state::<DayPhase>();

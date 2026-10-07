@@ -117,7 +117,8 @@ fn swap_level(
     let station = prop_position(&grid, &def, PropKind::CraftingStation);
     let gate = prop_position(&grid, &def, PropKind::ArenaGate);
     let player_start = prop_position(&grid, &def, PropKind::PlayerSpawn).unwrap_or(Vec2::ZERO);
-    let boss_start = prop_position(&grid, &def, PropKind::BossSpawn).unwrap_or(Vec2::ZERO);
+    let boss_starts = prop_positions(&grid, &def, PropKind::BossSpawn);
+    let boss_start = boss_starts.first().copied().unwrap_or(Vec2::ZERO);
 
     *level.active = ActiveLevel {
         id,
@@ -128,6 +129,7 @@ fn swap_level(
     };
     *level.boss_spawn = BossSpawn {
         position: boss_start,
+        positions: boss_starts,
     };
     movers.teleport(player_start);
     *level.grid = grid;

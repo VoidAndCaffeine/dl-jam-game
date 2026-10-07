@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use crate::plugins::{
-    BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, InteractionPlugin, LevelPlugin, UIPlugin,
+    AudioPlugin, BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, InteractionPlugin,
+    LevelPlugin, UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
@@ -46,6 +47,7 @@ impl Plugin for GamePlugin {
             .add_plugins(BossPlugin)
             .add_plugins(DayCyclePlugin)
             .add_plugins(UIPlugin)
+            .add_plugins(AudioPlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Update, toggle_debug_overlay)
             .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)

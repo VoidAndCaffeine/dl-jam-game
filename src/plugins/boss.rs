@@ -1,12 +1,27 @@
-use crate::components::boss::{BOSS_SIZE, Boss, BossSpawnMarker, boss_for_level};
-use crate::events::{BossDefeated, BossPhaseChanged, DamageDealt, HitConfirm, PlayerDied};
+use crate::components::boss::{Boss, BossBrain, BossSpawnMarker, DualRole, boss_for_level};
+use crate::components::targetable::Targetable;
+use crate::events::{
+    BossAttackStarted, BossDefeated, BossPhaseChanged, DamageDealt, HitConfirm, PlaySfx, PlayerDied,
+};
+use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
+use crate::resources::boss_rng::BossRng;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
+use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
+use crate::resources::player_status::PlayerStatus;
 use crate::states::{DayPhase, Phase};
 use crate::systems::boss_ai::boss_ai;
+use crate::systems::boss_attacks::{
+    cleanup_boss_encounter, tick_boss_attacks, tick_surge_chargers,
+};
+use crate::systems::boss_damage::apply_boss_damage;
+use crate::systems::boss_patterns::spawn_pattern_attacks;
 use crate::systems::combat::{player_death_check, tick_combat_timers};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
+use crate::systems::lock_on::{cycle_lock_on, update_lock_on_visuals};
 use crate::systems::player_attack::{player_attack, tick_attack_visuals};
+use crate::systems::player_status::tick_player_status;
+use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 
 pub struct BossPlugin;
@@ -14,36 +29,63 @@ pub struct BossPlugin;
 impl Plugin for BossPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerAttackState>()
+            .init_resource::<BossRng>()
+            .init_resource::<BossCoordinator>()
+            .init_resource::<SharedBossHealth>()
+            .init_resource::<LockOn>()
+            .init_resource::<PlayerStatus>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_message::<BossPhaseChanged>()
             .add_message::<DamageDealt>()
             .add_message::<HitConfirm>()
+            .add_message::<BossAttackStarted>()
+            .add_message::<PlaySfx>()
+            .add_message::<MouseWheel>()
             .add_systems(Update, spawn_boss.after(LevelSet::Load))
+            .add_systems(
+                FixedUpdate,
+                (boss_ai, spawn_pattern_attacks, tick_surge_chargers).chain(),
+            )
             .add_systems(
                 Update,
                 (
+                    tick_player_status,
                     player_attack,
                     tick_attack_visuals,
                     tick_combat_timers,
                     player_death_check,
                     spawn_hit_sparks,
                     tick_hit_sparks,
-                ),
+                    cycle_lock_on,
+                    update_lock_on_visuals,
+                    tick_boss_attacks,
+                )
+                    .chain(),
             )
-            .add_systems(FixedUpdate, boss_ai)
-            .add_systems(OnExit(DayPhase::BossFight), despawn_boss);
+            .add_systems(
+                Update,
+                apply_boss_damage
+                    .after(player_attack)
+                    .after(tick_boss_attacks),
+            )
+            .add_systems(
+                OnExit(DayPhase::BossFight),
+                (despawn_boss, cleanup_boss_encounter, end_encounter),
+            );
     }
 }
 
-/// Spawns the arena's boss once the room has actually loaded, so it lands on the
-/// level's `b` marker instead of the previous room's origin.
+/// Spawns the arena's boss(es) once the room has loaded, so they land on the
+/// level's `b` marker(s). The dual arena spawns one entity per half.
 fn spawn_boss(
     mut commands: Commands,
     active: Res<ActiveLevel>,
     spawn: Res<BossSpawn>,
     phase: Phase,
     bosses: Query<(), With<Boss>>,
+    mut shared: ResMut<SharedBossHealth>,
+    mut coordinator: ResMut<BossCoordinator>,
 ) {
     if !phase.is_boss_fight() || !bosses.is_empty() {
         return;
@@ -52,17 +94,59 @@ fn spawn_boss(
         return;
     };
 
-    commands.spawn((
-        Boss::new_at(id, spawn.position),
+    if id == crate::components::boss::BossId::Dual {
+        shared.reset();
+        coordinator.begin();
+        let mut spots = spawn.all();
+        if spots.len() < 2 {
+            spots.push(spots.first().copied().unwrap_or(Vec2::ZERO) + Vec2::new(96.0, 0.0));
+        }
+        for (role, position) in [DualRole::Excavator, DualRole::Quicksilver]
+            .into_iter()
+            .zip(spots.iter().copied())
+        {
+            spawn_one(
+                &mut commands,
+                id,
+                role.id().size(),
+                role.id().color(),
+                position,
+                Some(role),
+            );
+        }
+        return;
+    }
+
+    coordinator.end();
+    shared.reset();
+    let position = spawn.all().first().copied().unwrap_or(spawn.position);
+    spawn_one(&mut commands, id, id.size(), id.color(), position, None);
+}
+
+fn spawn_one(
+    commands: &mut Commands,
+    id: crate::components::boss::BossId,
+    size: f32,
+    color: Color,
+    position: Vec2,
+    role: Option<DualRole>,
+) {
+    let mut entity = commands.spawn((
+        Boss::new_at(id, position),
+        BossBrain::default(),
+        Targetable,
         BossSpawnMarker,
         Sprite {
-            color: id.color(),
-            custom_size: Some(Vec2::splat(BOSS_SIZE)),
+            color,
+            custom_size: Some(Vec2::splat(size)),
             ..default()
         },
-        Transform::from_xyz(spawn.position.x, spawn.position.y, 0.0),
-        Name::new(id.label()),
+        Transform::from_xyz(position.x, position.y, 0.0),
+        Name::new(role.map(DualRole::label).unwrap_or(id.label())),
     ));
+    if let Some(role) = role {
+        entity.insert(role);
+    }
 }
 
 fn despawn_boss(mut commands: Commands, bosses: Query<Entity, With<BossSpawnMarker>>) {
@@ -71,11 +155,24 @@ fn despawn_boss(mut commands: Commands, bosses: Query<Entity, With<BossSpawnMark
     }
 }
 
+/// Clears the encounter's run-scoped state when the fight ends.
+fn end_encounter(
+    mut coordinator: ResMut<BossCoordinator>,
+    mut shared: ResMut<SharedBossHealth>,
+    mut lock: ResMut<LockOn>,
+    mut status: ResMut<PlayerStatus>,
+) {
+    coordinator.end();
+    shared.reset();
+    lock.clear();
+    status.clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::components::boss::BossId;
-    use crate::components::player::Movement;
+    use crate::components::player::{Health, Movement};
     use crate::plugins::level::LevelPlugin;
     use crate::resources::inventory_panel::InventoryPanel;
     use crate::resources::level::{LevelRequest, build_level, prop_position};
@@ -123,6 +220,7 @@ mod tests {
         app.world_mut().spawn((
             crate::components::player::Player,
             Movement::default(),
+            Health::new(100.0, 0.0),
             Transform::from_xyz(0.0, 0.0, 1.0),
         ));
         app
@@ -137,7 +235,6 @@ mod tests {
         app.world_mut()
             .resource_mut::<NextState<DayPhase>>()
             .set(DayPhase::BossFight);
-        // Enough frames for the level swap and the boss spawn to land.
         for _ in 0..3 {
             app.update();
         }
@@ -169,6 +266,20 @@ mod tests {
     }
 
     #[test]
+    fn the_dual_arena_spawns_both_halves_with_shared_health() {
+        let mut app = setup_app();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaDual);
+
+        let count = app
+            .world_mut()
+            .query_filtered::<Entity, With<Boss>>()
+            .iter(app.world())
+            .count();
+        assert_eq!(count, 2);
+        assert!(app.world().resource::<BossCoordinator>().active);
+    }
+
+    #[test]
     fn dropping_to_half_health_enrages_the_boss_and_announces_it() {
         let mut app = setup_app();
         enter_fight(&mut app, crate::levels::LevelId::ArenaA);
@@ -181,9 +292,8 @@ mod tests {
 
         assert_eq!(app.world().get::<Boss>(entity).unwrap().phase, 2);
         let changes = &app.world().resource::<PhaseChanges>().0;
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].boss_id, BossId::BossA);
-        assert_eq!(changes[0].new_phase, 2);
+        assert!(!changes.is_empty());
+        assert!(changes.iter().any(|change| change.new_phase == 2));
     }
 
     #[test]

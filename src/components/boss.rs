@@ -1,7 +1,8 @@
 use crate::components::gear::MaterialType;
 use crate::constants::{
-    BOSS_A_HEALTH, BOSS_B_HEALTH, BOSS_PHASE2_MULTIPLIER, BOSS_WANDER_ANGULAR_SPEED,
-    BOSS_WANDER_RADIUS, DUAL_BOSS_HEALTH, PHASE_STUN_DURATION, PHASE_THRESHOLD,
+    BOSS_A_HEALTH, BOSS_A_SIZE, BOSS_B_HEALTH, BOSS_B_SIZE, BOSS_PHASE2_MULTIPLIER,
+    BOSS_WANDER_ANGULAR_SPEED, BOSS_WANDER_RADIUS, DUAL_BOSS_HEALTH, PHASE_STUN_DURATION,
+    PHASE_THRESHOLD,
 };
 use crate::levels::LevelId;
 use bevy::prelude::*;
@@ -46,6 +47,24 @@ impl BossId {
             BossId::BossB => Color::srgb(0.25, 0.5, 0.85),
             BossId::Dual => Color::srgb(0.60, 0.25, 0.75),
         }
+    }
+
+    /// The sprite size of this boss.
+    pub fn size(self) -> f32 {
+        match self {
+            BossId::BossA => BOSS_A_SIZE,
+            BossId::BossB => BOSS_B_SIZE,
+            BossId::Dual => BOSS_A_SIZE,
+        }
+    }
+
+    /// The three attack patterns this boss draws from.
+    pub fn patterns(self) -> &'static [PatternType] {
+        PatternType::for_boss(self)
+    }
+
+    pub fn is_dual(self) -> bool {
+        self == BossId::Dual
     }
 
     pub fn max_health(self) -> f32 {
@@ -158,6 +177,265 @@ impl Boss {
 /// Tags a live boss so room changes and fight exits can clean it up.
 #[derive(Component, Reflect, Debug, Default)]
 pub struct BossSpawnMarker;
+
+/// The attack kit a boss cycles through.
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PatternType {
+    // Boss A - The Excavator
+    TailingsSurge,
+    ExcavatorSlam,
+    DebrisRain,
+    // Boss B - The Quicksilver
+    MirrorStep,
+    QuicksilverWave,
+    MadnessSpray,
+    // Dual only
+    Amalgamation,
+}
+
+impl PatternType {
+    pub fn label(self) -> &'static str {
+        match self {
+            PatternType::TailingsSurge => "Tailings Surge",
+            PatternType::ExcavatorSlam => "Excavator Slam",
+            PatternType::DebrisRain => "Debris Rain",
+            PatternType::MirrorStep => "Mirror Step",
+            PatternType::QuicksilverWave => "Quicksilver Wave",
+            PatternType::MadnessSpray => "Madness Spray",
+            PatternType::Amalgamation => "Amalgamation",
+        }
+    }
+
+    /// The three patterns an ordinary fight draws from.
+    pub fn for_boss(id: BossId) -> &'static [PatternType] {
+        match id {
+            BossId::BossA => &[
+                PatternType::TailingsSurge,
+                PatternType::ExcavatorSlam,
+                PatternType::DebrisRain,
+            ],
+            BossId::BossB => &[
+                PatternType::MirrorStep,
+                PatternType::QuicksilverWave,
+                PatternType::MadnessSpray,
+            ],
+            BossId::Dual => &[
+                PatternType::TailingsSurge,
+                PatternType::ExcavatorSlam,
+                PatternType::DebrisRain,
+            ],
+        }
+    }
+
+    /// Whether this pattern belongs to the industrial Excavator half.
+    pub fn is_excavator(self) -> bool {
+        matches!(
+            self,
+            PatternType::TailingsSurge | PatternType::ExcavatorSlam | PatternType::DebrisRain
+        )
+    }
+}
+
+/// Which half of the dual boss an entity is. Dual halves share one health pool
+/// but keep their own patterns.
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DualRole {
+    Excavator,
+    Quicksilver,
+}
+
+impl DualRole {
+    pub fn id(self) -> BossId {
+        match self {
+            DualRole::Excavator => BossId::BossA,
+            DualRole::Quicksilver => BossId::BossB,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DualRole::Excavator => "The Excavator",
+            DualRole::Quicksilver => "The Quicksilver",
+        }
+    }
+}
+
+/// The attack kit state machine for one live boss.
+#[derive(Component, Reflect, Debug, Clone)]
+pub struct BossBrain {
+    /// Pattern currently winding up or resolving, if any.
+    pub current: Option<PatternType>,
+    /// Seconds left before the next pattern may be chosen.
+    pub cooldown: f32,
+    /// The two most recently used patterns, so runs stay varied.
+    pub history: [Option<PatternType>; 2],
+    /// Seconds left of a one-shot coordination lock (dual Amalgamation).
+    pub locked: f32,
+}
+
+impl Default for BossBrain {
+    fn default() -> Self {
+        Self {
+            current: None,
+            cooldown: 0.0,
+            history: [None, None],
+            locked: 0.0,
+        }
+    }
+}
+
+impl BossBrain {
+    /// Whether `pattern` was one of the last two picks.
+    pub fn recently_used(&self, pattern: PatternType) -> bool {
+        self.history.contains(&Some(pattern))
+    }
+
+    /// Records a pattern as the newest pick, dropping the oldest.
+    pub fn remember(&mut self, pattern: PatternType) {
+        self.history[0] = self.history[1];
+        self.history[1] = Some(pattern);
+    }
+}
+
+/// What a spawned hostile entity does. One component keeps the tick logic in a
+/// single match instead of a dozen tiny systems.
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttackKind {
+    /// A lingering caustic smear left by a charge.
+    SurgeTrail,
+    /// A pool of acid that damages and slows.
+    AcidPool,
+    /// A ground slam that winds up, then bursts.
+    Slam,
+    /// A falling ore chunk; armed once it lands.
+    Debris,
+    /// A slick mercury puddle that damages and hurries movement.
+    MercuryPool,
+    /// A targetable mercury decoy that bursts when struck.
+    Decoy,
+    /// A travelling wall of quicksilver.
+    Wave,
+    /// A droplet from the madness spray.
+    Spray,
+    /// A homing droplet from the phase-2 spray.
+    Wisp,
+    /// The dual bosses' shared channel, exploding for heavy damage.
+    Amalgam,
+}
+
+impl AttackKind {
+    /// Hazards that linger and hurt anything standing in them.
+    pub fn is_ground_hazard(self) -> bool {
+        matches!(
+            self,
+            AttackKind::SurgeTrail
+                | AttackKind::AcidPool
+                | AttackKind::MercuryPool
+                | AttackKind::Amalgam
+        )
+    }
+}
+
+/// One runtime-spawned boss attack or hazard.
+#[derive(Component, Reflect, Debug, Clone)]
+pub struct BossAttack {
+    pub kind: AttackKind,
+    /// The boss that created it, for friendly fire and cleanup.
+    pub owner: Option<Entity>,
+    /// Whether the attack was created in the boss's enraged phase.
+    pub phase: u8,
+    /// Where it started, and where it is now (movers update this).
+    pub position: Vec2,
+    /// Where a telegraph is aiming.
+    pub target: Vec2,
+    /// Move direction for projectiles and charges.
+    pub direction: Vec2,
+    /// Current travel speed, if it moves.
+    pub speed: f32,
+    /// Effect radius / half-size, depending on kind.
+    pub radius: f32,
+    /// Damage per application.
+    pub damage: f32,
+    /// Seconds left before it despawns.
+    pub remaining: f32,
+    /// Total lifetime, for fading effects.
+    pub total: f32,
+    /// Seconds until it may damage the player again.
+    pub hit_cooldown: f32,
+    /// Scratch timer for behaviours that spawn things over time (wave pools).
+    pub aux_timer: f32,
+    /// False while a telegraph is still winding up.
+    pub armed: bool,
+}
+
+impl BossAttack {
+    pub fn new(kind: AttackKind, position: Vec2) -> Self {
+        Self {
+            kind,
+            owner: None,
+            phase: 1,
+            position,
+            target: position,
+            direction: Vec2::X,
+            speed: 0.0,
+            radius: 24.0,
+            damage: 0.0,
+            remaining: 1.0,
+            total: 1.0,
+            hit_cooldown: 0.0,
+            aux_timer: 0.0,
+            armed: true,
+        }
+    }
+
+    pub fn owned_by(mut self, owner: Entity) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
+    pub fn with_phase(mut self, phase: u8) -> Self {
+        self.phase = phase;
+        self
+    }
+
+    pub fn with_lifetime(mut self, seconds: f32) -> Self {
+        self.remaining = seconds;
+        self.total = seconds;
+        self
+    }
+
+    pub fn with_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+
+    pub fn with_damage(mut self, damage: f32) -> Self {
+        self.damage = damage;
+        self
+    }
+}
+
+/// Tags every attack entity a boss fight spawned, so the arena can be swept
+/// clean when the fight ends.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct BossEncounterEntity;
+
+/// Attached to a boss while it is performing a Tailings Surge charge.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct SurgeCharger {
+    pub direction: Vec2,
+    pub speed: f32,
+    /// Charges still to run (phase 2 runs two).
+    pub charges_left: u32,
+    /// Seconds left of the pre-charge windup.
+    pub windup: f32,
+    /// Seconds left of the current charge.
+    pub active: f32,
+    /// Counts down to the next trail smear.
+    pub trail_timer: f32,
+    /// Radians per second the charge path bends (phase 2 curves).
+    pub curve: f32,
+}
 
 #[cfg(test)]
 mod tests {

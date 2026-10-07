@@ -6,3 +6,4 @@ pub mod hit_effects;
 pub mod player;
 pub mod player_sprite;
 pub mod pot;
+pub mod targetable;

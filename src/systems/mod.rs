@@ -1,4 +1,7 @@
 pub mod boss_ai;
+pub mod boss_attacks;
+pub mod boss_damage;
+pub mod boss_patterns;
 pub mod boss_select;
 pub mod camera_follow;
 pub mod combat;
@@ -8,8 +11,10 @@ pub mod debug_overlay;
 pub mod hit_effects;
 pub mod inventory;
 pub mod level_movement;
+pub mod lock_on;
 pub mod movement_input;
 pub mod player_attack;
 pub mod player_sprite;
+pub mod player_status;
 pub mod spawn_player;
 pub mod transition;

@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod boss;
 pub mod day_cycle;
 pub mod farm;
@@ -6,6 +7,7 @@ pub mod interaction;
 pub mod level;
 pub mod ui;
 
+pub use audio::AudioPlugin;
 pub use boss::BossPlugin;
 pub use day_cycle::DayCyclePlugin;
 pub use farm::FarmPlugin;

@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn arenas_have_a_boss_spawn_and_no_farming_props() {
-        for id in [LevelId::ArenaA, LevelId::ArenaB, LevelId::ArenaDual] {
+        for id in [LevelId::ArenaA, LevelId::ArenaB] {
             let level = id.parse().unwrap();
             assert!(
                 level.requires_single(PropKind::BossSpawn).is_ok(),
@@ -137,6 +137,17 @@ mod tests {
                 id.file_name()
             );
         }
+    }
+
+    #[test]
+    fn the_dual_arena_has_two_boss_spawns_one_for_each_half() {
+        let level = LevelId::ArenaDual.parse().unwrap();
+        assert_eq!(level.props_of(PropKind::BossSpawn).len(), 2);
+        let (a, b) = {
+            let spawns = level.props_of(PropKind::BossSpawn);
+            (spawns[0], spawns[1])
+        };
+        assert_ne!(a, b, "the two halves need distinct spots");
     }
 
     #[test]

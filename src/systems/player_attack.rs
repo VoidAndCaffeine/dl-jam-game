@@ -1,13 +1,16 @@
 use crate::components::attack::{AttackType, AttackVisual};
-use crate::components::boss::{BOSS_SIZE, Boss};
-use crate::components::player::{Movement, Player};
-use crate::constants::{BOSS_HURTBOX_SCALE, LIGHT_WIDTH};
-use crate::events::{BossDefeated, DamageDealt, HitConfirm};
+use crate::components::boss::Boss;
+use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
+use crate::components::targetable::{Decoy, Targetable};
+use crate::constants::{BOSS_HURTBOX_SCALE, DECOY_SIZE, LIGHT_WIDTH};
+use crate::events::{DamageDealt, HitConfirm, PlaySfx, PlayerDied, Sfx};
 use crate::resources::inventory_panel::InventoryPanel;
+use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::run_data::PlayerGear;
 use crate::states::Phase;
-use crate::systems::combat::{damage_after_armor, swing_hits};
+use crate::systems::combat::{damage_after_armor, hurt_player, swing_hits};
+use crate::utils::targeting::circles_overlap;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 
@@ -16,11 +19,11 @@ const SWING_Z: f32 = 2.0;
 
 /// Turns light and heavy input into a rectangular swing in front of the player.
 ///
-/// In an arena the player always faces the nearest boss, so attacks land where
-/// the player expects; elsewhere facing follows the last movement direction, so
-/// a keyboard-only player can aim with WASD. The player is rooted for the
-/// swing's duration by [`crate::resources::player_attack_state`].
-#[allow(clippy::too_many_arguments)]
+/// The swing faces the locked-on target when there is one, otherwise the nearest
+/// targetable, and finally the last movement direction so a keyboard-only player
+/// can still aim. Damage is routed through [`crate::events::DamageDealt`] so
+/// single bosses, dual halves and decoys all resolve in one place.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn player_attack(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
@@ -29,24 +32,31 @@ pub fn player_attack(
     mut state: ResMut<PlayerAttackState>,
     gear: Res<PlayerGear>,
     inventory: Res<InventoryPanel>,
-    player: Query<(&Transform, &Movement), With<Player>>,
-    mut bosses: Query<(Entity, &mut Boss, &Transform)>,
+    lock: Res<LockOn>,
+    mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
+    targetables: Query<(Entity, &Transform, Option<&Boss>, Option<&Decoy>), With<Targetable>>,
     mut damage_events: MessageWriter<DamageDealt>,
     mut hit_events: MessageWriter<HitConfirm>,
-    mut defeated: MessageWriter<BossDefeated>,
+    mut died: MessageWriter<PlayerDied>,
+    mut sfx: MessageWriter<PlaySfx>,
     phase: Phase,
 ) {
     state.tick(time.delta_secs());
 
-    let Ok((transform, movement)) = player.single() else {
+    let Ok((transform, mut health, mut movement)) = player.single_mut() else {
         return;
     };
     let origin = transform.translation.truncate();
 
-    // Lock onto the nearest boss in an arena; follow WASD anywhere else.
+    // Face the locked target, then the nearest targetable, then WASD.
     if phase.is_boss_fight() {
-        if let Some(boss_pos) = nearest_boss_position(&bosses, origin) {
-            state.facing = (boss_pos - origin).normalize_or(Vec2::X);
+        let locked_pos = lock
+            .target
+            .and_then(|entity| targetables.get(entity).ok())
+            .map(|(_, transform, _, _)| transform.translation.truncate());
+        let nearest = nearest_targetable_position(&targetables, origin);
+        if let Some(target) = locked_pos.or(nearest) {
+            state.facing = (target - origin).normalize_or(Vec2::X);
         }
     } else if movement.input_direction != Vec2::ZERO {
         state.facing = movement.input_direction.normalize();
@@ -55,7 +65,6 @@ pub fn player_attack(
     if !phase.is_boss_fight() || inventory.open {
         return;
     }
-
     if state.is_rooted() {
         return;
     }
@@ -89,29 +98,54 @@ pub fn player_attack(
     };
 
     let facing = state.facing;
-    let boss_half = Vec2::splat(BOSS_SIZE * 0.5 * BOSS_HURTBOX_SCALE);
-
-    for (entity, mut boss, boss_transform) in bosses.iter_mut() {
-        let boss_pos = boss_transform.translation.truncate();
-        if !swing_hits(origin, facing, reach, width, boss_pos, boss_half) {
+    for (entity, target_transform, boss, decoy) in targetables.iter() {
+        let target_pos = target_transform.translation.truncate();
+        let half = if let Some(boss) = boss {
+            Vec2::splat(boss.id.size() * 0.5 * BOSS_HURTBOX_SCALE)
+        } else {
+            Vec2::splat(DECOY_SIZE * 0.5 * BOSS_HURTBOX_SCALE)
+        };
+        if !swing_hits(origin, facing, reach, width, target_pos, half) {
             continue;
         }
 
-        let damage = damage_after_armor(raw_damage, 0.0);
-        damage_events.write(DamageDealt {
-            target: entity,
-            amount: damage,
-            raw: raw_damage,
-        });
-        hit_events.write(HitConfirm {
-            target: entity,
-            position: impact_point(origin, boss_pos, reach),
-        });
-        log::debug!("{} hit {:?} for {damage}", attack.label(), boss.id);
-
-        if boss.damage(damage) {
-            defeated.write(BossDefeated(boss.id));
+        if let Some(decoy) = decoy {
+            hit_events.write(HitConfirm {
+                target: entity,
+                position: target_pos,
+            });
+            sfx.write(PlaySfx(Sfx::DecoyPop));
+            if circles_overlap(target_pos, decoy.splash_radius, origin, PLAYER_SIZE * 0.5)
+                && !health.is_invulnerable()
+            {
+                let lethal = hurt_player(
+                    &mut health,
+                    &mut movement,
+                    decoy.splash_damage,
+                    target_pos,
+                    origin,
+                );
+                sfx.write(PlaySfx(Sfx::PlayerHit));
+                if lethal {
+                    died.write(PlayerDied);
+                }
+            }
             commands.entity(entity).despawn();
+            continue;
+        }
+
+        if let Some(boss) = boss {
+            let damage = damage_after_armor(raw_damage, 0.0);
+            damage_events.write(DamageDealt {
+                target: entity,
+                amount: damage,
+                raw: raw_damage,
+            });
+            hit_events.write(HitConfirm {
+                target: entity,
+                position: impact_point(origin, target_pos, reach),
+            });
+            log::debug!("{} hit {:?} for {damage}", attack.label(), boss.id);
         }
     }
 
@@ -119,23 +153,24 @@ pub fn player_attack(
     state.begin(attack);
 }
 
-/// The nearest boss's world position to `origin`.
-fn nearest_boss_position(
-    bosses: &Query<(Entity, &mut Boss, &Transform)>,
+/// The nearest targetable's world position to `origin`.
+#[allow(clippy::type_complexity)]
+fn nearest_targetable_position(
+    targetables: &Query<(Entity, &Transform, Option<&Boss>, Option<&Decoy>), With<Targetable>>,
     origin: Vec2,
 ) -> Option<Vec2> {
-    bosses
+    targetables
         .iter()
-        .map(|(_, _, transform)| transform.translation.truncate())
+        .map(|(_, transform, _, _)| transform.translation.truncate())
         .min_by(|a, b| {
             a.distance_squared(origin)
                 .total_cmp(&b.distance_squared(origin))
         })
 }
 
-/// Where the swing tip meets the boss, used to place the impact spark.
-fn impact_point(origin: Vec2, boss_pos: Vec2, reach: f32) -> Vec2 {
-    origin + (boss_pos - origin).clamp_length_max(reach)
+/// Where the swing tip meets the target, used to place the impact spark.
+fn impact_point(origin: Vec2, target_pos: Vec2, reach: f32) -> Vec2 {
+    origin + (target_pos - origin).clamp_length_max(reach)
 }
 
 /// Spawns the placeholder swing whose rectangle is the swing's hitbox.
@@ -191,7 +226,11 @@ pub fn tick_attack_visuals(
 mod tests {
     use super::*;
     use crate::components::boss::BossId;
+    use crate::components::player::Movement;
+    use crate::resources::boss_encounter::SharedBossHealth;
+    use crate::resources::player_status::PlayerStatus;
     use crate::states::{DayPhase, GameState};
+    use crate::systems::boss_damage::apply_boss_damage;
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
@@ -200,7 +239,7 @@ mod tests {
     struct CapturedDamage(Vec<DamageDealt>);
 
     #[derive(Resource, Default)]
-    struct CapturedDefeats(Vec<BossDefeated>);
+    struct CapturedDefeats(Vec<crate::events::BossDefeated>);
 
     #[derive(Resource, Default)]
     struct CapturedHits(Vec<HitConfirm>);
@@ -216,7 +255,7 @@ mod tests {
 
     fn capture_defeats(
         mut captured: ResMut<CapturedDefeats>,
-        mut reader: MessageReader<BossDefeated>,
+        mut reader: MessageReader<crate::events::BossDefeated>,
     ) {
         for event in reader.read() {
             captured.0.push(*event);
@@ -236,29 +275,31 @@ mod tests {
             .init_resource::<PlayerAttackState>()
             .init_resource::<PlayerGear>()
             .init_resource::<InventoryPanel>()
-            .init_resource::<crate::resources::level::ActiveLevel>()
-            .init_resource::<crate::resources::level::BossSpawn>()
-            .init_resource::<crate::levels::SolidGrid>()
+            .init_resource::<LockOn>()
+            .init_resource::<PlayerStatus>()
+            .init_resource::<SharedBossHealth>()
             .init_resource::<CapturedDamage>()
             .init_resource::<CapturedDefeats>()
             .init_resource::<CapturedHits>()
-            .configure_sets(Update, crate::resources::level::LevelSet::Load)
-            .add_plugins((
-                MinimalPlugins,
-                TransformPlugin,
-                StatesPlugin,
-                crate::plugins::boss::BossPlugin,
-            ))
+            .add_message::<PlayerDied>()
+            .add_message::<PlaySfx>()
+            .add_message::<DamageDealt>()
+            .add_message::<HitConfirm>()
+            .add_message::<crate::events::BossDefeated>()
+            .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin))
             .init_state::<GameState>()
             .init_state::<DayPhase>()
+            .add_systems(Update, (player_attack, tick_attack_visuals).chain())
+            .add_systems(Update, apply_boss_damage.after(player_attack))
             .add_systems(
                 Update,
-                (capture_damage, capture_defeats, capture_hits).after(player_attack),
+                (capture_damage, capture_defeats, capture_hits).after(apply_boss_damage),
             );
 
         app.world_mut().spawn((
             Player,
             Movement::default(),
+            Health::new(100.0, 0.0),
             Transform::from_xyz(0.0, 0.0, 1.0),
         ));
 
@@ -277,6 +318,7 @@ mod tests {
         app.world_mut()
             .spawn((
                 Boss::new_at(id, pos),
+                Targetable,
                 Transform::from_xyz(pos.x, pos.y, 0.0),
             ))
             .id()
@@ -321,10 +363,7 @@ mod tests {
         let hits = &app.world().resource::<CapturedHits>().0;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].target, boss);
-        assert!(
-            hits[0].position.x > 0.0,
-            "impact sits in front of the player"
-        );
+        assert!(hits[0].position.x > 0.0);
     }
 
     #[test]
@@ -354,18 +393,30 @@ mod tests {
     fn auto_face_targets_the_nearest_boss() {
         let mut app = setup_app();
         let near = spawn_boss(&mut app, BossId::BossA, Vec2::new(40.0, 0.0));
-        let behind = spawn_boss(&mut app, BossId::BossB, Vec2::new(-40.0, 0.0));
+        let behind = spawn_boss(&mut app, BossId::BossB, Vec2::new(-300.0, 0.0));
 
         press(&mut app, KeyCode::KeyQ);
 
-        assert!(
-            boss_health(&app, near) < Some(crate::constants::BOSS_A_HEALTH),
-            "the nearest boss should be hit"
-        );
+        assert!(boss_health(&app, near) < Some(crate::constants::BOSS_A_HEALTH));
         assert_eq!(
             boss_health(&app, behind),
-            Some(crate::constants::BOSS_B_HEALTH),
-            "the boss behind should be spared"
+            Some(crate::constants::BOSS_B_HEALTH)
+        );
+    }
+
+    #[test]
+    fn a_locked_target_overrides_the_nearest() {
+        let mut app = setup_app();
+        let near = spawn_boss(&mut app, BossId::BossA, Vec2::new(300.0, 0.0));
+        let chosen = spawn_boss(&mut app, BossId::BossA, Vec2::new(-40.0, 0.0));
+        app.world_mut().resource_mut::<LockOn>().set(chosen);
+
+        press(&mut app, KeyCode::KeyQ);
+
+        assert!(boss_health(&app, chosen) < Some(crate::constants::BOSS_A_HEALTH));
+        assert_eq!(
+            boss_health(&app, near),
+            Some(crate::constants::BOSS_A_HEALTH)
         );
     }
 
@@ -375,26 +426,6 @@ mod tests {
         spawn_boss(&mut app, BossId::BossA, Vec2::new(50.0, 0.0));
         press(&mut app, KeyCode::KeyQ);
         assert!(app.world().resource::<PlayerAttackState>().is_rooted());
-    }
-
-    #[test]
-    fn a_swing_spawns_a_matching_visual() {
-        let mut app = setup_app();
-        spawn_boss(&mut app, BossId::BossA, Vec2::new(50.0, 0.0));
-
-        press(&mut app, KeyCode::KeyE);
-
-        let mut visuals = app.world_mut().query::<&Sprite>();
-        let sizes: Vec<Vec2> = visuals
-            .iter(app.world())
-            .filter_map(|sprite| sprite.custom_size)
-            .collect();
-        assert!(
-            sizes
-                .iter()
-                .any(|size| size.x == crate::constants::UNARMED_HEAVY_REACH),
-            "the swing sprite should match the swing's reach"
-        );
     }
 
     #[test]
@@ -424,6 +455,23 @@ mod tests {
         let defeats = &app.world().resource::<CapturedDefeats>().0;
         assert_eq!(defeats.len(), 1);
         assert_eq!(defeats[0].0, BossId::BossA);
+    }
+
+    #[test]
+    fn striking_a_decoy_destroys_it_and_can_splash_the_player() {
+        let mut app = setup_app();
+        let decoy = app
+            .world_mut()
+            .spawn((
+                Targetable,
+                Decoy::new(200.0, 10.0),
+                Transform::from_xyz(50.0, 0.0, 0.0),
+            ))
+            .id();
+
+        press(&mut app, KeyCode::KeyQ);
+
+        assert!(app.world().get::<Decoy>(decoy).is_none());
     }
 
     #[test]

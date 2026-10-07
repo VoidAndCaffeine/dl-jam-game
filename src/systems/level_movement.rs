@@ -1,6 +1,7 @@
 use crate::components::collider::Collider;
 use crate::components::player::{Movement, Player};
 use crate::levels::grid::SolidGrid;
+use crate::resources::player_status::PlayerStatus;
 use bevy::prelude::*;
 
 /// Moves the player against the level's solid tiles and any solid entity in the
@@ -11,6 +12,7 @@ use bevy::prelude::*;
 pub fn grid_movement(
     time: Res<Time<Fixed>>,
     grid: Res<SolidGrid>,
+    status: Res<PlayerStatus>,
     mut player: Query<(&Movement, &Collider, &mut Transform), With<Player>>,
     obstacles: Query<(&GlobalTransform, &Collider), Without<Player>>,
 ) {
@@ -24,10 +26,12 @@ pub fn grid_movement(
         .map(|(transform, collider)| (transform.translation().truncate(), collider.size * 0.5))
         .collect();
 
+    let speed_multiplier = status.speed_multiplier();
     for (movement, collider, mut transform) in player.iter_mut() {
         let half = collider.size * 0.5;
         let from = transform.translation.truncate();
-        let velocity = movement.input_direction * movement.speed + movement.velocity;
+        let velocity =
+            movement.input_direction * (movement.speed * speed_multiplier) + movement.velocity;
         let delta = velocity * time.delta_secs();
         if delta == Vec2::ZERO {
             continue;

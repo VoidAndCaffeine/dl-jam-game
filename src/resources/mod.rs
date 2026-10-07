@@ -1,4 +1,6 @@
+pub mod boss_encounter;
 pub mod boss_progress;
+pub mod boss_rng;
 pub mod boss_select;
 pub mod camera;
 pub mod crafting_menu;
@@ -10,6 +12,8 @@ pub mod farm;
 pub mod inventory;
 pub mod inventory_panel;
 pub mod level;
+pub mod lock_on;
 pub mod player_attack_state;
 pub mod player_sprite;
+pub mod player_status;
 pub mod run_data;

@@ -30,10 +30,27 @@ pub struct PlayerSpawn {
     pub position: Vec2,
 }
 
-/// Where the boss should appear, taken from a level's `b` marker.
-#[derive(Resource, Reflect, Clone, Copy, Debug, Default)]
+/// Where the boss should appear, taken from a level's `b` marker(s).
+///
+/// Single-boss arenas have one marker; the dual arena has two, one per half.
+#[derive(Resource, Reflect, Clone, Debug, Default)]
 pub struct BossSpawn {
+    /// The first marker, kept for single-boss fights and existing callers.
     pub position: Vec2,
+    /// Every marker, in file order.
+    pub positions: Vec<Vec2>,
+}
+
+impl BossSpawn {
+    /// Every spawn, falling back to the single position so older callers and
+    /// hand-built test levels still work.
+    pub fn all(&self) -> Vec<Vec2> {
+        if self.positions.is_empty() && self.position != Vec2::ZERO {
+            vec![self.position]
+        } else {
+            self.positions.clone()
+        }
+    }
 }
 
 /// Set this to move between rooms. [`apply_level_request`] does the work.
