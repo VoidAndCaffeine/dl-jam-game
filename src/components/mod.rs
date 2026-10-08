@@ -1,5 +1,6 @@
 pub mod attack;
 pub mod boss;
+pub mod boss_animation;
 pub mod collider;
 pub mod gear;
 pub mod hit_effects;

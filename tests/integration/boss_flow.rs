@@ -3,7 +3,7 @@ use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 use bevy::transform::TransformPlugin;
 use dl_jam::GamePlugin;
-use dl_jam::components::boss::{Boss, BossId};
+use dl_jam::components::boss::{Boss, BossId, Dying};
 use dl_jam::components::player::Player;
 use dl_jam::components::pot::CropType;
 use dl_jam::events::{InteractionEvent, InteractionType};
@@ -108,6 +108,13 @@ fn defeat_current_boss(app: &mut App) {
         state.facing = Vec2::X;
     }
     tap(app, KeyCode::KeyQ);
+    step(app, 3);
+
+    // The lethal blow starts the boss's death clip; skip to the end of it so
+    // the defeat fires without waiting out the animation.
+    if let Some(mut dying) = app.world_mut().get_mut::<Dying>(boss) {
+        dying.remaining = 0.0;
+    }
     step(app, 3);
 }
 

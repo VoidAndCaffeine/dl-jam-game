@@ -420,6 +420,21 @@ impl BossAttack {
 #[derive(Component, Reflect, Debug, Default)]
 pub struct BossEncounterEntity;
 
+/// Marks a boss that has run out of health and is playing its death clip.
+///
+/// The boss is kept alive (and immune to further damage) until `remaining`
+/// runs out, at which point the defeat is announced and it despawns.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct Dying {
+    pub remaining: f32,
+}
+
+impl Dying {
+    pub fn new(remaining: f32) -> Self {
+        Self { remaining }
+    }
+}
+
 /// Attached to a boss while it is performing a Tailings Surge charge.
 #[derive(Component, Reflect, Debug, Clone, Copy)]
 pub struct SurgeCharger {

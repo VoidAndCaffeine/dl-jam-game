@@ -1,4 +1,4 @@
-use crate::components::boss::{Boss, BossBrain, BossId, DualRole, PatternType};
+use crate::components::boss::{Boss, BossBrain, BossId, DualRole, Dying, PatternType};
 use crate::constants::{
     BOSS_PATTERN_COOLDOWN, BOSS_PATTERN_COOLDOWN_P2, DUAL_COMBO_INTERVAL, PHASE_STUN_DURATION,
     PHASE_THRESHOLD,
@@ -26,6 +26,7 @@ pub fn boss_ai(
         Option<&DualRole>,
         &mut Transform,
         &mut Sprite,
+        Option<&Dying>,
     )>,
     shared: Res<SharedBossHealth>,
     mut coordinator: ResMut<BossCoordinator>,
@@ -41,7 +42,10 @@ pub fn boss_ai(
     let dt = time.delta_secs();
 
     // Phase transitions and the stun flash, for both single and dual bosses.
-    for (_, mut boss, _, role, _, mut sprite) in bosses.iter_mut() {
+    for (_, mut boss, _, role, _, mut sprite, dying) in bosses.iter_mut() {
+        if dying.is_some() {
+            continue;
+        }
         let fraction = if role.is_some() {
             shared.fraction()
         } else {
@@ -85,7 +89,10 @@ pub fn boss_ai(
         let center = grid.center();
         let mut excavator: Option<(Entity, u8)> = None;
         let mut quicksilver: Option<(Entity, u8)> = None;
-        for (entity, boss, _, role, mut transform, _) in bosses.iter_mut() {
+        for (entity, boss, _, role, mut transform, _, dying) in bosses.iter_mut() {
+            if dying.is_some() {
+                continue;
+            }
             match role {
                 Some(DualRole::Excavator) => {
                     if amalgamation {
@@ -143,8 +150,8 @@ pub fn boss_ai(
     }
 
     let mut pending: Vec<(Entity, BossId, PatternType, u8)> = Vec::new();
-    for (entity, boss, mut brain, role, _, _) in bosses.iter_mut() {
-        if role.is_some() || boss.stun_remaining > 0.0 {
+    for (entity, boss, mut brain, role, _, _, dying) in bosses.iter_mut() {
+        if role.is_some() || dying.is_some() || boss.stun_remaining > 0.0 {
             continue;
         }
         brain.cooldown = (brain.cooldown - dt).max(0.0);

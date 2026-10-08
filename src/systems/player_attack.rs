@@ -225,12 +225,12 @@ pub fn tick_attack_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::boss::BossId;
+    use crate::components::boss::{BossId, Dying};
     use crate::components::player::Movement;
     use crate::resources::boss_encounter::SharedBossHealth;
     use crate::resources::player_status::PlayerStatus;
     use crate::states::{DayPhase, GameState};
-    use crate::systems::boss_damage::apply_boss_damage;
+    use crate::systems::boss_damage::{apply_boss_damage, tick_dying_bosses};
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
     use bevy::transform::TransformPlugin;
@@ -278,6 +278,7 @@ mod tests {
             .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
             .init_resource::<SharedBossHealth>()
+            .init_resource::<crate::resources::boss_encounter::BossCoordinator>()
             .init_resource::<CapturedDamage>()
             .init_resource::<CapturedDefeats>()
             .init_resource::<CapturedHits>()
@@ -291,9 +292,10 @@ mod tests {
             .init_state::<DayPhase>()
             .add_systems(Update, (player_attack, tick_attack_visuals).chain())
             .add_systems(Update, apply_boss_damage.after(player_attack))
+            .add_systems(Update, tick_dying_bosses.after(apply_boss_damage))
             .add_systems(
                 Update,
-                (capture_damage, capture_defeats, capture_hits).after(apply_boss_damage),
+                (capture_damage, capture_defeats, capture_hits).after(tick_dying_bosses),
             );
 
         app.world_mut().spawn((
@@ -450,6 +452,13 @@ mod tests {
         app.world_mut().get_mut::<Boss>(boss).unwrap().health = 1.0;
 
         press(&mut app, KeyCode::KeyQ);
+
+        // The lethal blow starts the death clip; the boss is not gone yet.
+        assert!(app.world().get::<Boss>(boss).is_some());
+        assert!(app.world().get::<Dying>(boss).is_some());
+
+        app.world_mut().get_mut::<Dying>(boss).unwrap().remaining = 0.0;
+        app.update();
 
         assert!(app.world().get::<Boss>(boss).is_none());
         let defeats = &app.world().resource::<CapturedDefeats>().0;

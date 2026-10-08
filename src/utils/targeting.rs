@@ -5,6 +5,35 @@ pub fn circles_overlap(a: Vec2, a_radius: f32, b: Vec2, b_radius: f32) -> bool {
     (a - b).length_squared() <= (a_radius + b_radius) * (a_radius + b_radius)
 }
 
+/// Whether `dir` points more sideways than up/down.
+pub fn is_horizontal(dir: Vec2) -> bool {
+    dir.x.abs() >= dir.y.abs()
+}
+
+/// Snaps `dir` to the nearest pure horizontal: `+X` for anything not pointing
+/// left, `-X` otherwise.
+pub fn snap_horizontal(dir: Vec2) -> Vec2 {
+    if dir.x < 0.0 { Vec2::NEG_X } else { Vec2::X }
+}
+
+/// Snaps `dir` to the nearest pure vertical: `+Y` for anything not pointing
+/// down, `-Y` otherwise.
+pub fn snap_vertical(dir: Vec2) -> Vec2 {
+    if dir.y < 0.0 { Vec2::NEG_Y } else { Vec2::Y }
+}
+
+/// If `dir` falls in the pure left/right bands (within 22.5 degrees of the
+/// horizontal axis), snaps it to vertical; diagonals and vertical aims pass
+/// through unchanged. Used so a slam never reads from the left or right.
+pub fn avoid_horizontal(dir: Vec2) -> Vec2 {
+    let angle = dir.y.atan2(dir.x).to_degrees().abs();
+    if !(22.5..=157.5).contains(&angle) {
+        snap_vertical(dir)
+    } else {
+        dir
+    }
+}
+
 /// Whether `point` sits inside a cone centred on `origin`, opening along `dir`
 /// with half-angle `cone_deg / 2`, within `range`.
 pub fn point_in_cone(origin: Vec2, dir: Vec2, cone_deg: f32, range: f32, point: Vec2) -> bool {
@@ -173,5 +202,29 @@ mod tests {
         let b = entity(&mut world);
         let candidates = [(a, Vec2::new(10.0, 0.0)), (b, Vec2::new(90.0, 0.0))];
         assert_eq!(cycle_target(Vec2::ZERO, &candidates, None, false), Some(b));
+    }
+
+    #[test]
+    fn snap_horizontal_keeps_only_the_sign() {
+        assert_eq!(snap_horizontal(Vec2::new(0.9, 0.1)), Vec2::X);
+        assert_eq!(snap_horizontal(Vec2::new(-0.9, 0.1)), Vec2::NEG_X);
+        assert_eq!(snap_horizontal(Vec2::new(0.0, 1.0)), Vec2::X);
+    }
+
+    #[test]
+    fn avoid_horizontal_snaps_only_the_sideways_bands() {
+        // Pure left/right snaps to vertical.
+        assert_eq!(avoid_horizontal(Vec2::NEG_X), Vec2::Y);
+        assert_eq!(avoid_horizontal(Vec2::X), Vec2::Y);
+        // Diagonals and vertical aims are untouched.
+        assert_eq!(avoid_horizontal(Vec2::new(0.7, 0.7)), Vec2::new(0.7, 0.7));
+        assert_eq!(avoid_horizontal(Vec2::new(-0.7, 0.7)), Vec2::new(-0.7, 0.7));
+        assert_eq!(avoid_horizontal(Vec2::NEG_Y), Vec2::NEG_Y);
+    }
+
+    #[test]
+    fn is_horizontal_compares_axes() {
+        assert!(is_horizontal(Vec2::new(1.0, 0.2)));
+        assert!(!is_horizontal(Vec2::new(0.2, 1.0)));
     }
 }

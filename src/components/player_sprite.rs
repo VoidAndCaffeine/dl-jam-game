@@ -189,7 +189,9 @@ impl PlayerAnimState {
 
 /// Idle and Walk only exist as plain folders for the three "left" directions;
 /// the remaining five were exported with an `iso_` prefix.
-fn locomotion_dir(title: &str, lower: &str, facing: Facing8) -> String {
+///
+/// Shared with the boss packs, which follow the exact same export layout.
+pub(crate) fn locomotion_dir(title: &str, lower: &str, facing: Facing8) -> String {
     match facing {
         Facing8::Left => format!("{title} Left"),
         Facing8::UpLeft => format!("{title} Northwest"),
@@ -198,7 +200,7 @@ fn locomotion_dir(title: &str, lower: &str, facing: Facing8) -> String {
     }
 }
 
-fn iso_suffix(facing: Facing8) -> &'static str {
+pub(crate) fn iso_suffix(facing: Facing8) -> &'static str {
     match facing {
         Facing8::Down => "down_right",
         Facing8::DownRight => "southeast_right",

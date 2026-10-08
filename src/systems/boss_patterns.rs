@@ -5,6 +5,7 @@ use crate::constants::*;
 use crate::events::{BossAttackStarted, PlaySfx, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::boss_rng::BossRng;
+use crate::systems::boss_animation::constrained_aim;
 use crate::systems::boss_attacks::{attack_color, spawn_attack};
 use bevy::prelude::*;
 
@@ -52,7 +53,7 @@ pub fn spawn_pattern_attacks(
             PatternType::TailingsSurge => {
                 let charges = if enraged { SURGE_CHARGES_P2 } else { 1 };
                 commands.entity(event.entity).insert(SurgeCharger {
-                    direction: aim,
+                    direction: constrained_aim(event.pattern, aim),
                     speed: SURGE_SPEED * if enraged { 1.15 } else { 1.0 },
                     charges_left: charges,
                     windup: SURGE_WINDUP,

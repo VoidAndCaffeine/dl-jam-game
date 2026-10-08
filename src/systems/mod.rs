@@ -1,4 +1,5 @@
 pub mod boss_ai;
+pub mod boss_animation;
 pub mod boss_attacks;
 pub mod boss_damage;
 pub mod boss_patterns;

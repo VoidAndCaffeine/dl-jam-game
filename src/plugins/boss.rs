@@ -1,20 +1,23 @@
 use crate::components::boss::{Boss, BossBrain, BossSpawnMarker, DualRole, boss_for_level};
+use crate::components::boss_animation::{BossAnimation, BossPack};
 use crate::components::targetable::Targetable;
 use crate::events::{
     BossAttackStarted, BossDefeated, BossPhaseChanged, DamageDealt, HitConfirm, PlaySfx, PlayerDied,
 };
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
+use crate::resources::boss_sprite::BossSpriteAssets;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
 use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
 use crate::states::{DayPhase, Phase};
 use crate::systems::boss_ai::boss_ai;
+use crate::systems::boss_animation::{animate_boss_sprite, drive_boss_animation};
 use crate::systems::boss_attacks::{
     cleanup_boss_encounter, tick_boss_attacks, tick_surge_chargers,
 };
-use crate::systems::boss_damage::apply_boss_damage;
+use crate::systems::boss_damage::{apply_boss_damage, tick_dying_bosses};
 use crate::systems::boss_patterns::spawn_pattern_attacks;
 use crate::systems::combat::{player_death_check, tick_combat_timers};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
@@ -34,6 +37,7 @@ impl Plugin for BossPlugin {
             .init_resource::<SharedBossHealth>()
             .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
+            .init_resource::<BossSpriteAssets>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_message::<BossPhaseChanged>()
@@ -69,6 +73,8 @@ impl Plugin for BossPlugin {
                     .after(player_attack)
                     .after(tick_boss_attacks),
             )
+            .add_systems(Update, (drive_boss_animation, animate_boss_sprite).chain())
+            .add_systems(Update, tick_dying_bosses.after(apply_boss_damage))
             .add_systems(
                 OnExit(DayPhase::BossFight),
                 (despawn_boss, cleanup_boss_encounter, end_encounter),
@@ -131,9 +137,13 @@ fn spawn_one(
     position: Vec2,
     role: Option<DualRole>,
 ) {
+    let pack = role
+        .map(BossPack::from_role)
+        .unwrap_or_else(|| BossPack::from_id(id));
     let mut entity = commands.spawn((
         Boss::new_at(id, position),
         BossBrain::default(),
+        BossAnimation::new(pack, position),
         Targetable,
         BossSpawnMarker,
         Sprite {

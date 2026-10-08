@@ -81,6 +81,19 @@ pub const fn boss_size(id: crate::components::boss::BossId) -> f32 {
     }
 }
 
+// --- Boss animation ---
+
+/// Seconds per frame for a boss clip (~2.33s for 25 frames, like the player).
+pub const BOSS_FRAME_SECONDS: f32 = 0.093;
+/// Boss death clips run a little faster so a defeat does not drag.
+pub const BOSS_DEATH_FRAME_SECONDS: f32 = 0.06;
+/// Extra time the final death frame is held before the defeat fires.
+pub const BOSS_DEATH_HOLD: f32 = 0.4;
+/// The Mercuril's death sheet only has its first 12 frames drawn.
+pub const MERCURIL_DEATH_FRAMES: usize = 12;
+/// How far a boss must move in a frame to count as walking.
+pub const BOSS_WALK_THRESHOLD: f32 = 0.6;
+
 // --- Boss brain ---
 
 /// Seconds a boss idles between finishing one pattern and starting the next.

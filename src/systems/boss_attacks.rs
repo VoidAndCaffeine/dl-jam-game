@@ -5,7 +5,7 @@ use crate::events::{DamageDealt, PlaySfx, PlayerDied, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::player_status::PlayerStatus;
 use crate::systems::combat::{hurt_player, swing_hits};
-use crate::utils::targeting::circles_overlap;
+use crate::utils::targeting::{circles_overlap, snap_horizontal};
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 
@@ -382,9 +382,11 @@ pub fn tick_surge_chargers(
             let was_winding = charger.windup;
             charger.windup -= dt;
             if was_winding > 0.0 && charger.windup <= 0.0 {
-                // Snap the aim to the player as the charge begins.
+                // Snap the aim to the player as the charge begins; the surge
+                // only ever reads horizontally, so keep it pure Left/Right.
                 if let Some(player_pos) = player_pos {
-                    charger.direction = (player_pos - from).normalize_or(charger.direction);
+                    charger.direction =
+                        snap_horizontal((player_pos - from).normalize_or(charger.direction));
                 }
             }
             continue;

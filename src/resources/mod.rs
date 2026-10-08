@@ -2,6 +2,7 @@ pub mod boss_encounter;
 pub mod boss_progress;
 pub mod boss_rng;
 pub mod boss_select;
+pub mod boss_sprite;
 pub mod camera;
 pub mod crafting_menu;
 pub mod crop_select;
