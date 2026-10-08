@@ -203,8 +203,8 @@ pub const WAVE_WINDUP: f32 = boss_frame(9);
 pub const WAVE_ACTIVE: f32 = boss_frame(1);
 /// Frames 11-25: recovery.
 pub const WAVE_RECOVERY: f32 = boss_frame(15);
-pub const WAVE_SPEED: f32 = 170.0;
-pub const WAVE_SPEED_P2: f32 = 240.0;
+pub const WAVE_SPEED: f32 = 145.0;
+pub const WAVE_SPEED_P2: f32 = 205.0;
 pub const WAVE_LENGTH: f32 = 150.0;
 pub const WAVE_WIDTH: f32 = 44.0;
 pub const WAVE_DAMAGE: f32 = 22.0;
@@ -228,11 +228,11 @@ pub const SPRAY_RANGE: f32 = 190.0;
 pub const SPRAY_DROPLETS: u32 = 12;
 pub const SPRAY_DROPLETS_P2: u32 = 20;
 pub const SPRAY_DAMAGE: f32 = 15.0;
-pub const SPRAY_SPEED: f32 = 150.0;
+pub const SPRAY_SPEED: f32 = 130.0;
 pub const SPRAY_LIFE: f32 = 1.6;
 pub const REVERSAL_DURATION: f32 = 2.0;
 pub const REVERSAL_DURATION_P2: f32 = 4.0;
-pub const WISP_SPEED: f32 = 95.0;
+pub const WISP_SPEED: f32 = 80.0;
 pub const WISP_TURN_RATE: f32 = 2.5;
 pub const WISP_LIFE: f32 = 4.0;
 
