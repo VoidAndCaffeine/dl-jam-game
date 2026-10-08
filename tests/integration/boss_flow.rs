@@ -4,7 +4,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::transform::TransformPlugin;
 use dl_jam::GamePlugin;
 use dl_jam::components::boss::{Boss, BossId, Dying};
-use dl_jam::components::player::Player;
+use dl_jam::components::player::{Health, Player};
 use dl_jam::components::pot::CropType;
 use dl_jam::events::{InteractionEvent, InteractionType};
 use dl_jam::levels::LevelId;
@@ -14,6 +14,7 @@ use dl_jam::resources::boss_select::BossSelectMenu;
 use dl_jam::resources::farm::CropUnlocks;
 use dl_jam::resources::level::ActiveLevel;
 use dl_jam::resources::player_attack_state::PlayerAttackState;
+use dl_jam::resources::player_status::PlayerStatus;
 use dl_jam::states::DayPhase;
 
 fn setup_app() -> App {
@@ -260,4 +261,163 @@ fn the_dual_boss_stays_locked_until_both_are_beaten() {
     tap(&mut app, KeyCode::Enter);
     step(&mut app, 3);
     assert_eq!(active(&app).id, LevelId::ArenaB);
+}
+
+fn player_health(app: &mut App) -> Health {
+    let mut query = app.world_mut().query_filtered::<&Health, With<Player>>();
+    query.single(app.world()).unwrap().clone()
+}
+
+/// Opens the gate, walks `target_index` rows down and confirms, leaving the app
+/// in a boss fight against that boss.
+fn start_boss_fight(app: &mut App, target_index: usize) {
+    assert_eq!(phase(app), DayPhase::Farming, "must start from the farm");
+    let gate = first_of::<BossArenaEntry>(app);
+    app.world_mut().write_message(InteractionEvent {
+        entity: gate,
+        interaction_type: InteractionType::BossArena,
+    });
+    step(app, 2);
+    assert_eq!(phase(app), DayPhase::BossSelect);
+
+    for _ in 0..target_index {
+        tap(app, KeyCode::ArrowDown);
+    }
+    tap(app, KeyCode::Enter);
+    tap(app, KeyCode::Enter);
+    step(app, 3);
+    assert_eq!(phase(app), DayPhase::BossFight);
+}
+
+/// Empties the player's health and lets the real death pipeline run.
+fn kill_player(app: &mut App) {
+    {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&mut Health, With<Player>>();
+        let mut health = query.single_mut(app.world_mut()).unwrap();
+        health.current = 0.0;
+    }
+    step(app, 3);
+    assert_eq!(
+        phase(app),
+        DayPhase::Result,
+        "death should reach the result"
+    );
+}
+
+/// Dismisses the result screen and waits for the farm to come back.
+fn return_to_farm(app: &mut App) {
+    tap(app, KeyCode::Space);
+    step(app, 3);
+    assert_eq!(phase(app), DayPhase::Farming);
+    assert_eq!(active(app).id, LevelId::Farm);
+}
+
+#[test]
+fn player_health_is_restored_after_a_defeat() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+    start_boss_fight(&mut app, 0);
+
+    kill_player(&mut app);
+    return_to_farm(&mut app);
+
+    let health = player_health(&mut app);
+    assert_eq!(health.current, health.max);
+    assert_eq!(health.iframe_remaining, 0.0);
+}
+
+#[test]
+fn player_health_is_restored_after_a_victory() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+    start_boss_fight(&mut app, 0);
+
+    // Wound the player, then win the fight.
+    {
+        let mut query = app
+            .world_mut()
+            .query_filtered::<&mut Health, With<Player>>();
+        let mut health = query.single_mut(app.world_mut()).unwrap();
+        health.current = 12.0;
+    }
+    defeat_current_boss(&mut app);
+    assert_eq!(phase(&app), DayPhase::Result);
+
+    return_to_farm(&mut app);
+    let health = player_health(&mut app);
+    assert_eq!(health.current, health.max);
+}
+
+#[test]
+fn a_defeat_does_not_carry_into_the_next_boss_attempt() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+
+    // Lose once.
+    start_boss_fight(&mut app, 0);
+    kill_player(&mut app);
+    return_to_farm(&mut app);
+
+    // Try again: the player must be healthy and the boss must be fresh.
+    start_boss_fight(&mut app, 0);
+    let health = player_health(&mut app);
+    assert_eq!(health.current, health.max, "the retry must not auto-fail");
+
+    let boss = first_of::<Boss>(&mut app);
+    let boss = *app.world().get::<Boss>(boss).unwrap();
+    assert_eq!(boss.health, boss.max_health);
+    assert_eq!(boss.phase, 1);
+
+    // And the retry can actually be won.
+    defeat_current_boss(&mut app);
+    assert_eq!(phase(&app), DayPhase::Result);
+    assert!(app.world().resource::<BossProgress>().boss_a);
+}
+
+#[test]
+fn several_defeats_then_a_victory_still_progresses() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+
+    for attempt in 0..3 {
+        start_boss_fight(&mut app, 0);
+        kill_player(&mut app);
+        return_to_farm(&mut app);
+        assert!(
+            !app.world().resource::<BossProgress>().boss_a,
+            "attempt {attempt} must not have counted as a win"
+        );
+    }
+
+    start_boss_fight(&mut app, 0);
+    defeat_current_boss(&mut app);
+    assert_eq!(phase(&app), DayPhase::Result);
+    assert!(app.world().resource::<BossProgress>().boss_a);
+    assert!(
+        app.world()
+            .resource::<CropUnlocks>()
+            .is_unlocked(CropType::CropA)
+    );
+}
+
+#[test]
+fn player_status_clears_when_returning_from_a_fight() {
+    let mut app = setup_app();
+    enter_playing(&mut app);
+    start_boss_fight(&mut app, 0);
+
+    app.world_mut()
+        .resource_mut::<PlayerStatus>()
+        .apply_reversal(30.0);
+    assert!(app.world().resource::<PlayerStatus>().is_reversed());
+
+    kill_player(&mut app);
+    return_to_farm(&mut app);
+
+    assert!(
+        !app.world().resource::<PlayerStatus>().is_reversed(),
+        "transient boss effects must not survive into the farm"
+    );
 }

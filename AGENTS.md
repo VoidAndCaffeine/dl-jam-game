@@ -32,7 +32,8 @@ GameState::LoadingAssets
 | `DayCyclePlugin` | Day/Night transitions, progression tracking |
 | `PersistencePlugin` | Save/Load architecture (stubbed early, implement late) |
 | `LevelPlugin` | Loads rooms from `levels/*.txt`, spawns tiles + props, owns `SolidGrid` |
-| `UIPlugin` | HUD, crafting menu, boss select, result screens |
+| `UIPlugin` | Crafting menu, inventory, boss select, crop select panels |
+| `HudPlugin` | Player/boss health bars, day counter, phase input hints |
 | `AudioPlugin` | Music/SFX management |
 
 ### Resources (all `#[derive(Resource, Serialize, Deserialize, Reflect)]`)
@@ -265,6 +266,7 @@ src/
 │   ├── day_cycle.rs
 │   ├── persistence.rs
 │   ├── ui.rs
+│   ├── hud.rs               # HudPlugin — player/boss health bars, day counter, input hints
 │   └── audio.rs
 ├── components/
 │   ├── player.rs

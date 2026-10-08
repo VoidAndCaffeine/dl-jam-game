@@ -1,4 +1,5 @@
 use crate::components::boss::BossId;
+use crate::components::player::{Health, Player};
 use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
 use crate::resources::boss_progress::BossProgress;
@@ -27,7 +28,10 @@ impl Plugin for DayCyclePlugin {
             .add_systems(Update, on_boss_defeated)
             .add_systems(Update, on_player_died)
             .add_systems(OnEnter(DayPhase::Result), spawn_result_screen)
-            .add_systems(OnExit(DayPhase::Result), despawn_result_screen)
+            .add_systems(
+                OnExit(DayPhase::Result),
+                (despawn_result_screen, restore_player_health),
+            )
             .add_systems(Update, result_continue);
     }
 }
@@ -109,6 +113,19 @@ fn result_continue(
     next_phase.set(DayPhase::Farming);
 }
 
+/// Refills the player on the way out of the result screen.
+///
+/// The player entity survives the whole `Playing` state, so a fight that ended
+/// with the player at zero health would otherwise carry that damage into the
+/// next day and auto-lose the next attempt. Every outcome that returns to the
+/// farm passes through here, so health is always fresh.
+fn restore_player_health(mut players: Query<&mut Health, With<Player>>) {
+    for mut health in players.iter_mut() {
+        health.current = health.max;
+        health.iframe_remaining = 0.0;
+    }
+}
+
 #[derive(Component, Reflect, Default, Debug)]
 pub struct ResultScreenRoot;
 
@@ -161,6 +178,7 @@ mod tests {
     use super::*;
     use crate::components::boss::BossId;
     use crate::components::gear::MaterialType;
+    use crate::components::player::{Health, Player};
     use crate::components::pot::CropType;
     use crate::resources::boss_progress::BossProgress;
     use crate::resources::farm::CropUnlocks;
@@ -314,6 +332,75 @@ mod tests {
             Some(LevelId::Farm)
         );
         assert!(day_cycle(&app).pending_advance);
+    }
+
+    fn spawn_wounded_player(app: &mut App) -> Entity {
+        let entity = app
+            .world_mut()
+            .spawn((Player, Health::new(100.0, 0.0)))
+            .id();
+        let mut health = app.world_mut().get_mut::<Health>(entity).unwrap();
+        health.current = 0.0;
+        health.iframe_remaining = 0.5;
+        entity
+    }
+
+    #[test]
+    fn restore_player_health_refills_and_clears_invulnerability() {
+        let mut app = App::new();
+        app.add_systems(Update, restore_player_health);
+        let player = app.world_mut().spawn((Player, Health::new(80.0, 0.0))).id();
+        {
+            let mut health = app.world_mut().get_mut::<Health>(player).unwrap();
+            health.current = 3.0;
+            health.iframe_remaining = 0.4;
+        }
+
+        app.update();
+
+        let health = app.world().get::<Health>(player).unwrap();
+        assert_eq!(health.current, 80.0);
+        assert_eq!(health.iframe_remaining, 0.0);
+    }
+
+    #[test]
+    fn leaving_the_result_screen_heals_a_defeated_player() {
+        let mut app = setup_app();
+        let player = spawn_wounded_player(&mut app);
+        set_phase(&mut app, DayPhase::Result);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<State<DayPhase>>().get(),
+            &DayPhase::Farming
+        );
+        let health = app.world().get::<Health>(player).unwrap();
+        assert_eq!(
+            health.current, health.max,
+            "a defeat must not carry into the next day"
+        );
+        assert_eq!(health.iframe_remaining, 0.0);
+    }
+
+    #[test]
+    fn leaving_the_result_screen_heals_a_victorious_player() {
+        let mut app = setup_app();
+        let player = spawn_wounded_player(&mut app);
+        set_phase(&mut app, DayPhase::Result);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        app.update();
+        app.update();
+
+        let health = app.world().get::<Health>(player).unwrap();
+        assert_eq!(health.current, health.max);
     }
 
     #[test]
