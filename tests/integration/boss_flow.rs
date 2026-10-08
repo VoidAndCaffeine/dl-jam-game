@@ -40,6 +40,18 @@ fn step(app: &mut App, frames: usize) {
     }
 }
 
+/// Runs frames until the day phase reaches `target`, so the extra loading frames
+/// a scene change now costs do not have to be counted by hand.
+fn step_until(app: &mut App, target: DayPhase) {
+    for _ in 0..40 {
+        if phase(app) == target {
+            return;
+        }
+        app.update();
+    }
+    panic!("never reached {target:?}; stuck in {:?}", phase(app));
+}
+
 fn tap(app: &mut App, key: KeyCode) {
     {
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -130,7 +142,7 @@ fn the_arena_gate_opens_the_boss_select_menu() {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(&mut app, 2);
+    step_until(&mut app, DayPhase::BossSelect);
 
     assert!(menu(&app).open);
     assert_eq!(phase(&app), DayPhase::BossSelect);
@@ -150,10 +162,11 @@ fn escaping_the_menu_returns_to_the_farm() {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(&mut app, 2);
+    step_until(&mut app, DayPhase::BossSelect);
     assert_eq!(phase(&app), DayPhase::BossSelect);
 
     tap(&mut app, KeyCode::Escape);
+    step_until(&mut app, DayPhase::Farming);
 
     assert!(!menu(&app).open);
     assert_eq!(phase(&app), DayPhase::Farming);
@@ -171,14 +184,14 @@ fn the_full_boss_loop_runs_from_farm_to_result_and_back() {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(&mut app, 2);
+    step_until(&mut app, DayPhase::BossSelect);
     assert_eq!(phase(&app), DayPhase::BossSelect);
 
     // Choose Boss A and confirm.
     tap(&mut app, KeyCode::Enter);
     assert!(menu(&app).confirmation_open);
     tap(&mut app, KeyCode::Enter);
-    step(&mut app, 3);
+    step_until(&mut app, DayPhase::BossFight);
 
     assert_eq!(phase(&app), DayPhase::BossFight);
     assert_eq!(active(&app).id, LevelId::ArenaA);
@@ -197,7 +210,7 @@ fn the_full_boss_loop_runs_from_farm_to_result_and_back() {
 
     // Leave the result screen: back to the farm, no boss left behind.
     tap(&mut app, KeyCode::Space);
-    step(&mut app, 3);
+    step_until(&mut app, DayPhase::Farming);
 
     assert_eq!(phase(&app), DayPhase::Farming);
     assert_eq!(active(&app).id, LevelId::Farm);
@@ -216,7 +229,7 @@ fn beating_both_single_bosses_unlocks_the_dual_boss() {
             entity: gate,
             interaction_type: InteractionType::BossArena,
         });
-        step(&mut app, 2);
+        step_until(&mut app, DayPhase::BossSelect);
 
         // Select the next available boss by confirming the current highlight.
         if boss_id == BossId::BossB {
@@ -224,14 +237,14 @@ fn beating_both_single_bosses_unlocks_the_dual_boss() {
         }
         tap(&mut app, KeyCode::Enter);
         tap(&mut app, KeyCode::Enter);
-        step(&mut app, 3);
+        step_until(&mut app, DayPhase::BossFight);
 
         defeat_current_boss(&mut app);
 
         assert_eq!(phase(&app), DayPhase::Result);
 
         tap(&mut app, KeyCode::Space);
-        step(&mut app, 3);
+        step_until(&mut app, DayPhase::Farming);
         assert_eq!(active(&app).id, LevelId::Farm);
     }
 
@@ -249,7 +262,7 @@ fn the_dual_boss_stays_locked_until_both_are_beaten() {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(&mut app, 2);
+    step_until(&mut app, DayPhase::BossSelect);
 
     // Down twice stops on Boss B because the dual boss is locked.
     tap(&mut app, KeyCode::ArrowDown);
@@ -259,7 +272,7 @@ fn the_dual_boss_stays_locked_until_both_are_beaten() {
 
     tap(&mut app, KeyCode::Enter);
     tap(&mut app, KeyCode::Enter);
-    step(&mut app, 3);
+    step_until(&mut app, DayPhase::BossFight);
     assert_eq!(active(&app).id, LevelId::ArenaB);
 }
 
@@ -277,7 +290,7 @@ fn start_boss_fight(app: &mut App, target_index: usize) {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(app, 2);
+    step_until(app, DayPhase::BossSelect);
     assert_eq!(phase(app), DayPhase::BossSelect);
 
     for _ in 0..target_index {
@@ -285,7 +298,7 @@ fn start_boss_fight(app: &mut App, target_index: usize) {
     }
     tap(app, KeyCode::Enter);
     tap(app, KeyCode::Enter);
-    step(app, 3);
+    step_until(app, DayPhase::BossFight);
     assert_eq!(phase(app), DayPhase::BossFight);
 }
 
@@ -309,7 +322,7 @@ fn kill_player(app: &mut App) {
 /// Dismisses the result screen and waits for the farm to come back.
 fn return_to_farm(app: &mut App) {
     tap(app, KeyCode::Space);
-    step(app, 3);
+    step_until(app, DayPhase::Farming);
     assert_eq!(phase(app), DayPhase::Farming);
     assert_eq!(active(app).id, LevelId::Farm);
 }

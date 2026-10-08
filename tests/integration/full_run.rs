@@ -60,6 +60,18 @@ fn step(app: &mut App, frames: usize) {
     }
 }
 
+/// Runs frames until the day phase reaches `target`, absorbing the extra loading
+/// frames a scene change now costs.
+fn step_until(app: &mut App, target: DayPhase) {
+    for _ in 0..40 {
+        if phase(app) == target {
+            return;
+        }
+        app.update();
+    }
+    panic!("never reached {target:?}; stuck in {:?}", phase(app));
+}
+
 fn tap(app: &mut App, key: KeyCode) {
     {
         let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -103,7 +115,7 @@ fn start_boss_fight(app: &mut App, target_index: usize) {
         entity: gate,
         interaction_type: InteractionType::BossArena,
     });
-    step(app, 2);
+    step_until(app, DayPhase::BossSelect);
     assert_eq!(phase(app), DayPhase::BossSelect);
 
     for _ in 0..target_index {
@@ -111,7 +123,7 @@ fn start_boss_fight(app: &mut App, target_index: usize) {
     }
     tap(app, KeyCode::Enter);
     tap(app, KeyCode::Enter);
-    step(app, 3);
+    step_until(app, DayPhase::BossFight);
     assert_eq!(phase(app), DayPhase::BossFight);
 }
 
@@ -196,7 +208,7 @@ fn kill_player(app: &mut App) {
 /// Dismisses the result screen and waits for the farm to come back.
 fn return_to_farm(app: &mut App) {
     tap(app, KeyCode::Space);
-    step(app, 3);
+    step_until(app, DayPhase::Farming);
     assert_eq!(phase(app), DayPhase::Farming);
     assert_eq!(active(app).id, LevelId::Farm);
 }

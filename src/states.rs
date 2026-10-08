@@ -17,40 +17,58 @@ pub enum DayPhase {
     BossSelect,
     BossFight,
     Result,
+    /// Preloading the next scene's sheets. World interaction is frozen and the
+    /// loading screen is up until the target has settled.
+    Loading,
 }
 
 /// The two states most systems ask about, bundled so their signatures stay
 /// readable.
+///
+/// `DayPhase` is a sub-state, so its resource is absent while `GameState` is
+/// not `Playing`; the field is optional so systems that run during the boot
+/// `LoadingAssets` state stay valid instead of panicking.
 #[derive(SystemParam)]
 pub struct Phase<'w> {
     pub game: Res<'w, State<GameState>>,
-    pub day: Res<'w, State<DayPhase>>,
+    day: Option<Res<'w, State<DayPhase>>>,
 }
 
 impl Phase<'_> {
+    /// The current day phase, or `None` while not in `Playing`.
+    pub fn day_phase(&self) -> Option<DayPhase> {
+        self.day.as_ref().map(|state| state.get().clone())
+    }
+
     pub fn is_playing(&self) -> bool {
         matches!(self.game.get(), GameState::Playing)
     }
 
+    pub fn is_loading(&self) -> bool {
+        self.is_playing() && self.day_phase() == Some(DayPhase::Loading)
+    }
+
     pub fn is_farming(&self) -> bool {
-        self.is_playing() && matches!(self.day.get(), DayPhase::Farming)
+        self.is_playing() && self.day_phase() == Some(DayPhase::Farming)
     }
 
     pub fn is_boss_select(&self) -> bool {
-        self.is_playing() && matches!(self.day.get(), DayPhase::BossSelect)
+        self.is_playing() && self.day_phase() == Some(DayPhase::BossSelect)
     }
 
     pub fn is_boss_fight(&self) -> bool {
-        self.is_playing() && matches!(self.day.get(), DayPhase::BossFight)
+        self.is_playing() && self.day_phase() == Some(DayPhase::BossFight)
     }
 
     pub fn is_result(&self) -> bool {
-        self.is_playing() && matches!(self.day.get(), DayPhase::Result)
+        self.is_playing() && self.day_phase() == Some(DayPhase::Result)
     }
 
     /// True when a panel that pauses world interaction may react to input.
+    /// Loading is not one of those: the world is frozen but no panel should
+    /// respond.
     pub fn blocks_world(&self) -> bool {
-        matches!(self.game.get(), GameState::Playing)
+        self.is_playing() && !self.is_loading()
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::components::boss::{Boss, BossBrain, BossId, DualRole, Dying, PatternType};
 use crate::constants::{
-    BOSS_PATTERN_COOLDOWN, BOSS_PATTERN_COOLDOWN_P2, DUAL_COMBO_INTERVAL, PHASE_STUN_DURATION,
-    PHASE_THRESHOLD,
+    BOSS_PATTERN_COOLDOWN, BOSS_PATTERN_COOLDOWN_P2, DUAL_COMBO_GAP, DUAL_COMBO_INTERVAL,
+    PHASE_STUN_DURATION, PHASE_THRESHOLD,
 };
 use crate::events::{BossAttackStarted, BossPhaseChanged, PlaySfx, Sfx};
 use crate::levels::grid::SolidGrid;
@@ -127,24 +127,24 @@ pub fn boss_ai(
             return;
         }
 
-        if let (Some((a_entity, a_phase)), Some((b_entity, b_phase))) = (excavator, quicksilver) {
-            let (a_pattern, b_pattern) = match rng.index(3) {
-                0 => (PatternType::TailingsSurge, PatternType::MirrorStep),
-                1 => (PatternType::ExcavatorSlam, PatternType::QuicksilverWave),
-                _ => (PatternType::DebrisRain, PatternType::MadnessSpray),
-            };
+        // The halves take turns: only the one whose turn it is commits, while
+        // the other keeps its distance (see `boss_movement`).
+        let attacker = match coordinator.turn {
+            DualRole::Excavator => excavator,
+            DualRole::Quicksilver => quicksilver,
+        };
+        if let Some((entity, half_phase)) = attacker {
+            let kit = coordinator.turn.id().patterns();
+            let pattern = kit[rng.index(kit.len())];
             started.write(BossAttackStarted {
-                entity: a_entity,
+                entity,
                 boss_id: BossId::Dual,
-                pattern: a_pattern,
-                phase: a_phase,
+                pattern,
+                phase: half_phase,
             });
-            started.write(BossAttackStarted {
-                entity: b_entity,
-                boss_id: BossId::Dual,
-                pattern: b_pattern,
-                phase: b_phase,
-            });
+            // Let the attack fully resolve before the other half steps up.
+            coordinator.next_combo = pattern_duration(pattern, half_phase) + DUAL_COMBO_GAP;
+            coordinator.flip_turn();
         }
         return;
     }

@@ -3,6 +3,7 @@ use crate::events::{BossSelected, InteractionEvent, InteractionType};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::level::LevelRequest;
+use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
@@ -24,6 +25,7 @@ pub struct BossOption {
 fn open_boss_select_on_gate(
     mut events: MessageReader<InteractionEvent>,
     mut menu: ResMut<BossSelectMenu>,
+    mut context: ResMut<LoadingContext>,
     mut next_phase: ResMut<NextState<DayPhase>>,
     phase: Phase,
 ) {
@@ -35,7 +37,9 @@ fn open_boss_select_on_gate(
         }
         if event.interaction_type == InteractionType::BossArena {
             menu.open_menu();
-            next_phase.set(DayPhase::BossSelect);
+            context.target = Some(LoadTarget::BossSelect);
+            context.resume_phase = Some(DayPhase::BossSelect);
+            next_phase.set(DayPhase::Loading);
         }
     }
 }
@@ -59,6 +63,7 @@ fn boss_select_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<BossSelectMenu>,
     progress: Res<BossProgress>,
+    mut context: ResMut<LoadingContext>,
     mut next_phase: ResMut<NextState<DayPhase>>,
     mut request: ResMut<LevelRequest>,
     mut selected_events: MessageWriter<BossSelected>,
@@ -78,7 +83,9 @@ fn boss_select_keyboard(
         {
             selected_events.write(BossSelected(id));
             request.0 = Some(id.arena());
-            next_phase.set(DayPhase::BossFight);
+            context.target = Some(LoadTarget::for_boss(id));
+            context.resume_phase = Some(DayPhase::BossFight);
+            next_phase.set(DayPhase::Loading);
             menu.close_menu();
         }
         return;
@@ -86,7 +93,9 @@ fn boss_select_keyboard(
 
     if keys.just_pressed(KeyCode::Escape) {
         menu.close_menu();
-        next_phase.set(DayPhase::Farming);
+        context.target = Some(LoadTarget::Farm);
+        context.resume_phase = Some(DayPhase::Farming);
+        next_phase.set(DayPhase::Loading);
         return;
     }
 
@@ -166,8 +175,13 @@ impl Plugin for BossSelectPlugin {
 mod tests {
     use super::*;
     use crate::plugins::interaction::BossArenaEntry;
+    use crate::plugins::loading::LoadingPlugin;
     use crate::resources::boss_progress::BossProgress;
+    use crate::resources::boss_sprite::BossSpriteAssets;
     use crate::resources::level::LevelRequest;
+    use crate::resources::player_sprite::PlayerSpriteAssets;
+    use crate::resources::run_data::PlayerGear;
+    use crate::resources::scene_assets::LoadingContext;
     use crate::states::GameState;
     use bevy::state::app::StatesPlugin;
 
@@ -177,7 +191,15 @@ mod tests {
             .init_resource::<BossSelectMenu>()
             .init_resource::<BossProgress>()
             .init_resource::<LevelRequest>()
-            .add_plugins((MinimalPlugins, StatesPlugin, BossSelectPlugin))
+            .init_resource::<PlayerGear>()
+            .init_resource::<PlayerSpriteAssets>()
+            .init_resource::<BossSpriteAssets>()
+            .add_plugins((
+                MinimalPlugins,
+                StatesPlugin,
+                BossSelectPlugin,
+                LoadingPlugin,
+            ))
             .init_state::<GameState>()
             .init_state::<DayPhase>()
             .add_message::<InteractionEvent>();
@@ -196,12 +218,23 @@ mod tests {
         app.world().resource::<BossSelectMenu>()
     }
 
-    fn phase(app: &App) -> &DayPhase {
-        app.world().resource::<State<DayPhase>>().get()
+    fn phase(app: &App) -> DayPhase {
+        app.world().resource::<State<DayPhase>>().get().clone()
     }
 
     fn request(app: &App) -> Option<crate::levels::LevelId> {
         app.world().resource::<LevelRequest>().0
+    }
+
+    fn context(app: &App) -> &LoadingContext {
+        app.world().resource::<LoadingContext>()
+    }
+
+    /// Runs enough frames for input to latch and any loading step to finish.
+    fn settle(app: &mut App) {
+        for _ in 0..4 {
+            app.update();
+        }
     }
 
     fn press(app: &mut App, key: KeyCode) {
@@ -214,7 +247,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear_just_pressed(key);
-        app.update();
+        settle(app);
     }
 
     fn set_phase(app: &mut App, day: DayPhase) {
@@ -230,9 +263,7 @@ mod tests {
             entity,
             interaction_type: InteractionType::BossArena,
         });
-        // Two frames: one to open the menu and raise `NextState`, one to apply it.
-        app.update();
-        app.update();
+        settle(app);
     }
 
     #[test]
@@ -243,7 +274,8 @@ mod tests {
         arena_gate_interaction(&mut app);
 
         assert!(menu(&app).open);
-        assert_eq!(phase(&app), &DayPhase::BossSelect);
+        assert_eq!(phase(&app), DayPhase::BossSelect);
+        assert_eq!(context(&app).target, Some(LoadTarget::BossSelect));
     }
 
     #[test]
@@ -255,7 +287,7 @@ mod tests {
         press(&mut app, KeyCode::Escape);
 
         assert!(!menu(&app).open);
-        assert_eq!(phase(&app), &DayPhase::Farming);
+        assert_eq!(phase(&app), DayPhase::Farming);
         assert_eq!(request(&app), None, "no arena is loaded when cancelling");
     }
 
@@ -267,11 +299,12 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(menu(&app).confirmation_open);
         assert_eq!(menu(&app).pending_boss, Some(BossId::BossA));
-        assert_eq!(phase(&app), &DayPhase::BossSelect, "not fighting yet");
+        assert_eq!(phase(&app), DayPhase::BossSelect, "not fighting yet");
 
         press(&mut app, KeyCode::Enter);
-        assert_eq!(phase(&app), &DayPhase::BossFight);
+        assert_eq!(phase(&app), DayPhase::BossFight);
         assert_eq!(request(&app), Some(crate::levels::LevelId::ArenaA));
+        assert_eq!(context(&app).target, Some(LoadTarget::ArenaA));
         assert!(!menu(&app).open);
     }
 
@@ -285,7 +318,7 @@ mod tests {
 
         assert!(menu(&app).open);
         assert!(!menu(&app).confirmation_open);
-        assert_eq!(phase(&app), &DayPhase::BossSelect);
+        assert_eq!(phase(&app), DayPhase::BossSelect);
     }
 
     #[test]
@@ -382,6 +415,6 @@ mod tests {
 
         app.update();
 
-        assert_eq!(phase(&app), &DayPhase::Farming);
+        assert_eq!(phase(&app), DayPhase::Farming);
     }
 }

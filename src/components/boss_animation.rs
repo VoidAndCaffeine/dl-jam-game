@@ -140,6 +140,77 @@ impl BossAnimState {
     }
 }
 
+/// The three frame windows (0-based, inclusive) of a 25-frame attack clip.
+#[derive(Reflect, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClipWindows {
+    pub windup: (usize, usize),
+    pub active: (usize, usize),
+    pub recovery: (usize, usize),
+}
+
+/// A committed attack's playback plan: which frames belong to which phase, and
+/// how long each phase lasts. The frame shown is derived from elapsed time, so
+/// an active window loops (the charge) while the rest plays through.
+#[derive(Reflect, Debug, Clone, Copy, Default)]
+pub struct ClipPlayback {
+    pub windows: ClipWindows,
+    pub windup: f32,
+    pub active: f32,
+    pub recovery: f32,
+    pub elapsed: f32,
+}
+
+impl ClipPlayback {
+    pub fn new(windows: ClipWindows, windup: f32, active: f32, recovery: f32) -> Self {
+        Self {
+            windows,
+            windup,
+            active,
+            recovery,
+            elapsed: 0.0,
+        }
+    }
+
+    pub fn total(&self) -> f32 {
+        self.windup + self.active + self.recovery
+    }
+
+    /// The frame index to show after `elapsed` seconds of the clip.
+    pub fn frame_at(&self, elapsed: f32) -> usize {
+        if elapsed < self.windup {
+            return window_frame(self.windows.windup, elapsed, self.windup, false);
+        }
+        let after_windup = elapsed - self.windup;
+        if after_windup < self.active {
+            return window_frame(self.windows.active, after_windup, self.active, true);
+        }
+        let after_active = after_windup - self.active;
+        window_frame(self.windows.recovery, after_active, self.recovery, false)
+    }
+}
+
+/// The frame within a window after `t` seconds.
+///
+/// Looping windows step at the native frame rate so the pose reads as a held
+/// cycle; one-shot windows map the window proportionally so a fast-forwarded
+/// phase (phase 2 recovery) simply plays its frames faster.
+fn window_frame((first, last): (usize, usize), t: f32, duration: f32, loops: bool) -> usize {
+    if last <= first {
+        return first;
+    }
+    let count = last - first + 1;
+    if duration <= 0.0 {
+        return last;
+    }
+    if loops {
+        let steps = (t / BOSS_FRAME_SECONDS).floor().max(0.0) as usize;
+        first + steps % count
+    } else {
+        let progress = (t / duration).clamp(0.0, 1.0);
+        first + ((progress * count as f32).floor() as usize).min(count - 1)
+    }
+}
+
 /// Drives a boss's animated sprite. Lives on the boss entity.
 #[derive(Component, Reflect, Debug)]
 pub struct BossAnimation {
@@ -154,6 +225,8 @@ pub struct BossAnimation {
     pub action_remaining: f32,
     /// Last frame's world position, used to tell Idle from Walk.
     pub last_position: Vec2,
+    /// Timeline of the running attack, if any.
+    pub clip: Option<ClipPlayback>,
 }
 
 impl BossAnimation {
@@ -166,6 +239,7 @@ impl BossAnimation {
             frame_timer: Timer::from_seconds(BOSS_FRAME_SECONDS, TimerMode::Repeating),
             action_remaining: 0.0,
             last_position: position,
+            clip: None,
         }
     }
 
@@ -177,21 +251,39 @@ impl BossAnimation {
         self.state = state;
         self.frame = 0;
         self.frame_timer = Timer::from_seconds(state.frame_seconds(), TimerMode::Repeating);
+        self.clip = None;
     }
 
-    /// Starts an attack clip: sets state, facing and how long it runs.
-    pub fn set_action(&mut self, state: BossAnimState, facing: Facing8, duration: f32) {
+    /// Starts an attack clip with its phase windows and timings.
+    pub fn set_attack(&mut self, state: BossAnimState, facing: Facing8, clip: ClipPlayback) {
         self.set_state(state);
         self.facing = facing;
-        self.action_remaining = duration;
+        self.frame = 0;
+        self.action_remaining = clip.total();
+        self.clip = Some(clip);
     }
 
     pub fn is_acting(&self) -> bool {
         self.action_remaining > 0.0
     }
 
-    /// Advances the frame clock, looping cycles and clamping one-shots.
+    /// True while an attack clip is still playing its windup frames.
+    ///
+    /// Used so a boss may lunge in during the tell, then plant while the hit
+    /// resolves.
+    pub fn is_winding_up(&self) -> bool {
+        self.clip
+            .as_ref()
+            .is_some_and(|clip| clip.elapsed < clip.windup)
+    }
+
+    /// Advances the clip, or the plain frame clock for locomotion and death.
     pub fn advance_frame(&mut self, dt: f32) {
+        if let Some(clip) = &mut self.clip {
+            clip.elapsed += dt;
+            self.frame = clip.frame_at(clip.elapsed);
+            return;
+        }
         self.frame_timer
             .tick(core::time::Duration::from_secs_f32(dt));
         if !self.frame_timer.just_finished() {

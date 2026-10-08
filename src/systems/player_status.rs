@@ -1,5 +1,5 @@
 use crate::resources::player_status::PlayerStatus;
-use crate::states::{DayPhase, Phase};
+use crate::states::Phase;
 use bevy::prelude::*;
 
 /// Runs down the player's transient statuses, and wipes them when a fight ends.
@@ -8,7 +8,7 @@ pub fn tick_player_status(time: Res<Time>, mut status: ResMut<PlayerStatus>, pha
         status.clear();
         return;
     }
-    if matches!(phase.day.get(), DayPhase::BossFight) {
+    if phase.is_boss_fight() {
         status.tick(time.delta_secs());
     } else {
         status.clear();
@@ -18,7 +18,7 @@ pub fn tick_player_status(time: Res<Time>, mut status: ResMut<PlayerStatus>, pha
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::states::GameState;
+    use crate::states::{DayPhase, GameState};
     use bevy::state::app::StatesPlugin;
 
     fn setup() -> App {

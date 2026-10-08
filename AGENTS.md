@@ -14,13 +14,14 @@
 
 ### App States (`bevy_state`)
 ```
-GameState::LoadingAssets
+GameState::LoadingAssets            (boot: preload the farm behind a bar)
     → GameState::Playing { day: u32, phase: DayPhase }
-        → DayPhase::Farming     (plant, water, harvest, craft)
-        → DayPhase::BossSelect  (choose Boss A / B / Dual)
-        → DayPhase::BossFight   (combat)
-        → DayPhase::Result      (victory/defeat screen → next day)
-    → GameState::Victory        (dual boss beaten)
+        → DayPhase::Farming         (plant, water, harvest, craft)
+        → DayPhase::BossSelect      (choose Boss A / B / Dual)
+        → DayPhase::BossFight       (combat)
+        → DayPhase::Loading         (preload the next scene; stays in Playing)
+        → DayPhase::Result          (victory/defeat screen → next day)
+    → GameState::Victory            (dual boss beaten)
 ```
 
 ### Plugins (modular)
@@ -182,13 +183,29 @@ assets/
 ```
 
 ### Loading
-- `AssetServer::load_folder("images")` + `load_folder("audio")` in `LoadingAssets` state
-- `TextureAtlasLayout` for animated sprites (crops, bosses)
+- Both entry points set `AssetPlugin { meta_check: AssetMetaCheck::Never, .. }`.
+  Web hosts answer a missing `<asset>.meta` with a 200 HTML page (trunk's SPA
+  fallback), which Bevy would otherwise feed to the RON parser and fail the load.
+  `load_folder` is unusable on WASM (`read_directory` is unsupported), so sheets
+  are requested by explicit path.
+- `LoadingPlugin` (`src/plugins/loading.rs`) owns the progress bar. Boot uses
+  `GameState::LoadingAssets`; in-game farm↔arena swaps use `DayPhase::Loading`
+  so `Playing` (and the run state under it) is never left.
+- `resources/scene_assets.rs` maps a `LoadTarget` to the exact sheets a scene
+  needs. `SceneAssetManifest` keeps strong handles for the current scene, reusing
+  shared ones and dropping the rest, so the scene being left unloads.
+- Preload scope is the worn player look plus the current boss: farm and
+  boss-select hold the farmer (boss-select also grabs one idle frame per boss for
+  the menu), a single arena holds the armor look + its boss, the dual arena holds
+  both bosses. Each sheet decodes to ~6.5 MB (1280×1280 RGBA), so this matters:
+  farm ~0.37 GB, single arena ~0.58 GB, dual ~0.89 GB.
+- `TextureAtlasLayout` for animated sprites (crops, bosses); the layout is shared
+  across every sheet and is never unloaded.
 - Audio: OGG Vorbis, mono SFX, stereo music, <2MB total
 - Room tiles are **not** loaded from `assets/`; they come from `levels/*.txt`
   (see §11b) and render through `TilemapChunk`
 - `/assets` is gitignored, so trunk's `<link data-trunk rel="copy-dir" href="assets"/>`
-  in `index.html` is still commented out — uncomment it when art lands
+  in `index.html` copies it into `dist/`.
 
 ## 7. Input Scheme (Desktop WASM)
 
@@ -262,6 +279,7 @@ src/
 │   ├── farm.rs
 │   ├── gear.rs
 │   ├── level.rs            # LevelPlugin — load rooms, spawn TilemapChunk + props
+│   ├── loading.rs          # LoadingPlugin — scene preload + progress bar
 │   ├── boss.rs
 │   ├── day_cycle.rs
 │   ├── persistence.rs
@@ -278,6 +296,7 @@ src/
 │   ├── run_data.rs
 │   ├── inventory.rs
 │   ├── crop_select.rs      # CropSelectMenu — crop picker state + target pot
+│   ├── scene_assets.rs     # LoadTarget + SceneAssetManifest + LoadingContext
 │   ├── level.rs            # ActiveLevel, LevelEntity, PlayerSpawn, BossSpawn, LevelRequest
 │   └── save_manager.rs
 ├── events.rs

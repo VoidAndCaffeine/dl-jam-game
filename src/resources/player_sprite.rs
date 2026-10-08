@@ -62,6 +62,12 @@ impl PlayerSpriteAssets {
         self.sheets.len()
     }
 
+    /// Drops every cached handle so sheets the next scene does not need can be
+    /// unloaded once the scene manifest stops referencing them.
+    pub fn clear(&mut self) {
+        self.sheets.clear();
+    }
+
     /// The shared atlas grid for the 5x5 sheets.
     pub fn grid_layout() -> TextureAtlasLayout {
         TextureAtlasLayout::from_grid(

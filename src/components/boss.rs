@@ -258,6 +258,14 @@ impl DualRole {
             DualRole::Quicksilver => "The Quicksilver",
         }
     }
+
+    /// The other half, used to alternate attack turns.
+    pub fn other(self) -> DualRole {
+        match self {
+            DualRole::Excavator => DualRole::Quicksilver,
+            DualRole::Quicksilver => DualRole::Excavator,
+        }
+    }
 }
 
 /// The attack kit state machine for one live boss.
@@ -334,6 +342,25 @@ impl AttackKind {
                 | AttackKind::Amalgam
         )
     }
+
+    /// Whether the telegraph sprite is drawn while the attack winds up.
+    ///
+    /// Ground attacks show their landing marker; thrown attacks stay hidden so
+    /// the boss's own windup clip is the only tell.
+    pub fn shows_windup(self) -> bool {
+        matches!(
+            self,
+            AttackKind::Slam | AttackKind::Debris | AttackKind::Amalgam
+        )
+    }
+
+    /// Thrown attacks re-aim at the player the moment their windup ends.
+    pub fn aims_at_player(self) -> bool {
+        matches!(
+            self,
+            AttackKind::Wave | AttackKind::Spray | AttackKind::Wisp
+        )
+    }
 }
 
 /// One runtime-spawned boss attack or hazard.
@@ -364,8 +391,14 @@ pub struct BossAttack {
     pub hit_cooldown: f32,
     /// Scratch timer for behaviours that spawn things over time (wave pools).
     pub aux_timer: f32,
+    /// Seconds left before a telegraph winds up and the attack activates.
+    pub windup: f32,
+    /// Offset from the boss's aim used to fan out thrown attacks (sprays).
+    pub aim_offset: f32,
     /// False while a telegraph is still winding up.
     pub armed: bool,
+    /// Set the first frame the attack activates, so one-shot effects fire once.
+    pub impacted: bool,
 }
 
 impl BossAttack {
@@ -384,7 +417,10 @@ impl BossAttack {
             total: 1.0,
             hit_cooldown: 0.0,
             aux_timer: 0.0,
+            windup: 0.0,
+            aim_offset: 0.0,
             armed: true,
+            impacted: false,
         }
     }
 
@@ -413,6 +449,31 @@ impl BossAttack {
         self.damage = damage;
         self
     }
+
+    /// Delays activation by `seconds`; the attack stays inert until then.
+    pub fn with_windup(mut self, seconds: f32) -> Self {
+        self.windup = seconds;
+        self.armed = false;
+        self
+    }
+
+    /// The fan offset from the boss's aim, used by sprays.
+    pub fn with_aim_offset(mut self, offset: f32) -> Self {
+        self.aim_offset = offset;
+        self
+    }
+}
+
+/// A mirror-step teleport waiting out its windup before the boss blinks.
+///
+/// The boss stays put (and visible) until `windup` elapses, then jumps to
+/// `destination` and leaves its decoys behind.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct PendingBlink {
+    pub windup: f32,
+    pub destination: Vec2,
+    pub decoys: u32,
+    pub phase: u8,
 }
 
 /// Tags every attack entity a boss fight spawned, so the arena can be swept

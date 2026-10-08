@@ -6,6 +6,7 @@ pub mod gear;
 pub mod hud;
 pub mod interaction;
 pub mod level;
+pub mod loading;
 pub mod ui;
 
 pub use audio::AudioPlugin;
@@ -19,4 +20,5 @@ pub use interaction::{
     BossArenaEntry, CraftingStation, FarmPot, HighlightMarker, Interactable, NPC,
 };
 pub use level::LevelPlugin;
+pub use loading::LoadingPlugin;
 pub use ui::UIPlugin;

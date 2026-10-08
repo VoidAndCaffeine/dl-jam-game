@@ -8,6 +8,7 @@ use crate::resources::drop_rng::DropRng;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::level::LevelRequest;
+use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, GameState, Phase};
 use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
@@ -85,15 +86,23 @@ fn on_player_died(
     }
 }
 
+/// The state a result-screen "continue" has to move, bundled so the system
+/// stays within the argument limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ContinueWork<'w> {
+    context: ResMut<'w, LoadingContext>,
+    request: ResMut<'w, LevelRequest>,
+    next_phase: ResMut<'w, NextState<DayPhase>>,
+    next_game: ResMut<'w, NextState<GameState>>,
+}
+
 /// The result screen waits for a key, then starts the next day (or ends the run
 /// once the dual boss is down).
 fn result_continue(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     mut day_cycle: ResMut<DayCycle>,
-    mut request: ResMut<LevelRequest>,
-    mut next_phase: ResMut<NextState<DayPhase>>,
-    mut next_game: ResMut<NextState<GameState>>,
+    mut work: ContinueWork,
     phase: Phase,
 ) {
     if !phase.is_result() {
@@ -105,12 +114,14 @@ fn result_continue(
     }
 
     if day_cycle.run_complete {
-        next_game.set(GameState::Victory);
+        work.next_game.set(GameState::Victory);
         return;
     }
     day_cycle.request_advance();
-    request.0 = Some(LevelId::Farm);
-    next_phase.set(DayPhase::Farming);
+    work.request.0 = Some(LevelId::Farm);
+    work.context.target = Some(LoadTarget::Farm);
+    work.context.resume_phase = Some(DayPhase::Farming);
+    work.next_phase.set(DayPhase::Loading);
 }
 
 /// Refills the player on the way out of the result screen.
@@ -180,10 +191,14 @@ mod tests {
     use crate::components::gear::MaterialType;
     use crate::components::player::{Health, Player};
     use crate::components::pot::CropType;
+    use crate::plugins::loading::LoadingPlugin;
     use crate::resources::boss_progress::BossProgress;
+    use crate::resources::boss_sprite::BossSpriteAssets;
     use crate::resources::farm::CropUnlocks;
     use crate::resources::inventory::Inventory;
     use crate::resources::level::LevelRequest;
+    use crate::resources::player_sprite::PlayerSpriteAssets;
+    use crate::resources::run_data::PlayerGear;
     use bevy::state::app::StatesPlugin;
 
     fn setup_app() -> App {
@@ -195,7 +210,10 @@ mod tests {
             .init_resource::<CropUnlocks>()
             .init_resource::<Inventory>()
             .init_resource::<LevelRequest>()
-            .add_plugins((MinimalPlugins, StatesPlugin, DayCyclePlugin))
+            .init_resource::<PlayerGear>()
+            .init_resource::<PlayerSpriteAssets>()
+            .init_resource::<BossSpriteAssets>()
+            .add_plugins((MinimalPlugins, StatesPlugin, DayCyclePlugin, LoadingPlugin))
             .init_state::<GameState>()
             .init_state::<DayPhase>();
 
@@ -214,6 +232,13 @@ mod tests {
             .resource_mut::<NextState<DayPhase>>()
             .set(day);
         app.update();
+    }
+
+    /// Runs enough frames for a key press to latch and any loading to finish.
+    fn settle(app: &mut App) {
+        for _ in 0..4 {
+            app.update();
+        }
     }
 
     fn day_cycle(app: &App) -> &DayCycle {
@@ -320,8 +345,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Enter);
-        app.update();
-        app.update();
+        settle(&mut app);
 
         assert_eq!(
             app.world().resource::<State<DayPhase>>().get(),
@@ -372,8 +396,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Enter);
-        app.update();
-        app.update();
+        settle(&mut app);
 
         assert_eq!(
             app.world().resource::<State<DayPhase>>().get(),
@@ -396,8 +419,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Enter);
-        app.update();
-        app.update();
+        settle(&mut app);
 
         let health = app.world().get::<Health>(player).unwrap();
         assert_eq!(health.current, health.max);

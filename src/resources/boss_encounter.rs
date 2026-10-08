@@ -1,3 +1,4 @@
+use crate::components::boss::DualRole;
 use crate::constants::DUAL_BOSS_HEALTH;
 use bevy::prelude::*;
 
@@ -55,6 +56,8 @@ pub struct BossCoordinator {
     pub channelling: bool,
     /// Seconds left of the current channel.
     pub channel_remaining: f32,
+    /// Which half attacks on the current turn; they alternate.
+    pub turn: DualRole,
 }
 
 impl Default for BossCoordinator {
@@ -65,6 +68,7 @@ impl Default for BossCoordinator {
             next_amalgamation: crate::constants::AMALGAMATION_INTERVAL_P1,
             channelling: false,
             channel_remaining: 0.0,
+            turn: DualRole::Excavator,
         }
     }
 }
@@ -75,6 +79,11 @@ impl BossCoordinator {
             active: true,
             ..Default::default()
         };
+    }
+
+    /// Hands the next attack to the other half.
+    pub fn flip_turn(&mut self) {
+        self.turn = self.turn.other();
     }
 
     /// Schedules the next Amalgamation for the current health phase.

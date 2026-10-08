@@ -44,7 +44,7 @@ pub const ATTACK_DURATION: f32 = 0.2;
 
 // --- Bosses ---
 
-pub const BOSS_A_HEALTH: f32 = 450.0;
+pub const BOSS_A_HEALTH: f32 = 675.0;
 pub const BOSS_B_HEALTH: f32 = 500.0;
 /// The dual boss fights from a single shared pool.
 pub const DUAL_BOSS_HEALTH: f32 = 900.0;
@@ -93,18 +93,55 @@ pub const BOSS_DEATH_HOLD: f32 = 0.4;
 pub const MERCURIL_DEATH_FRAMES: usize = 12;
 /// How far a boss must move in a frame to count as walking.
 pub const BOSS_WALK_THRESHOLD: f32 = 0.6;
+/// Every boss attack sheet is a 25-frame clip.
+pub const BOSS_CLIP_FRAMES: usize = 25;
+/// Seconds to play a whole attack clip at 1x.
+pub const BOSS_CLIP_SECONDS: f32 = BOSS_FRAME_SECONDS * BOSS_CLIP_FRAMES as f32;
+
+/// When frame `n` (1-based) of a clip has finished playing.
+///
+/// Attack phase timings are expressed against these boundaries so the gameplay
+/// stays in lockstep with the art.
+pub const fn boss_frame(n: u32) -> f32 {
+    BOSS_FRAME_SECONDS * n as f32
+}
 
 // --- Boss brain ---
 
 /// Seconds a boss idles between finishing one pattern and starting the next.
-pub const BOSS_PATTERN_COOLDOWN: f32 = 1.1;
-pub const BOSS_PATTERN_COOLDOWN_P2: f32 = 0.65;
+///
+/// The attack clip already owns its own recovery frames, so this is only the
+/// extra pause; keeping it short is what makes the boss feel aggressive.
+pub const BOSS_PATTERN_COOLDOWN: f32 = 0.2;
+pub const BOSS_PATTERN_COOLDOWN_P2: f32 = 0.1;
+/// Recovery/cooldown frames play this much faster, which tightens the gap
+/// between attacks without touching the windup tell. Phase 2 trims harder.
+pub const BOSS_P1_RECOVERY_SPEED: f32 = 1.7;
+pub const BOSS_P2_RECOVERY_SPEED: f32 = 2.5;
 /// How many recent patterns are excluded from the next random pick.
 pub const PATTERN_HISTORY: usize = 2;
 
+// --- Boss movement ---
+
+/// Speed a boss walks while repositioning.
+pub const BOSS_MOVE_SPEED: f32 = 95.0;
+/// Single bosses close to within this range of the player, then hold.
+pub const BOSS_STANDOFF_DISTANCE: f32 = 105.0;
+/// A dual half on its turn closes to this range of the player.
+pub const BOSS_DUAL_APPROACH_DISTANCE: f32 = 96.0;
+/// A dual half not on its turn backs out to this range.
+pub const BOSS_DUAL_RETREAT_DISTANCE: f32 = 260.0;
+/// Seconds of player movement a boss leads when aiming a projectile.
+pub const BOSS_AIM_LEAD: f32 = 0.25;
+
 // --- Boss A: Tailings Surge ---
 
-pub const SURGE_WINDUP: f32 = 0.75;
+/// Frame 9: the charge begins.
+pub const SURGE_WINDUP: f32 = boss_frame(9);
+/// Frames 13-25: recovery after the charge.
+pub const SURGE_RECOVERY: f32 = boss_frame(13);
+/// The pause between the two phase-2 charges.
+pub const SURGE_REWINDUP: f32 = 0.35;
 pub const SURGE_SPEED: f32 = 260.0;
 pub const SURGE_DURATION: f32 = 1.0;
 pub const SURGE_TRAIL_WIDTH: f32 = 34.0;
@@ -118,7 +155,11 @@ pub const SURGE_CURVE_DEG: f32 = 28.0;
 
 // --- Boss A: Excavator Slam ---
 
-pub const SLAM_WINDUP: f32 = 1.15;
+/// Frame 7: the slam fires; frames 8-12 stay live.
+pub const SLAM_WINDUP: f32 = boss_frame(7);
+pub const SLAM_ACTIVE: f32 = boss_frame(5);
+/// Frames 13-25: recovery.
+pub const SLAM_RECOVERY: f32 = boss_frame(13);
 pub const SLAM_RADIUS: f32 = 64.0;
 pub const SLAM_RADIUS_P2: f32 = 84.0;
 pub const SLAM_DAMAGE: f32 = 35.0;
@@ -132,7 +173,11 @@ pub const SLAM_DEBRIS_P2: u32 = 5;
 
 pub const DEBRIS_COUNT: u32 = 6;
 pub const DEBRIS_COUNT_P2: u32 = 9;
-pub const DEBRIS_FALL_TIME: f32 = 1.1;
+/// Frame 7: the shadows have fallen, impacts land during frames 8-11.
+pub const DEBRIS_WINDUP: f32 = boss_frame(7);
+pub const DEBRIS_ACTIVE: f32 = boss_frame(4);
+/// Frames 12-25: recovery.
+pub const DEBRIS_RECOVERY: f32 = boss_frame(14);
 pub const DEBRIS_SHADOW_RADIUS: f32 = 24.0;
 pub const DEBRIS_IMPACT_RADIUS: f32 = 30.0;
 pub const DEBRIS_DAMAGE: f32 = 25.0;
@@ -141,7 +186,11 @@ pub const DEBRIS_SPREAD: f32 = 220.0;
 // --- Boss B: Mirror Step ---
 
 pub const BLINK_RANGE: f32 = 190.0;
-pub const BLINK_TELL: f32 = 0.5;
+/// Frame 8: the teleport begins; frames 9-14 are the vanish.
+pub const BLINK_WINDUP: f32 = boss_frame(8);
+pub const BLINK_VANISH: f32 = boss_frame(6);
+/// Frames 15-25: recovery.
+pub const BLINK_RECOVERY: f32 = boss_frame(11);
 pub const DECOY_COUNT_P2: u32 = 3;
 pub const DECOY_SPLASH_RADIUS: f32 = 36.0;
 pub const DECOY_SPLASH_DAMAGE: f32 = 15.0;
@@ -149,7 +198,11 @@ pub const DECOY_SIZE: f32 = 48.0;
 
 // --- Boss B: Quicksilver Wave ---
 
-pub const WAVE_WINDUP: f32 = 0.6;
+/// Frame 9: the wave launches on frame 10.
+pub const WAVE_WINDUP: f32 = boss_frame(9);
+pub const WAVE_ACTIVE: f32 = boss_frame(1);
+/// Frames 11-25: recovery.
+pub const WAVE_RECOVERY: f32 = boss_frame(15);
 pub const WAVE_SPEED: f32 = 170.0;
 pub const WAVE_SPEED_P2: f32 = 240.0;
 pub const WAVE_LENGTH: f32 = 150.0;
@@ -165,7 +218,11 @@ pub const MERCURY_SLIP: f32 = 1.6;
 
 // --- Boss B: Madness Spray ---
 
-pub const SPRAY_WINDUP: f32 = 0.65;
+/// Frame 7: the spray releases.
+pub const SPRAY_WINDUP: f32 = boss_frame(7);
+pub const SPRAY_ACTIVE: f32 = boss_frame(5);
+/// Frames 13-25: recovery.
+pub const SPRAY_RECOVERY: f32 = boss_frame(13);
 pub const SPRAY_CONE_DEG: f32 = 60.0;
 pub const SPRAY_RANGE: f32 = 190.0;
 pub const SPRAY_DROPLETS: u32 = 12;
@@ -195,8 +252,10 @@ pub const AMALGAMATION_INTERVAL_P2: f32 = 20.0;
 pub const AMALGAMATION_CHANNEL: f32 = 5.0;
 pub const AMALGAMATION_RADIUS: f32 = 320.0;
 pub const AMALGAMATION_DAMAGE: f32 = 50.0;
-/// The dual bosses launch a coordinated combo on this cadence.
-pub const DUAL_COMBO_INTERVAL: f32 = 6.4;
+/// The dual bosses take turns on this cadence, so the fight stays readable.
+pub const DUAL_COMBO_INTERVAL: f32 = 3.4;
+/// Extra breathing room after a dual attack resolves before the next turn.
+pub const DUAL_COMBO_GAP: f32 = 0.6;
 
 // --- Lock-on ---
 

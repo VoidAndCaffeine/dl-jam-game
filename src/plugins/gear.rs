@@ -87,7 +87,6 @@ mod tests {
     use crate::plugins::level::LevelPlugin;
     use crate::resources::crafting_menu::CraftingMenu;
     use crate::resources::inventory::Inventory;
-    use crate::resources::level::PlayerSpawn;
     use crate::states::{DayPhase, GameState};
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;

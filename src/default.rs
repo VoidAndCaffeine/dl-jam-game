@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::plugins::{
     AudioPlugin, BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, HudPlugin, InteractionPlugin,
-    LevelPlugin, UIPlugin,
+    LevelPlugin, LoadingPlugin, UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
@@ -23,7 +23,6 @@ use crate::systems::player_sprite::{
     animate_player_sprite, collect_player_actions, update_player_look,
 };
 use crate::systems::spawn_player::{despawn_player, spawn_player};
-use crate::systems::transition::transition_to_playing;
 
 pub struct GamePlugin;
 
@@ -39,6 +38,7 @@ impl Plugin for GamePlugin {
             .init_resource::<PlayerGear>()
             .init_resource::<PlayerSpriteAssets>()
             .add_plugins(InteractionPlugin)
+            .add_plugins(LoadingPlugin)
             .add_plugins(LevelPlugin)
             .add_plugins(FarmPlugin)
             .add_plugins(GearPlugin)
@@ -51,16 +51,20 @@ impl Plugin for GamePlugin {
             .add_plugins(AudioPlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Update, toggle_debug_overlay)
-            .add_systems(OnEnter(GameState::LoadingAssets), transition_to_playing)
             .add_systems(
                 OnEnter(GameState::Playing),
                 spawn_player.after(LevelSet::Load),
             )
             .add_systems(OnExit(GameState::Playing), despawn_player)
-            .add_systems(Update, (update_player_look, collect_player_actions))
             .add_systems(
                 Update,
-                animate_player_sprite.after(crate::systems::player_attack::player_attack),
+                (update_player_look, collect_player_actions).after(LevelSet::Load),
+            )
+            .add_systems(
+                Update,
+                animate_player_sprite
+                    .after(crate::systems::player_attack::player_attack)
+                    .after(LevelSet::Load),
             )
             .add_systems(FixedUpdate, movement_input)
             .add_systems(FixedUpdate, grid_movement.after(movement_input))

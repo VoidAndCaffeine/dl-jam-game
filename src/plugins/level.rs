@@ -10,7 +10,7 @@ use crate::resources::level::{
     ActiveLevel, BossSpawn, LevelEntity, LevelRequest, LevelSet, PlayerSpawn, build_level,
     prop_position, prop_positions,
 };
-use crate::states::GameState;
+use crate::states::{DayPhase, GameState};
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::image::{Image, ImageSampler};
@@ -44,9 +44,22 @@ impl Plugin for LevelPlugin {
                 enter_level.in_set(LevelSet::Load),
             )
             .add_systems(OnExit(GameState::Playing), despawn_all_levels)
-            .add_systems(Update, apply_level_request.in_set(LevelSet::Load))
+            .add_systems(
+                Update,
+                apply_level_request
+                    .in_set(LevelSet::Load)
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(not_scene_loading),
+            )
             .add_systems(Update, sync_tilemap_chunk.in_set(LevelSet::TileChunk));
     }
+}
+
+/// Rooms only swap once the loading screen has come down, so the new scene's
+/// sheets are already resident when its entities appear. Reads the sub-state as
+/// optional so it is valid during the boot `LoadingAssets` state.
+fn not_scene_loading(day: Option<Res<State<DayPhase>>>) -> bool {
+    !day.is_some_and(|state| state.get() == &DayPhase::Loading)
 }
 
 /// Loads the farm when play starts.
@@ -236,6 +249,11 @@ fn sync_tilemap_chunk(
     existing: Query<Entity, With<TileChunkMarker>>,
 ) {
     if cache.is_none() || images.is_none() {
+        return;
+    }
+    // Before a room is loaded `ActiveLevel` is its `Default` (0x0). Building a
+    // chunk from that makes a zero-sized texture, which the GPU rejects.
+    if active.def.width == 0 || active.def.height == 0 {
         return;
     }
     if built.level == Some(active.id) && existing.iter().next().is_some() {

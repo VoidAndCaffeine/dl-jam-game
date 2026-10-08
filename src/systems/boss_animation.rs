@@ -1,24 +1,62 @@
 use crate::components::boss::{Dying, PatternType};
-use crate::components::boss_animation::{BossAnimState, BossAnimation};
+use crate::components::boss_animation::{BossAnimState, BossAnimation, ClipPlayback};
 use crate::components::player::Player;
 use crate::components::player_sprite::{FRAME_COUNT, Facing8};
 use crate::constants::BOSS_WALK_THRESHOLD;
 use crate::events::BossAttackStarted;
 use crate::resources::boss_sprite::{BossSpriteAssets, BossSpriteKey};
-use crate::systems::boss_patterns::pattern_duration;
-use crate::utils::targeting::{avoid_horizontal, snap_horizontal};
+use crate::systems::boss_patterns::{clip_windows, pattern_timings};
+use crate::utils::targeting::avoid_horizontal;
 use bevy::ecs::message::MessageReader;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+/// Component of a 45-degree unit direction.
+const DIAG: f32 = std::f32::consts::FRAC_1_SQRT_2;
+/// The eight unit directions the boss clips are drawn for.
+const CLIP_DIRECTIONS: [Vec2; 8] = [
+    Vec2::new(1.0, 0.0),
+    Vec2::new(DIAG, DIAG),
+    Vec2::new(0.0, 1.0),
+    Vec2::new(-DIAG, DIAG),
+    Vec2::new(-1.0, 0.0),
+    Vec2::new(-DIAG, -DIAG),
+    Vec2::new(0.0, -1.0),
+    Vec2::new(DIAG, -DIAG),
+];
+
+/// Snaps a surge aim to one of the eight directions but biases away from the
+/// three downward ones, whose art reads poorly.
+///
+/// Horizontal and upward aims pass through untouched. A downward aim falls
+/// back to the closest non-down direction, so a charge can still track a player
+/// below the boss without the fight collapsing onto the arena's top edge.
+pub fn bias_surge_direction(aim: Vec2) -> Vec2 {
+    let aim = aim.normalize_or(Vec2::X);
+    let nearest = CLIP_DIRECTIONS
+        .iter()
+        .copied()
+        .max_by(|a, b| aim.dot(*a).total_cmp(&aim.dot(*b)))
+        .unwrap_or(Vec2::X);
+    if nearest.y >= -0.0001 {
+        return nearest;
+    }
+    CLIP_DIRECTIONS
+        .iter()
+        .copied()
+        .filter(|dir| dir.y >= -0.0001)
+        .max_by(|a, b| aim.dot(*a).total_cmp(&aim.dot(*b)))
+        .unwrap_or(Vec2::X)
+}
+
 /// The aim a pattern should actually use, after its direction constraints.
 ///
-/// Tailings Surge only reads horizontally, and the Excavator Slam never reads
-/// from the left or right, so both snap the raw player-aim before it is used
-/// for movement or for choosing a clip.
+/// Tailings Surge snaps onto the eight directions with a bias against the
+/// downward clips, and the Excavator Slam never reads from the left or right,
+/// so both reshape the raw player-aim before it drives movement or the clip.
 pub fn constrained_aim(pattern: PatternType, aim: Vec2) -> Vec2 {
     match pattern {
-        PatternType::TailingsSurge => snap_horizontal(aim),
+        PatternType::TailingsSurge => bias_surge_direction(aim),
         PatternType::ExcavatorSlam => avoid_horizontal(aim),
         _ => aim,
     }
@@ -62,11 +100,14 @@ pub fn drive_boss_animation(
             .unwrap_or(Vec2::X);
         let facing =
             Facing8::from_direction(constrained_aim(event.pattern, aim)).unwrap_or(anim.facing);
-        anim.set_action(
-            state_for_pattern(event.pattern),
-            facing,
-            pattern_duration(event.pattern, event.phase),
+        let timings = pattern_timings(event.pattern, event.phase);
+        let clip = ClipPlayback::new(
+            clip_windows(event.pattern),
+            timings.windup,
+            timings.active,
+            timings.recovery,
         );
+        anim.set_attack(state_for_pattern(event.pattern), facing, clip);
     }
 
     // Dying bosses hold their death clip; everyone else returns to Idle or Walk.
@@ -150,17 +191,31 @@ fn apply_boss_sprite(assets: &mut BossSpriteAccess, anim: &BossAnimation, sprite
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::boss::{Boss, BossId, Dying};
+    use crate::components::boss::{BossId, Dying};
     use crate::components::boss_animation::BossPack;
 
     #[test]
-    fn tailings_surge_is_snapped_to_pure_horizontal() {
+    fn tailings_surge_biases_away_from_the_downward_clips() {
+        // Upward and horizontal aims keep their direction.
         assert_eq!(
             constrained_aim(PatternType::TailingsSurge, Vec2::new(0.2, 0.98)),
-            Vec2::X
+            Vec2::Y
         );
         assert_eq!(
             constrained_aim(PatternType::TailingsSurge, Vec2::new(-0.7, 0.7)),
+            Vec2::new(-DIAG, DIAG)
+        );
+        assert_eq!(
+            constrained_aim(PatternType::TailingsSurge, Vec2::new(0.99, -0.05)),
+            Vec2::X
+        );
+        // Downward aims fall back to the nearest non-down direction.
+        assert_eq!(
+            constrained_aim(PatternType::TailingsSurge, Vec2::new(0.2, -0.98)),
+            Vec2::X
+        );
+        assert_eq!(
+            constrained_aim(PatternType::TailingsSurge, Vec2::new(-0.2, -0.98)),
             Vec2::NEG_X
         );
     }
@@ -211,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn a_surge_event_reads_horizontally_even_when_the_player_is_above() {
+    fn a_surge_event_reads_up_when_the_player_is_above() {
         let mut app = animation_app();
         let boss = spawn_boss(&mut app, BossPack::Excavator);
         app.world_mut()
@@ -226,7 +281,7 @@ mod tests {
 
         let anim = app.world().get::<BossAnimation>(boss).unwrap();
         assert_eq!(anim.state, BossAnimState::TailingsSurge);
-        assert_eq!(anim.facing, Facing8::Right);
+        assert_eq!(anim.facing, Facing8::Up);
     }
 
     #[test]

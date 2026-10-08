@@ -18,10 +18,14 @@ pub fn movement_input(
     // A one-shot clip (planting, watering, dying) roots the player just like a
     // swing does; idle and walk still let them move.
     let acting = animations.iter().any(PlayerAnimation::is_acting);
+    let day = phase.day_phase();
     let frozen = panels.any_open()
         || attack.is_rooted()
         || acting
-        || matches!(phase.day.get(), DayPhase::BossSelect | DayPhase::Result)
+        || matches!(
+            day,
+            Some(DayPhase::BossSelect | DayPhase::Result | DayPhase::Loading)
+        )
         || !phase.is_playing();
     for mut movement in movement_query.iter_mut() {
         let mut direction = Vec2::ZERO;

@@ -18,7 +18,8 @@ use crate::systems::boss_attacks::{
     cleanup_boss_encounter, tick_boss_attacks, tick_surge_chargers,
 };
 use crate::systems::boss_damage::{apply_boss_damage, tick_dying_bosses};
-use crate::systems::boss_patterns::spawn_pattern_attacks;
+use crate::systems::boss_movement::boss_movement;
+use crate::systems::boss_patterns::{resolve_pending_blinks, spawn_pattern_attacks};
 use crate::systems::combat::{player_death_check, tick_combat_timers};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
 use crate::systems::lock_on::{cycle_lock_on, update_lock_on_visuals};
@@ -49,7 +50,13 @@ impl Plugin for BossPlugin {
             .add_systems(Update, spawn_boss.after(LevelSet::Load))
             .add_systems(
                 FixedUpdate,
-                (boss_ai, spawn_pattern_attacks, tick_surge_chargers).chain(),
+                (
+                    boss_ai,
+                    spawn_pattern_attacks,
+                    tick_surge_chargers,
+                    boss_movement,
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
@@ -64,6 +71,7 @@ impl Plugin for BossPlugin {
                     cycle_lock_on,
                     update_lock_on_visuals,
                     tick_boss_attacks,
+                    resolve_pending_blinks,
                 )
                     .chain(),
             )

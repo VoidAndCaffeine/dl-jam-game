@@ -5,7 +5,7 @@ use crate::events::{DamageDealt, PlaySfx, PlayerDied, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::player_status::PlayerStatus;
 use crate::systems::combat::{hurt_player, swing_hits};
-use crate::utils::targeting::{circles_overlap, snap_horizontal};
+use crate::utils::targeting::circles_overlap;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 
@@ -71,31 +71,107 @@ fn damage_player(
     }
 }
 
+/// Draws the telegraph an attack shows while it winds up.
+///
+/// Ground attacks keep their landing marker (and the debris shadow tracks its
+/// target); thrown attacks are hidden so only the boss's clip reads as a tell.
+fn windup_visual(sprite: &mut Sprite, attack: &BossAttack, transform: &mut Transform) {
+    match attack.kind {
+        AttackKind::Debris => {
+            transform.translation.x = attack.target.x;
+            transform.translation.y = attack.target.y;
+        }
+        AttackKind::Wave | AttackKind::Spray | AttackKind::Wisp => {
+            sprite.color.set_alpha(0.0);
+        }
+        AttackKind::Amalgam => {
+            let progress = 1.0 - (attack.windup / AMALGAMATION_CHANNEL).clamp(0.0, 1.0);
+            sprite.color = Color::srgba(0.7, 0.25, 0.42, 0.25 + 0.4 * progress);
+        }
+        _ => {}
+    }
+}
+
+/// Rotates a unit direction by `angle` radians.
+fn rotate(direction: Vec2, angle: f32) -> Vec2 {
+    if angle == 0.0 {
+        return direction;
+    }
+    (Quat::from_rotation_z(angle) * direction.extend(0.0)).truncate()
+}
+
+/// Whether a travelling wave overlaps the player.
+///
+/// The wave sprite is a `WAVE_WIDTH`-deep by `WAVE_LENGTH`-wide wall whose
+/// length runs across the travel, so the hit test borrows exactly those extents
+/// and stays centred on what is drawn.
+fn wave_hits(position: Vec2, direction: Vec2, player_pos: Vec2, player_half: Vec2) -> bool {
+    let release = position - direction * (WAVE_WIDTH * 0.5);
+    swing_hits(
+        release,
+        direction,
+        WAVE_WIDTH,
+        WAVE_LENGTH,
+        player_pos,
+        player_half,
+    )
+}
+
 /// Moves, ages and resolves every spawned boss attack.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tick_boss_attacks(
     mut commands: Commands,
     time: Res<Time>,
     grid: Res<SolidGrid>,
     mut status: ResMut<PlayerStatus>,
-    mut attacks: Query<(Entity, &mut BossAttack, &mut Transform, &mut Sprite), Without<Player>>,
+    mut attacks: Query<
+        (Entity, &mut BossAttack, &mut Transform, &mut Sprite),
+        (Without<Player>, Without<Boss>),
+    >,
+    boss_transforms: Query<&Transform, (With<Boss>, Without<Player>)>,
     mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
     mut damage_events: MessageWriter<DamageDealt>,
     mut sfx: MessageWriter<PlaySfx>,
     mut died: MessageWriter<PlayerDied>,
 ) {
     let dt = time.delta_secs();
-    let player = player.single_mut();
-    let Ok((player_transform, mut health, mut movement)) = player else {
+    let Ok((player_transform, mut health, mut movement)) = player.single_mut() else {
         return;
     };
     let player_pos = player_transform.translation.truncate();
+    let player_velocity = movement.velocity;
     let player_half = Vec2::splat(PLAYER_SIZE * 0.5);
 
     for (entity, mut attack, mut transform, mut sprite) in attacks.iter_mut() {
         attack.hit_cooldown = (attack.hit_cooldown - dt).max(0.0);
         attack.aux_timer = (attack.aux_timer - dt).max(0.0);
         attack.remaining -= dt;
+
+        // A winding-up attack only telegraphs: no motion and no damage yet.
+        if !attack.armed {
+            attack.windup = (attack.windup - dt).max(0.0);
+            if attack.windup > 0.0 {
+                windup_visual(&mut sprite, &attack, &mut transform);
+                continue;
+            }
+            attack.armed = true;
+            // Thrown attacks leave from the boss's current spot and snap onto
+            // the player as they release.
+            if attack.kind.aims_at_player() {
+                if let Some(owner) = attack.owner
+                    && let Ok(owner_transform) = boss_transforms.get(owner)
+                {
+                    attack.position = owner_transform.translation.truncate();
+                    transform.translation.x = attack.position.x;
+                    transform.translation.y = attack.position.y;
+                }
+                let predicted = player_pos + player_velocity * BOSS_AIM_LEAD;
+                let base = (predicted - attack.position).normalize_or(attack.direction);
+                attack.direction = rotate(base, attack.aim_offset);
+                transform.rotation =
+                    Quat::from_rotation_z(attack.direction.y.atan2(attack.direction.x));
+            }
+        }
 
         match attack.kind {
             AttackKind::SurgeTrail | AttackKind::AcidPool | AttackKind::MercuryPool => {
@@ -120,72 +196,76 @@ pub fn tick_boss_attacks(
                     }
                 }
                 fade_hazard(&mut sprite, &attack);
+                if attack.remaining <= 0.0 {
+                    commands.entity(entity).despawn();
+                }
             }
             AttackKind::Slam => {
-                if !attack.armed && attack.remaining <= 0.3 {
-                    attack.armed = true;
-                    if circles_overlap(attack.position, attack.radius, player_pos, player_half.x) {
+                if !attack.impacted {
+                    attack.impacted = true;
+                    sfx.write(PlaySfx(Sfx::SlamImpact));
+                    if attack.phase >= 2 {
+                        spawn_slam_aftermath(&mut commands, &attack);
+                    }
+                }
+                // The quake stays live across its active frames.
+                if attack.hit_cooldown <= 0.0
+                    && circles_overlap(attack.position, attack.radius, player_pos, player_half.x)
+                {
+                    attack.hit_cooldown = HAZARD_TICK;
+                    damage_player(
+                        &mut health,
+                        &mut movement,
+                        attack.position,
+                        player_pos,
+                        attack.damage,
+                        &mut sfx,
+                        &mut died,
+                    );
+                }
+                fade_hazard(&mut sprite, &attack);
+                if attack.remaining <= 0.0 {
+                    commands.entity(entity).despawn();
+                }
+            }
+            AttackKind::Debris => {
+                if !attack.impacted {
+                    attack.impacted = true;
+                    if circles_overlap(attack.target, attack.radius, player_pos, player_half.x) {
                         damage_player(
                             &mut health,
                             &mut movement,
-                            attack.position,
+                            attack.target,
                             player_pos,
                             attack.damage,
                             &mut sfx,
                             &mut died,
                         );
                     }
-                    sfx.write(PlaySfx(Sfx::SlamImpact));
+                    if let Some(owner) = attack.owner {
+                        damage_events.write(DamageDealt {
+                            target: owner,
+                            amount: attack.damage,
+                            raw: attack.damage,
+                        });
+                    }
+                    sfx.write(PlaySfx(Sfx::DebrisImpact));
                     if attack.phase >= 2 {
-                        spawn_slam_aftermath(&mut commands, &attack);
+                        let mist = BossAttack::new(AttackKind::SurgeTrail, attack.target)
+                            .with_radius(SURGE_TRAIL_WIDTH_P2)
+                            .with_damage(attack.damage * 0.3)
+                            .with_lifetime(SURGE_TRAIL_LIFE)
+                            .with_phase(attack.phase);
+                        spawn_attack(
+                            &mut commands,
+                            mist,
+                            attack_color(AttackKind::SurgeTrail),
+                            Vec2::splat(SURGE_TRAIL_WIDTH_P2),
+                            0.0,
+                        );
                     }
                 }
-                fade_hazard(&mut sprite, &attack);
-            }
-            AttackKind::Debris => {
-                if !attack.armed {
-                    // The shadow sits on the ground the whole fall.
-                    transform.translation.x = attack.target.x;
-                    transform.translation.y = attack.target.y;
-                    if attack.remaining <= 0.0 {
-                        attack.armed = true;
-                        if circles_overlap(attack.target, attack.radius, player_pos, player_half.x)
-                        {
-                            damage_player(
-                                &mut health,
-                                &mut movement,
-                                attack.target,
-                                player_pos,
-                                attack.damage,
-                                &mut sfx,
-                                &mut died,
-                            );
-                        }
-                        if let Some(owner) = attack.owner {
-                            damage_events.write(DamageDealt {
-                                target: owner,
-                                amount: attack.damage,
-                                raw: attack.damage,
-                            });
-                        }
-                        sfx.write(PlaySfx(Sfx::DebrisImpact));
-                        if attack.phase >= 2 {
-                            let mist = BossAttack::new(AttackKind::SurgeTrail, attack.target)
-                                .with_radius(SURGE_TRAIL_WIDTH_P2)
-                                .with_damage(attack.damage * 0.3)
-                                .with_lifetime(SURGE_TRAIL_LIFE)
-                                .with_phase(attack.phase);
-                            spawn_attack(
-                                &mut commands,
-                                mist,
-                                attack_color(AttackKind::SurgeTrail),
-                                Vec2::splat(SURGE_TRAIL_WIDTH_P2),
-                                0.0,
-                            );
-                        }
-                        commands.entity(entity).despawn();
-                    }
-                }
+                commands.entity(entity).despawn();
             }
             AttackKind::Decoy => {
                 if attack.remaining <= 0.0 {
@@ -193,22 +273,15 @@ pub fn tick_boss_attacks(
                 }
             }
             AttackKind::Wave => {
+                sprite.color = attack_color(AttackKind::Wave);
                 let step = attack.direction * attack.speed * dt;
                 let moved = grid.move_and_collide(Vec2::splat(1.0), attack.position, step);
                 attack.position = moved;
                 transform.translation.x = moved.x;
                 transform.translation.y = moved.y;
 
-                let release = attack.position - attack.direction * (WAVE_LENGTH * 0.5);
                 if attack.hit_cooldown <= 0.0
-                    && swing_hits(
-                        release,
-                        attack.direction,
-                        WAVE_LENGTH,
-                        WAVE_WIDTH,
-                        player_pos,
-                        player_half,
-                    )
+                    && wave_hits(attack.position, attack.direction, player_pos, player_half)
                 {
                     attack.hit_cooldown = HAZARD_TICK;
                     damage_player(
@@ -241,16 +314,15 @@ pub fn tick_boss_attacks(
                 }
             }
             AttackKind::Spray | AttackKind::Wisp => {
+                sprite.color = attack_color(attack.kind);
                 if attack.kind == AttackKind::Wisp {
                     let desired = (player_pos - attack.position).normalize_or(attack.direction);
                     let angle = attack
                         .direction
                         .angle_to(desired)
                         .clamp(-WISP_TURN_RATE * dt, WISP_TURN_RATE * dt);
-                    attack.direction = (Quat::from_rotation_z(angle)
-                        * attack.direction.extend(0.0))
-                    .truncate()
-                    .normalize_or(attack.direction);
+                    attack.direction =
+                        rotate(attack.direction, angle).normalize_or(attack.direction);
                 }
                 let step = attack.direction * attack.speed * dt;
                 let moved = grid.move_and_collide(Vec2::splat(1.0), attack.position, step);
@@ -280,36 +352,30 @@ pub fn tick_boss_attacks(
                 }
             }
             AttackKind::Amalgam => {
-                if !attack.armed {
-                    if attack.remaining <= 0.0 {
-                        attack.armed = true;
-                        attack.remaining = 0.4;
-                        let clear = !line_blocked(&grid, attack.position, player_pos);
-                        if clear
-                            && circles_overlap(
-                                attack.position,
-                                attack.radius,
-                                player_pos,
-                                player_half.x,
-                            )
-                        {
-                            damage_player(
-                                &mut health,
-                                &mut movement,
-                                attack.position,
-                                player_pos,
-                                attack.damage,
-                                &mut sfx,
-                                &mut died,
-                            );
-                        }
-                        sfx.write(PlaySfx(Sfx::AmalgamExplode));
-                    } else {
-                        let progress = 1.0 - (attack.remaining / attack.total).clamp(0.0, 1.0);
-                        sprite.color = Color::srgba(0.7, 0.25, 0.42, 0.25 + 0.4 * progress);
+                if !attack.impacted {
+                    attack.impacted = true;
+                    let clear = !line_blocked(&grid, attack.position, player_pos);
+                    if clear
+                        && circles_overlap(
+                            attack.position,
+                            attack.radius,
+                            player_pos,
+                            player_half.x,
+                        )
+                    {
+                        damage_player(
+                            &mut health,
+                            &mut movement,
+                            attack.position,
+                            player_pos,
+                            attack.damage,
+                            &mut sfx,
+                            &mut died,
+                        );
                     }
+                    sfx.write(PlaySfx(Sfx::AmalgamExplode));
                 }
-                if attack.armed && attack.remaining <= 0.0 {
+                if attack.remaining <= 0.0 {
                     commands.entity(entity).despawn();
                 }
             }
@@ -382,11 +448,12 @@ pub fn tick_surge_chargers(
             let was_winding = charger.windup;
             charger.windup -= dt;
             if was_winding > 0.0 && charger.windup <= 0.0 {
-                // Snap the aim to the player as the charge begins; the surge
-                // only ever reads horizontally, so keep it pure Left/Right.
+                // Snap the aim onto the player as the charge begins, biased
+                // away from the weaker downward animations.
                 if let Some(player_pos) = player_pos {
-                    charger.direction =
-                        snap_horizontal((player_pos - from).normalize_or(charger.direction));
+                    charger.direction = crate::systems::boss_animation::bias_surge_direction(
+                        (player_pos - from).normalize_or(charger.direction),
+                    );
                 }
             }
             continue;
@@ -394,10 +461,8 @@ pub fn tick_surge_chargers(
 
         if charger.active > 0.0 {
             charger.active -= dt;
-            charger.direction = (Quat::from_rotation_z(charger.curve * dt)
-                * charger.direction.extend(0.0))
-            .truncate()
-            .normalize_or(charger.direction);
+            charger.direction =
+                rotate(charger.direction, charger.curve * dt).normalize_or(charger.direction);
 
             let moved = grid.move_and_collide(half, from, charger.direction * charger.speed * dt);
             transform.translation.x = moved.x;
@@ -430,7 +495,7 @@ pub fn tick_surge_chargers(
         // The charge finished; run another in phase 2 or detach.
         charger.charges_left = charger.charges_left.saturating_sub(1);
         if charger.charges_left > 0 {
-            charger.windup = 0.35;
+            charger.windup = SURGE_REWINDUP;
             charger.active = SURGE_DURATION;
             charger.trail_timer = 0.0;
         } else {
@@ -462,6 +527,30 @@ mod tests {
 
         let wall = grid.tile_center(2, 0);
         assert!(line_blocked(&grid, bottom, wall));
+    }
+
+    #[test]
+    fn rotating_a_direction_by_zero_is_identity() {
+        assert_eq!(rotate(Vec2::X, 0.0), Vec2::X);
+    }
+
+    #[test]
+    fn rotating_a_direction_by_a_quarter_turn() {
+        let turned = rotate(Vec2::X, std::f32::consts::FRAC_PI_2);
+        assert!((turned - Vec2::Y).length() < 0.0001);
+    }
+
+    #[test]
+    fn a_wave_hitbox_matches_its_drawn_wall() {
+        let half = Vec2::splat(8.0);
+        let position = Vec2::ZERO;
+        let forward = Vec2::X;
+        // The wall is wide across the travel: a player beside it is caught.
+        assert!(wave_hits(position, forward, Vec2::new(0.0, 60.0), half));
+        // But it is shallow along the travel: just past the front face is safe.
+        assert!(wave_hits(position, forward, Vec2::new(28.0, 0.0), half));
+        assert!(!wave_hits(position, forward, Vec2::new(-60.0, 0.0), half));
+        assert!(!wave_hits(position, forward, Vec2::new(60.0, 0.0), half));
     }
 
     #[test]
