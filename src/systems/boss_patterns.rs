@@ -9,7 +9,7 @@ use crate::events::{BossAttackStarted, PlaySfx, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::boss_rng::BossRng;
 use crate::systems::boss_animation::constrained_aim;
-use crate::systems::boss_attacks::{attack_color, spawn_attack};
+use crate::systems::boss_attacks::spawn_attack;
 use bevy::prelude::*;
 
 /// How long each phase of an attack lasts, in seconds.
@@ -188,7 +188,7 @@ pub fn spawn_pattern_attacks(
                 sfx.write(PlaySfx(Sfx::SurgeWindup));
             }
             PatternType::ExcavatorSlam => {
-                let radius = if enraged { SLAM_RADIUS_P2 } else { SLAM_RADIUS };
+                let radius = (if enraged { SLAM_RADIUS_P2 } else { SLAM_RADIUS }) * HITBOX_SHRINK;
                 let slam = BossAttack::new(AttackKind::Slam, lead)
                     .owned_by(event.entity)
                     .with_phase(event.phase)
@@ -196,13 +196,7 @@ pub fn spawn_pattern_attacks(
                     .with_damage(SLAM_DAMAGE)
                     .with_lifetime(SLAM_WINDUP + SLAM_ACTIVE)
                     .with_windup(SLAM_WINDUP);
-                spawn_attack(
-                    &mut commands,
-                    slam,
-                    attack_color(AttackKind::Slam),
-                    Vec2::splat(radius * 2.0),
-                    0.0,
-                );
+                spawn_attack(&mut commands, slam, 0.0);
                 sfx.write(PlaySfx(Sfx::SlamWindup));
             }
             PatternType::DebrisRain => {
@@ -226,7 +220,7 @@ pub fn spawn_pattern_attacks(
                     let debris = BossAttack::new(AttackKind::Debris, spot)
                         .owned_by(event.entity)
                         .with_phase(event.phase)
-                        .with_radius(DEBRIS_IMPACT_RADIUS)
+                        .with_radius(DEBRIS_IMPACT_RADIUS * HITBOX_SHRINK)
                         .with_damage(DEBRIS_DAMAGE)
                         .with_lifetime(fall)
                         .with_windup(fall);
@@ -236,8 +230,6 @@ pub fn spawn_pattern_attacks(
                             target: spot,
                             ..debris
                         },
-                        attack_color(AttackKind::Debris),
-                        Vec2::splat(DEBRIS_SHADOW_RADIUS * 2.0),
                         0.0,
                     );
                 }
@@ -271,8 +263,6 @@ pub fn spawn_pattern_attacks(
                             speed,
                             ..wave
                         },
-                        attack_color(AttackKind::Wave),
-                        Vec2::new(WAVE_WIDTH, WAVE_LENGTH),
                         direction.y.atan2(direction.x),
                     );
                 };
@@ -308,20 +298,14 @@ pub fn spawn_pattern_attacks(
                     let mut droplet = BossAttack::new(kind, boss_pos)
                         .owned_by(event.entity)
                         .with_phase(event.phase)
-                        .with_radius(if homing { 9.0 } else { 7.0 })
+                        .with_radius((if homing { 9.0 } else { 7.0 }) * HITBOX_SHRINK)
                         .with_damage(SPRAY_DAMAGE)
                         .with_lifetime(if homing { WISP_LIFE } else { SPRAY_LIFE })
                         .with_windup(SPRAY_WINDUP)
                         .with_aim_offset(offset);
                     droplet.direction = direction;
                     droplet.speed = if homing { WISP_SPEED } else { SPRAY_SPEED };
-                    spawn_attack(
-                        &mut commands,
-                        droplet,
-                        attack_color(kind),
-                        Vec2::splat(16.0),
-                        angle,
-                    );
+                    spawn_attack(&mut commands, droplet, angle);
                 }
                 sfx.write(PlaySfx(Sfx::SprayWindup));
             }
@@ -329,17 +313,11 @@ pub fn spawn_pattern_attacks(
                 let center = grid.center();
                 let amalgam = BossAttack::new(AttackKind::Amalgam, center)
                     .with_phase(event.phase)
-                    .with_radius(AMALGAMATION_RADIUS)
+                    .with_radius(AMALGAMATION_RADIUS * HITBOX_SHRINK)
                     .with_damage(AMALGAMATION_DAMAGE)
                     .with_lifetime(AMALGAMATION_CHANNEL + 0.4)
                     .with_windup(AMALGAMATION_CHANNEL);
-                spawn_attack(
-                    &mut commands,
-                    amalgam,
-                    attack_color(AttackKind::Amalgam),
-                    Vec2::splat(AMALGAMATION_RADIUS * 2.0),
-                    0.0,
-                );
+                spawn_attack(&mut commands, amalgam, 0.0);
                 sfx.write(PlaySfx(Sfx::AmalgamWarning));
                 sfx.write(PlaySfx(Sfx::AmalgamChannel));
             }
@@ -380,13 +358,7 @@ pub fn resolve_pending_blinks(
                 .with_phase(blink.phase)
                 .with_radius(DECOY_SIZE * 0.5)
                 .with_lifetime(6.0);
-            let decoy_entity = spawn_attack(
-                &mut commands,
-                decoy,
-                attack_color(AttackKind::Decoy),
-                Vec2::splat(DECOY_SIZE),
-                0.0,
-            );
+            let decoy_entity = spawn_attack(&mut commands, decoy, 0.0);
             commands.entity(decoy_entity).insert((
                 Targetable,
                 Decoy::new(DECOY_SPLASH_RADIUS, DECOY_SPLASH_DAMAGE),

@@ -98,7 +98,9 @@ pub fn animate_player_sprite(
             movement.input_direction
         };
 
-        step_animation(&mut anim, dt, facing, attacking);
+        // Idle versus Walk follows real movement input, so standing still
+        // still faces the boss without playing the walk cycle.
+        step_animation(&mut anim, dt, movement.input_direction, facing, attacking);
         apply_sprite(&mut assets, &anim, &mut sprite);
     }
 }

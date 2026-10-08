@@ -1,5 +1,6 @@
 use crate::components::boss::BossId;
 use crate::components::boss_animation::{BossAnimState, BossPack};
+use crate::components::effect_sprite::EffectKind;
 use crate::components::gear::GearSet;
 use crate::components::player_sprite::{Facing8, PlayerAnimState, PlayerLook};
 use crate::levels::LevelId;
@@ -80,15 +81,49 @@ impl LoadTarget {
                     paths.push(BossAnimState::Idle.sheet_path(pack, Facing8::Down));
                 }
             }
-            LoadTarget::ArenaA => paths.extend(boss_paths(BossPack::Excavator)),
-            LoadTarget::ArenaB => paths.extend(boss_paths(BossPack::Mercuril)),
+            LoadTarget::ArenaA => {
+                paths.extend(boss_paths(BossPack::Excavator));
+                paths.extend(effect_paths(&[
+                    EffectKind::TailingsSurge,
+                    EffectKind::ExcavatorSlam,
+                    EffectKind::AcidPool,
+                    EffectKind::DebrisShadow,
+                    EffectKind::DebrisImpact,
+                ]));
+            }
+            LoadTarget::ArenaB => {
+                paths.extend(boss_paths(BossPack::Mercuril));
+                paths.extend(effect_paths(&[
+                    EffectKind::QuicksilverWave,
+                    EffectKind::MercuryPool,
+                    EffectKind::MadnessSpray,
+                    EffectKind::Wisp,
+                ]));
+            }
             LoadTarget::ArenaDual => {
                 paths.extend(boss_paths(BossPack::Excavator));
                 paths.extend(boss_paths(BossPack::Mercuril));
+                paths.extend(effect_paths(&[
+                    EffectKind::TailingsSurge,
+                    EffectKind::ExcavatorSlam,
+                    EffectKind::AcidPool,
+                    EffectKind::DebrisShadow,
+                    EffectKind::DebrisImpact,
+                    EffectKind::QuicksilverWave,
+                    EffectKind::MercuryPool,
+                    EffectKind::MadnessSpray,
+                    EffectKind::Wisp,
+                    EffectKind::AmalgamationBlast,
+                ]));
             }
         }
         paths
     }
+}
+
+/// The sheet path of every effect in `kinds`.
+fn effect_paths(kinds: &[EffectKind]) -> Vec<String> {
+    kinds.iter().map(|kind| kind.sheet_path()).collect()
 }
 
 /// The five clips every player look has. Only the farmer adds the farm actions,
@@ -262,7 +297,7 @@ mod tests {
     #[test]
     fn arenas_load_the_worn_armor_look_and_one_boss() {
         let paths = LoadTarget::ArenaA.required_paths(Some(GearSet::BossA));
-        assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len());
+        assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len() + 5);
         assert!(
             paths
                 .iter()
@@ -280,12 +315,18 @@ mod tests {
                 .any(|path| path.starts_with("sprite_packs/Mercuril-spritesheet/")),
             "arena A should not carry the other boss"
         );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("sprite_packs/Effects/Tailings Surge/")),
+            "arena A should preload the excavator's effects"
+        );
     }
 
     #[test]
     fn arena_b_loads_the_other_boss() {
         let paths = LoadTarget::ArenaB.required_paths(Some(GearSet::BossB));
-        assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len());
+        assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len() + 4);
         assert!(
             paths
                 .iter()
@@ -296,12 +337,17 @@ mod tests {
                 .iter()
                 .any(|path| path.starts_with("sprite_packs/Excavator-spritesheet/"))
         );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("sprite_packs/Effects/Quicksilver Wave/"))
+        );
     }
 
     #[test]
     fn the_dual_arena_loads_both_bosses() {
         let paths = LoadTarget::ArenaDual.required_paths(Some(GearSet::BossB));
-        assert_eq!(paths.len(), (5 + 6 + 6) * Facing8::ALL.len());
+        assert_eq!(paths.len(), (5 + 6 + 6) * Facing8::ALL.len() + 10);
         assert!(
             paths
                 .iter()
@@ -311,6 +357,12 @@ mod tests {
             paths
                 .iter()
                 .any(|path| path.starts_with("sprite_packs/Mercuril-spritesheet/"))
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|path| path.starts_with("sprite_packs/Effects/Amalgamation Blast/")),
+            "the finale needs the amalgamation effect"
         );
     }
 

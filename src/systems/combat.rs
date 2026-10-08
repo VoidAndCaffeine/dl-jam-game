@@ -15,8 +15,8 @@ pub fn damage_after_armor(raw: f32, armor_reduction: f32) -> f32 {
 /// axis-aligned box at `target_center` with `target_half` extents.
 ///
 /// The target is rotated into the swing's frame, giving an exact
-/// oriented-rectangle-vs-box test in one cheap pass. The placeholder swing
-/// graphic is drawn with the same rectangle, so what you see is what you hit.
+/// oriented-rectangle-vs-box test in one cheap pass. This `reach` by `width`
+/// rectangle is the swing's hitbox, drawn by the debug overlay.
 pub fn swing_hits(
     origin: Vec2,
     facing: Vec2,

@@ -294,12 +294,15 @@ impl PlayerAnimation {
 
 /// Advances `anim` by `dt`.
 ///
+/// `movement` is the player's input direction and decides Idle versus Walk;
 /// `facing` is the direction to look in (movement input, or the swing/boss
-/// direction while attacking); `attacking` is the swing being thrown, if any.
-/// Pure so it can be tested without an asset server.
+/// direction while attacking), so the player can idle while still facing the
+/// boss; `attacking` is the swing being thrown, if any. Pure so it can be tested
+/// without an asset server.
 pub fn step_animation(
     anim: &mut PlayerAnimation,
     dt: f32,
+    movement: Vec2,
     facing: Vec2,
     attacking: Option<crate::components::attack::AttackType>,
 ) {
@@ -315,7 +318,7 @@ pub fn step_animation(
             AttackType::Light => PlayerAnimState::LightAttack,
             AttackType::Heavy => PlayerAnimState::HeavyAttack,
         }
-    } else if facing != Vec2::ZERO {
+    } else if movement != Vec2::ZERO {
         PlayerAnimState::Walk
     } else {
         PlayerAnimState::Idle
@@ -507,17 +510,31 @@ mod tests {
     #[test]
     fn walking_turns_the_face_without_playing_a_one_shot() {
         let mut anim = PlayerAnimation::default();
-        step_animation(&mut anim, 0.0, Vec2::X, None);
+        step_animation(&mut anim, 0.0, Vec2::X, Vec2::X, None);
         assert_eq!(anim.state, PlayerAnimState::Walk);
         assert_eq!(anim.facing, Facing8::Right);
     }
 
     #[test]
+    fn standing_still_idles_while_still_facing_the_target() {
+        let mut anim = PlayerAnimation::default();
+        step_animation(&mut anim, 0.0, Vec2::ZERO, Vec2::new(0.0, 1.0), None);
+        assert_eq!(anim.state, PlayerAnimState::Idle);
+        assert_eq!(anim.facing, Facing8::Up);
+    }
+
+    #[test]
     fn standing_still_returns_to_idle_but_keeps_facing() {
         let mut anim = PlayerAnimation::default();
-        step_animation(&mut anim, 0.0, Vec2::new(0.0, 1.0), None);
+        step_animation(
+            &mut anim,
+            0.0,
+            Vec2::new(0.0, 1.0),
+            Vec2::new(0.0, 1.0),
+            None,
+        );
         let facing = anim.facing;
-        step_animation(&mut anim, 0.0, Vec2::ZERO, None);
+        step_animation(&mut anim, 0.0, Vec2::ZERO, Vec2::ZERO, None);
         assert_eq!(anim.state, PlayerAnimState::Idle);
         assert_eq!(anim.facing, facing);
     }
@@ -525,16 +542,22 @@ mod tests {
     #[test]
     fn attacking_selects_the_matching_clip() {
         let mut anim = PlayerAnimation::default();
-        step_animation(&mut anim, 0.0, Vec2::X, Some(AttackType::Heavy));
+        step_animation(&mut anim, 0.0, Vec2::X, Vec2::X, Some(AttackType::Heavy));
         assert_eq!(anim.state, PlayerAnimState::HeavyAttack);
-        step_animation(&mut anim, 0.0, Vec2::X, Some(AttackType::Light));
+        step_animation(&mut anim, 0.0, Vec2::X, Vec2::X, Some(AttackType::Light));
         assert_eq!(anim.state, PlayerAnimState::LightAttack);
     }
 
     #[test]
     fn frames_advance_over_a_frame_duration() {
         let mut anim = PlayerAnimation::default();
-        step_animation(&mut anim, FRAME_SECONDS + 0.001, Vec2::ZERO, None);
+        step_animation(
+            &mut anim,
+            FRAME_SECONDS + 0.001,
+            Vec2::ZERO,
+            Vec2::ZERO,
+            None,
+        );
         assert_eq!(anim.frame, 1);
     }
 
@@ -574,7 +597,13 @@ mod tests {
     fn a_looping_clip_wraps_back_to_the_first_frame() {
         let mut anim = PlayerAnimation::default();
         for _ in 0..FRAME_COUNT {
-            step_animation(&mut anim, FRAME_SECONDS + 0.001, Vec2::ZERO, None);
+            step_animation(
+                &mut anim,
+                FRAME_SECONDS + 0.001,
+                Vec2::ZERO,
+                Vec2::ZERO,
+                None,
+            );
         }
         assert_eq!(anim.frame, 0);
     }
@@ -586,7 +615,13 @@ mod tests {
         assert!(anim.is_acting());
 
         for _ in 0..=FRAME_COUNT {
-            step_animation(&mut anim, FRAME_SECONDS + 0.001, Vec2::ZERO, None);
+            step_animation(
+                &mut anim,
+                FRAME_SECONDS + 0.001,
+                Vec2::ZERO,
+                Vec2::ZERO,
+                None,
+            );
         }
 
         assert!(!anim.is_acting());
@@ -598,7 +633,7 @@ mod tests {
         let mut anim = PlayerAnimation::default();
         anim.start_action(PlayerAnimState::Death);
         for _ in 0..(FRAME_COUNT * 2) {
-            step_animation(&mut anim, FRAME_SECONDS + 0.001, Vec2::X, None);
+            step_animation(&mut anim, FRAME_SECONDS + 0.001, Vec2::X, Vec2::X, None);
         }
         assert_eq!(anim.state, PlayerAnimState::Death);
         assert_eq!(anim.frame, FRAME_COUNT - 1);

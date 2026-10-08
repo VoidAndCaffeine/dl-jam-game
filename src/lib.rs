@@ -1,3 +1,7 @@
+// The `AsBindGroup` derive's trait-resolution check is deeply nested for a
+// custom 2D material; raise the limit so it does not trip the recursion lint.
+#![recursion_limit = "256"]
+
 use bevy::asset::{AssetMetaCheck, AssetPlugin};
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
@@ -7,6 +11,7 @@ pub mod constants;
 pub mod default;
 pub mod events;
 pub mod levels;
+pub mod materials;
 pub mod plugins;
 pub mod resources;
 pub mod states;

@@ -1,4 +1,5 @@
 use crate::components::boss::{AttackKind, Boss, BossAttack, BossEncounterEntity, SurgeCharger};
+use crate::components::effect_sprite::EffectSprite;
 use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
 use crate::constants::*;
 use crate::events::{DamageDealt, PlaySfx, PlayerDied, Sfx};
@@ -8,47 +9,33 @@ use crate::systems::combat::{hurt_player, swing_hits};
 use crate::utils::targeting::circles_overlap;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
+use std::collections::HashMap;
 
-/// Spawns one attack entity with its placeholder sprite. Shared by the pattern
+/// Spawns one attack entity carrying its effect sprite. Shared by the pattern
 /// spawner and the surge charger so attacks always carry the same plumbing.
-pub fn spawn_attack(
-    commands: &mut Commands,
-    attack: BossAttack,
-    color: Color,
-    size: Vec2,
-    angle: f32,
-) -> Entity {
+///
+/// The sprite size and color are driven from the effect; [`super::effect_sprite`]
+/// fills in the sheet once the asset server is available.
+pub fn spawn_attack(commands: &mut Commands, attack: BossAttack, angle: f32) -> Entity {
     let position = attack.position;
+    let effect = EffectSprite::new(attack.kind.windup_effect(), attack.phase);
+    let size = effect.size;
+    let z = effect.kind.z();
     commands
         .spawn((
             attack,
+            effect,
             BossEncounterEntity,
             Sprite {
-                color,
+                color: Color::WHITE,
                 custom_size: Some(size),
                 ..default()
             },
-            Transform::from_xyz(position.x, position.y, 1.0)
+            Transform::from_xyz(position.x, position.y, z)
                 .with_rotation(Quat::from_rotation_z(angle)),
             Name::new("Boss Attack"),
         ))
         .id()
-}
-
-/// The placeholder colour for each attack.
-pub fn attack_color(kind: AttackKind) -> Color {
-    match kind {
-        AttackKind::SurgeTrail => Color::srgba(0.62, 0.85, 0.32, 0.55),
-        AttackKind::AcidPool => Color::srgba(0.55, 0.8, 0.25, 0.5),
-        AttackKind::Slam => Color::srgba(0.9, 0.32, 0.22, 0.45),
-        AttackKind::Debris => Color::srgba(0.16, 0.16, 0.22, 0.7),
-        AttackKind::MercuryPool => Color::srgba(0.72, 0.86, 0.92, 0.5),
-        AttackKind::Decoy => Color::srgba(0.78, 0.9, 0.96, 0.9),
-        AttackKind::Wave => Color::srgba(0.7, 0.9, 1.0, 0.7),
-        AttackKind::Spray => Color::srgba(0.82, 0.92, 1.0, 0.85),
-        AttackKind::Wisp => Color::srgba(0.86, 0.96, 1.0, 0.9),
-        AttackKind::Amalgam => Color::srgba(0.7, 0.25, 0.42, 0.5),
-    }
 }
 
 /// Applies a hit to the player if it lands, reporting the sound and any death.
@@ -68,27 +55,6 @@ fn damage_player(
     sfx.write(PlaySfx(Sfx::PlayerHit));
     if lethal {
         died.write(PlayerDied);
-    }
-}
-
-/// Draws the telegraph an attack shows while it winds up.
-///
-/// Ground attacks keep their landing marker (and the debris shadow tracks its
-/// target); thrown attacks are hidden so only the boss's clip reads as a tell.
-fn windup_visual(sprite: &mut Sprite, attack: &BossAttack, transform: &mut Transform) {
-    match attack.kind {
-        AttackKind::Debris => {
-            transform.translation.x = attack.target.x;
-            transform.translation.y = attack.target.y;
-        }
-        AttackKind::Wave | AttackKind::Spray | AttackKind::Wisp => {
-            sprite.color.set_alpha(0.0);
-        }
-        AttackKind::Amalgam => {
-            let progress = 1.0 - (attack.windup / AMALGAMATION_CHANNEL).clamp(0.0, 1.0);
-            sprite.color = Color::srgba(0.7, 0.25, 0.42, 0.25 + 0.4 * progress);
-        }
-        _ => {}
     }
 }
 
@@ -117,6 +83,23 @@ fn wave_hits(position: Vec2, direction: Vec2, player_pos: Vec2, player_half: Vec
     )
 }
 
+/// Returns `true` if the attack would hit its owner boss at the given position
+/// with the given radius. Uses a simple circle-circle check against the boss's
+/// hitbox (boss size * 0.5).
+fn attack_hits_owner(
+    attack: &BossAttack,
+    attack_pos: Vec2,
+    attack_radius: f32,
+    boss_map: &HashMap<Entity, (Vec2, f32)>,
+) -> bool {
+    if let Some(owner) = attack.owner
+        && let Some((owner_pos, owner_radius)) = boss_map.get(&owner)
+    {
+        return circles_overlap(attack_pos, attack_radius, *owner_pos, *owner_radius);
+    }
+    false
+}
+
 /// Moves, ages and resolves every spawned boss attack.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn tick_boss_attacks(
@@ -124,11 +107,8 @@ pub fn tick_boss_attacks(
     time: Res<Time>,
     grid: Res<SolidGrid>,
     mut status: ResMut<PlayerStatus>,
-    mut attacks: Query<
-        (Entity, &mut BossAttack, &mut Transform, &mut Sprite),
-        (Without<Player>, Without<Boss>),
-    >,
-    boss_transforms: Query<&Transform, (With<Boss>, Without<Player>)>,
+    mut attacks: Query<(Entity, &mut BossAttack, &mut Transform), (Without<Player>, Without<Boss>)>,
+    boss_transforms: Query<(Entity, &Transform), (With<Boss>, Without<Player>)>,
     mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
     mut damage_events: MessageWriter<DamageDealt>,
     mut sfx: MessageWriter<PlaySfx>,
@@ -142,7 +122,18 @@ pub fn tick_boss_attacks(
     let player_velocity = movement.velocity;
     let player_half = Vec2::splat(PLAYER_SIZE * 0.5);
 
-    for (entity, mut attack, mut transform, mut sprite) in attacks.iter_mut() {
+    // Cache boss transforms for owner collision checks
+    let boss_map: HashMap<Entity, (Vec2, f32)> = boss_transforms
+        .iter()
+        .map(|(entity, t)| {
+            let pos = t.translation.truncate();
+            // Use the boss's ID size for the hitbox radius
+            let size = 64.0; // BOSS_SIZE constant
+            (entity, (pos, size * 0.5))
+        })
+        .collect();
+
+    for (entity, mut attack, mut transform) in attacks.iter_mut() {
         attack.hit_cooldown = (attack.hit_cooldown - dt).max(0.0);
         attack.aux_timer = (attack.aux_timer - dt).max(0.0);
         attack.remaining -= dt;
@@ -151,7 +142,6 @@ pub fn tick_boss_attacks(
         if !attack.armed {
             attack.windup = (attack.windup - dt).max(0.0);
             if attack.windup > 0.0 {
-                windup_visual(&mut sprite, &attack, &mut transform);
                 continue;
             }
             attack.armed = true;
@@ -159,7 +149,7 @@ pub fn tick_boss_attacks(
             // the player as they release.
             if attack.kind.aims_at_player() {
                 if let Some(owner) = attack.owner
-                    && let Ok(owner_transform) = boss_transforms.get(owner)
+                    && let Ok((_, owner_transform)) = boss_transforms.get(owner)
                 {
                     attack.position = owner_transform.translation.truncate();
                     transform.translation.x = attack.position.x;
@@ -176,7 +166,11 @@ pub fn tick_boss_attacks(
         match attack.kind {
             AttackKind::SurgeTrail | AttackKind::AcidPool | AttackKind::MercuryPool => {
                 let radius = attack.radius;
-                if circles_overlap(attack.position, radius, player_pos, player_half.x) {
+                let hits_player =
+                    circles_overlap(attack.position, radius, player_pos, player_half.x);
+                let hits_owner = attack_hits_owner(&attack, attack.position, radius, &boss_map);
+
+                if hits_player && !hits_owner {
                     if attack.kind == AttackKind::MercuryPool {
                         status.apply_slip(SLOW_DURATION);
                     } else {
@@ -195,7 +189,6 @@ pub fn tick_boss_attacks(
                         );
                     }
                 }
-                fade_hazard(&mut sprite, &attack);
                 if attack.remaining <= 0.0 {
                     commands.entity(entity).despawn();
                 }
@@ -209,9 +202,12 @@ pub fn tick_boss_attacks(
                     }
                 }
                 // The quake stays live across its active frames.
-                if attack.hit_cooldown <= 0.0
-                    && circles_overlap(attack.position, attack.radius, player_pos, player_half.x)
-                {
+                let hits_player =
+                    circles_overlap(attack.position, attack.radius, player_pos, player_half.x);
+                let hits_owner =
+                    attack_hits_owner(&attack, attack.position, attack.radius, &boss_map);
+
+                if attack.hit_cooldown <= 0.0 && hits_player && !hits_owner {
                     attack.hit_cooldown = HAZARD_TICK;
                     damage_player(
                         &mut health,
@@ -223,7 +219,6 @@ pub fn tick_boss_attacks(
                         &mut died,
                     );
                 }
-                fade_hazard(&mut sprite, &attack);
                 if attack.remaining <= 0.0 {
                     commands.entity(entity).despawn();
                 }
@@ -231,7 +226,12 @@ pub fn tick_boss_attacks(
             AttackKind::Debris => {
                 if !attack.impacted {
                     attack.impacted = true;
-                    if circles_overlap(attack.target, attack.radius, player_pos, player_half.x) {
+                    let hits_player =
+                        circles_overlap(attack.target, attack.radius, player_pos, player_half.x);
+                    let hits_owner =
+                        attack_hits_owner(&attack, attack.target, attack.radius, &boss_map);
+
+                    if hits_player && !hits_owner {
                         damage_player(
                             &mut health,
                             &mut movement,
@@ -252,20 +252,20 @@ pub fn tick_boss_attacks(
                     sfx.write(PlaySfx(Sfx::DebrisImpact));
                     if attack.phase >= 2 {
                         let mist = BossAttack::new(AttackKind::SurgeTrail, attack.target)
-                            .with_radius(SURGE_TRAIL_WIDTH_P2)
+                            .with_radius(SURGE_TRAIL_WIDTH_P2 * 0.5 * HITBOX_SHRINK)
                             .with_damage(attack.damage * 0.3)
                             .with_lifetime(SURGE_TRAIL_LIFE)
                             .with_phase(attack.phase);
-                        spawn_attack(
-                            &mut commands,
-                            mist,
-                            attack_color(AttackKind::SurgeTrail),
-                            Vec2::splat(SURGE_TRAIL_WIDTH_P2),
-                            0.0,
-                        );
+                        spawn_attack(&mut commands, mist, 0.0);
                     }
+                    // The landing hit is done; keep the entity alive just long
+                    // enough for its dust cloud to play out.
+                    attack.remaining = DEBRIS_DUST_LIFE;
+                    attack.total = DEBRIS_DUST_LIFE;
                 }
-                commands.entity(entity).despawn();
+                if attack.remaining <= 0.0 {
+                    commands.entity(entity).despawn();
+                }
             }
             AttackKind::Decoy => {
                 if attack.remaining <= 0.0 {
@@ -273,16 +273,20 @@ pub fn tick_boss_attacks(
                 }
             }
             AttackKind::Wave => {
-                sprite.color = attack_color(AttackKind::Wave);
                 let step = attack.direction * attack.speed * dt;
                 let moved = grid.move_and_collide(Vec2::splat(1.0), attack.position, step);
                 attack.position = moved;
                 transform.translation.x = moved.x;
                 transform.translation.y = moved.y;
 
-                if attack.hit_cooldown <= 0.0
-                    && wave_hits(attack.position, attack.direction, player_pos, player_half)
-                {
+                let hits_player =
+                    wave_hits(attack.position, attack.direction, player_pos, player_half);
+                // For wave, check owner collision with a circle at the wave's position
+                // using the wave's width as radius (conservative check)
+                let hits_owner =
+                    attack_hits_owner(&attack, attack.position, WAVE_WIDTH * 0.5, &boss_map);
+
+                if attack.hit_cooldown <= 0.0 && hits_player && !hits_owner {
                     attack.hit_cooldown = HAZARD_TICK;
                     damage_player(
                         &mut health,
@@ -297,24 +301,17 @@ pub fn tick_boss_attacks(
                 if attack.phase >= 2 && attack.aux_timer <= 0.0 {
                     attack.aux_timer = 0.9;
                     let pool = BossAttack::new(AttackKind::MercuryPool, attack.position)
-                        .with_radius(MERCURY_POOL_RADIUS)
+                        .with_radius(MERCURY_POOL_RADIUS * HITBOX_SHRINK)
                         .with_damage(MERCURY_POOL_DAMAGE)
                         .with_lifetime(MERCURY_POOL_LIFE)
                         .with_phase(attack.phase);
-                    spawn_attack(
-                        &mut commands,
-                        pool,
-                        attack_color(AttackKind::MercuryPool),
-                        Vec2::splat(MERCURY_POOL_RADIUS * 2.0),
-                        0.0,
-                    );
+                    spawn_attack(&mut commands, pool, 0.0);
                 }
                 if attack.remaining <= 0.0 {
                     commands.entity(entity).despawn();
                 }
             }
             AttackKind::Spray | AttackKind::Wisp => {
-                sprite.color = attack_color(attack.kind);
                 if attack.kind == AttackKind::Wisp {
                     let desired = (player_pos - attack.position).normalize_or(attack.direction);
                     let angle = attack
@@ -330,7 +327,12 @@ pub fn tick_boss_attacks(
                 transform.translation.x = moved.x;
                 transform.translation.y = moved.y;
 
-                if circles_overlap(attack.position, attack.radius, player_pos, player_half.x) {
+                let hits_player =
+                    circles_overlap(attack.position, attack.radius, player_pos, player_half.x);
+                let hits_owner =
+                    attack_hits_owner(&attack, attack.position, attack.radius, &boss_map);
+
+                if hits_player && !hits_owner {
                     damage_player(
                         &mut health,
                         &mut movement,
@@ -355,14 +357,17 @@ pub fn tick_boss_attacks(
                 if !attack.impacted {
                     attack.impacted = true;
                     let clear = !line_blocked(&grid, attack.position, player_pos);
-                    if clear
+                    let hits_player = clear
                         && circles_overlap(
                             attack.position,
                             attack.radius,
                             player_pos,
                             player_half.x,
-                        )
-                    {
+                        );
+                    let hits_owner =
+                        attack_hits_owner(&attack, attack.position, attack.radius, &boss_map);
+
+                    if hits_player && !hits_owner {
                         damage_player(
                             &mut health,
                             &mut movement,
@@ -383,35 +388,17 @@ pub fn tick_boss_attacks(
     }
 }
 
-/// Fades a lingering hazard as it runs out.
-fn fade_hazard(sprite: &mut Sprite, attack: &BossAttack) {
-    let life = (attack.remaining / attack.total).clamp(0.0, 1.0);
-    let base = attack_color(attack.kind).to_srgba();
-    sprite.color = Color::srgba(
-        base.red,
-        base.green,
-        base.blue,
-        base.alpha * (0.25 + 0.75 * life),
-    );
-}
-
 /// Acid pools and extra debris left by a phase-2 slam.
 fn spawn_slam_aftermath(commands: &mut Commands, attack: &BossAttack) {
     for index in 0..SLAM_ACID_POOLS_P2 {
         let angle = (index as f32) * std::f32::consts::TAU / SLAM_ACID_POOLS_P2 as f32;
         let offset = Vec2::new(angle.cos(), angle.sin()) * attack.radius;
         let pool = BossAttack::new(AttackKind::AcidPool, attack.position + offset)
-            .with_radius(ACID_POOL_RADIUS)
+            .with_radius(ACID_POOL_RADIUS * HITBOX_SHRINK)
             .with_damage(ACID_POOL_DAMAGE)
             .with_lifetime(ACID_POOL_LIFE)
             .with_phase(attack.phase);
-        spawn_attack(
-            commands,
-            pool,
-            attack_color(AttackKind::AcidPool),
-            Vec2::splat(ACID_POOL_RADIUS * 2.0),
-            0.0,
-        );
+        spawn_attack(commands, pool, 0.0);
     }
 }
 
@@ -471,23 +458,19 @@ pub fn tick_surge_chargers(
             charger.trail_timer -= dt;
             if charger.trail_timer <= 0.0 {
                 charger.trail_timer = 0.06;
-                let width = if charger.charges_left > 1 {
+                let enraged = charger.charges_left > 1;
+                let width = if enraged {
                     SURGE_TRAIL_WIDTH_P2
                 } else {
                     SURGE_TRAIL_WIDTH
                 };
                 let trail = BossAttack::new(AttackKind::SurgeTrail, moved)
                     .owned_by(entity)
-                    .with_radius(width * 0.5)
+                    .with_phase(if enraged { 2 } else { 1 })
+                    .with_radius(width * 0.5 * HITBOX_SHRINK)
                     .with_damage(SURGE_TRAIL_DAMAGE)
                     .with_lifetime(SURGE_TRAIL_LIFE);
-                spawn_attack(
-                    &mut commands,
-                    trail,
-                    attack_color(AttackKind::SurgeTrail),
-                    Vec2::splat(width),
-                    0.0,
-                );
+                spawn_attack(&mut commands, trail, 0.0);
             }
             continue;
         }
@@ -517,6 +500,7 @@ pub fn cleanup_boss_encounter(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::effect_sprite::EffectKind;
 
     #[test]
     fn a_line_with_a_wall_between_is_blocked() {
@@ -554,7 +538,27 @@ mod tests {
     }
 
     #[test]
-    fn every_attack_has_a_distinct_placeholder_colour() {
+    fn a_spawned_falling_attack_carries_a_shadow_telegraph() {
+        let mut app = App::new();
+        app.add_systems(Update, |mut commands: Commands| {
+            let attack = BossAttack::new(AttackKind::Debris, Vec2::new(3.0, 4.0)).with_windup(1.0);
+            spawn_attack(&mut commands, attack, 0.0);
+        });
+        app.update();
+
+        let world = app.world_mut();
+        let mut query = world.query::<(&BossAttack, &EffectSprite)>();
+        let (attack, effect) = query.iter(world).next().expect("attack spawned");
+        assert_eq!(attack.kind, AttackKind::Debris);
+        assert_eq!(
+            effect.kind,
+            EffectKind::DebrisShadow,
+            "a falling attack telegraphs with the ground shadow"
+        );
+    }
+
+    #[test]
+    fn every_attack_has_its_own_effect() {
         let kinds = [
             AttackKind::SurgeTrail,
             AttackKind::AcidPool,
@@ -567,14 +571,10 @@ mod tests {
             AttackKind::Wisp,
             AttackKind::Amalgam,
         ];
-        for (index, first) in kinds.iter().enumerate() {
-            for second in kinds.iter().skip(index + 1) {
-                assert_ne!(
-                    attack_color(*first).to_srgba(),
-                    attack_color(*second).to_srgba(),
-                    "{first:?} and {second:?} share a colour"
-                );
-            }
-        }
+        let mut effects: Vec<EffectKind> = kinds.iter().map(|kind| kind.effect()).collect();
+        effects.sort_unstable_by_key(|kind| *kind as u8);
+        let count = effects.len();
+        effects.dedup();
+        assert_eq!(count, effects.len(), "two attacks share one effect");
     }
 }

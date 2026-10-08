@@ -4,14 +4,17 @@ use crate::components::targetable::Targetable;
 use crate::events::{
     BossAttackStarted, BossDefeated, BossPhaseChanged, DamageDealt, HitConfirm, PlaySfx, PlayerDied,
 };
+use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
 use crate::resources::boss_sprite::BossSpriteAssets;
+use crate::resources::effect_sprite::EffectSpriteAssets;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
 use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
 use crate::states::{DayPhase, Phase};
+use crate::systems::attack_effect::AttackEffectAssets;
 use crate::systems::boss_ai::boss_ai;
 use crate::systems::boss_animation::{animate_boss_sprite, drive_boss_animation};
 use crate::systems::boss_attacks::{
@@ -21,12 +24,15 @@ use crate::systems::boss_damage::{apply_boss_damage, tick_dying_bosses};
 use crate::systems::boss_movement::boss_movement;
 use crate::systems::boss_patterns::{resolve_pending_blinks, spawn_pattern_attacks};
 use crate::systems::combat::{player_death_check, tick_combat_timers};
+use crate::systems::effect_sprite::{animate_effect_sprites, sync_attack_effects};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
 use crate::systems::lock_on::{cycle_lock_on, update_lock_on_visuals};
 use crate::systems::player_attack::{player_attack, tick_attack_visuals};
 use crate::systems::player_status::tick_player_status;
+use bevy::asset::AssetServer;
 use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
+use bevy::sprite_render::Material2dPlugin;
 
 pub struct BossPlugin;
 
@@ -39,6 +45,8 @@ impl Plugin for BossPlugin {
             .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
             .init_resource::<BossSpriteAssets>()
+            .init_resource::<EffectSpriteAssets>()
+            .init_resource::<AttackEffectAssets>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_message::<BossPhaseChanged>()
@@ -72,6 +80,7 @@ impl Plugin for BossPlugin {
                     update_lock_on_visuals,
                     tick_boss_attacks,
                     resolve_pending_blinks,
+                    sync_attack_effects,
                 )
                     .chain(),
             )
@@ -82,11 +91,20 @@ impl Plugin for BossPlugin {
                     .after(tick_boss_attacks),
             )
             .add_systems(Update, (drive_boss_animation, animate_boss_sprite).chain())
+            .add_systems(Update, animate_effect_sprites.after(sync_attack_effects))
             .add_systems(Update, tick_dying_bosses.after(apply_boss_damage))
             .add_systems(
                 OnExit(DayPhase::BossFight),
                 (despawn_boss, cleanup_boss_encounter, end_encounter),
             );
+
+        // A custom 2D material needs the asset infrastructure that only the
+        // real renderer brings; headless tests run without it, so register the
+        // material plugin only when it exists.
+        if app.world().get_resource::<AssetServer>().is_some() {
+            crate::materials::attack_effect::register(app);
+            app.add_plugins(Material2dPlugin::<AttackEffectMaterial>::default());
+        }
     }
 }
 
@@ -150,7 +168,7 @@ fn spawn_one(
         .unwrap_or_else(|| BossPack::from_id(id));
     let mut entity = commands.spawn((
         Boss::new_at(id, position),
-        BossBrain::default(),
+        BossBrain::with_opening_grace(),
         BossAnimation::new(pack, position),
         Targetable,
         BossSpawnMarker,
@@ -214,6 +232,18 @@ mod tests {
         }
     }
 
+    #[derive(Resource, Default)]
+    struct AttacksStarted(usize);
+
+    fn capture_attacks(
+        mut captured: ResMut<AttacksStarted>,
+        mut reader: MessageReader<BossAttackStarted>,
+    ) {
+        for _ in reader.read() {
+            captured.0 += 1;
+        }
+    }
+
     fn setup_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
@@ -221,6 +251,7 @@ mod tests {
             .init_resource::<PlayerGear>()
             .init_resource::<InventoryPanel>()
             .init_resource::<PhaseChanges>()
+            .init_resource::<AttacksStarted>()
             .add_plugins((
                 MinimalPlugins,
                 TransformPlugin,
@@ -233,7 +264,7 @@ mod tests {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
                 16,
             )))
-            .add_systems(Update, capture_phase_changes);
+            .add_systems(Update, (capture_phase_changes, capture_attacks));
 
         app.world_mut().spawn((
             crate::components::player::Player,
@@ -295,6 +326,57 @@ mod tests {
             .count();
         assert_eq!(count, 2);
         assert!(app.world().resource::<BossCoordinator>().active);
+    }
+
+    #[test]
+    fn a_boss_holds_off_until_the_opening_grace_elapses() {
+        let mut app = setup_app();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaA);
+
+        let entity = boss_entity(&mut app);
+        let brain = app.world().get::<BossBrain>(entity).unwrap();
+        assert!(
+            brain.cooldown > 0.0,
+            "the boss should still be waiting out its opening buffer"
+        );
+        assert!(
+            brain.current.is_none(),
+            "no pattern picked during the grace"
+        );
+        assert_eq!(app.world().resource::<AttacksStarted>().0, 0);
+
+        // Spend the buffer and let the brain make its first pick.
+        app.world_mut()
+            .get_mut::<BossBrain>(entity)
+            .unwrap()
+            .cooldown = 0.0;
+        for _ in 0..4 {
+            app.update();
+        }
+
+        assert!(
+            app.world()
+                .get::<BossBrain>(entity)
+                .unwrap()
+                .current
+                .is_some(),
+            "the boss should engage once the buffer is spent"
+        );
+        assert!(app.world().resource::<AttacksStarted>().0 > 0);
+    }
+
+    #[test]
+    fn a_dual_fight_waits_out_the_opening_grace_too() {
+        let mut app = setup_app();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaDual);
+
+        let coordinator = *app.world().resource::<BossCoordinator>();
+        assert!(coordinator.active);
+        assert!(
+            coordinator.next_combo > 0.0,
+            "the dual fight should not open with an immediate combo"
+        );
+        assert_eq!(app.world().resource::<AttacksStarted>().0, 0);
     }
 
     #[test]

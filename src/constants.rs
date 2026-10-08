@@ -39,15 +39,15 @@ pub const HEAVY_MULTIPLIER: f32 = 1.8;
 pub const LIGHT_COOLDOWN: f32 = 0.35;
 pub const HEAVY_COOLDOWN: f32 = 0.9;
 
-/// How long the player is rooted and the placeholder swing is drawn.
+/// How long the player is rooted and the swing graphic is drawn.
 pub const ATTACK_DURATION: f32 = 0.2;
 
 // --- Bosses ---
 
-pub const BOSS_A_HEALTH: f32 = 675.0;
+pub const BOSS_A_HEALTH: f32 = 1012.5;
 pub const BOSS_B_HEALTH: f32 = 500.0;
 /// The dual boss fights from a single shared pool.
-pub const DUAL_BOSS_HEALTH: f32 = 900.0;
+pub const DUAL_BOSS_HEALTH: f32 = 1800.0;
 
 /// Bosses get a hurtbox slightly larger than their sprite so near-misses still
 /// connect during a fast fight.
@@ -70,6 +70,29 @@ pub const BOSS_PHASE2_MULTIPLIER: f32 = 1.6;
 pub const BOSS_A_SIZE: f32 = 96.0;
 /// The Quicksilver is a slighter, fluid horror.
 pub const BOSS_B_SIZE: f32 = 80.0;
+
+/// The world size the madness-spray and wisp droplets are drawn at. Both use
+/// the same art scale, so one constant covers the pair.
+pub const WISP_SPRITE_SIZE: f32 = 16.0;
+
+// --- Effect layering ---
+
+/// Z of an effect that lies on the floor (caustic pools, trails, impact
+/// bursts). Below the boss so it never covers the sprite standing over it.
+pub const GROUND_EFFECT_Z: f32 = -0.5;
+/// Z of an airborne effect (waves, droplets, decoys). Above the boss so it
+/// reads as passing over the arena.
+pub const FLOATING_EFFECT_Z: f32 = 2.0;
+/// Airborne effects are drawn this much larger than their hitbox so the small
+/// spray droplets stay legible. Purely cosmetic.
+pub const SPRAY_GRAPHIC_SCALE: f32 = 2.5;
+
+/// Damage hitboxes are shrunk to this fraction of the drawn effect.
+///
+/// The art is a circle padded inside a square quad, so the visible shape is
+/// smaller than the sprite; matching the hitbox to the visible shape makes
+/// collisions feel as fair as they look.
+pub const HITBOX_SHRINK: f32 = 0.9;
 
 /// The sprite size of a boss id. Both dual halves keep their native sizes.
 pub const fn boss_size(id: crate::components::boss::BossId) -> f32 {
@@ -126,6 +149,10 @@ pub const BOSS_P2_RECOVERY_SPEED: f32 = 2.5;
 /// How many recent patterns are excluded from the next random pick.
 pub const PATTERN_HISTORY: usize = 2;
 
+/// Seconds a boss holds off before its first attack of the fight, so the player
+/// can get into position and get their bearings. Tuneable; keep within 0.8-2.0s.
+pub const BOSS_OPENING_GRACE: f32 = 1.5;
+
 // --- Boss movement ---
 
 /// Speed a boss walks while repositioning.
@@ -168,7 +195,9 @@ pub const SURGE_CURVE_DEG: f32 = 28.0;
 
 /// Frame 7: the slam fires; frames 8-12 stay live.
 pub const SLAM_WINDUP: f32 = boss_frame(7);
-pub const SLAM_ACTIVE: f32 = boss_frame(5);
+/// How long the quake stays live. Stretched past its authored frames so the
+/// impact flare has time to read while the hitbox is up.
+pub const SLAM_ACTIVE: f32 = 0.9;
 /// Frames 13-25: recovery.
 pub const SLAM_RECOVERY: f32 = boss_frame(13);
 pub const SLAM_RADIUS: f32 = 64.0;
@@ -193,6 +222,9 @@ pub const DEBRIS_SHADOW_RADIUS: f32 = 24.0;
 pub const DEBRIS_IMPACT_RADIUS: f32 = 30.0;
 pub const DEBRIS_DAMAGE: f32 = 25.0;
 pub const DEBRIS_SPREAD: f32 = 220.0;
+/// How long the dust cloud lingers after a chunk lands. The landing damage is
+/// one-shot, so this is visual only.
+pub const DEBRIS_DUST_LIFE: f32 = 1.4;
 
 // --- Boss B: Mirror Step ---
 
@@ -217,7 +249,9 @@ pub const WAVE_RECOVERY: f32 = boss_frame(15);
 pub const WAVE_SPEED: f32 = 145.0;
 pub const WAVE_SPEED_P2: f32 = 205.0;
 pub const WAVE_LENGTH: f32 = 150.0;
-pub const WAVE_WIDTH: f32 = 44.0;
+/// The wall's depth along its travel. Matches the trimmed art's aspect so the
+/// sheet is not stretched.
+pub const WAVE_WIDTH: f32 = 47.0;
 pub const WAVE_DAMAGE: f32 = 22.0;
 pub const WAVE_LIFE: f32 = 4.0;
 /// Mercury left behind by a phase-2 wave.
@@ -251,6 +285,9 @@ pub const WISP_LIFE: f32 = 4.0;
 
 /// Minimum seconds between hazard damage applications to the player.
 pub const HAZARD_TICK: f32 = 0.35;
+/// The fraction of full opacity a lingering hazard never fades below, so the
+/// art stays legible right up to despawn.
+pub const HAZARD_FADE_FRACTION: f32 = 0.25;
 /// How long a slow stays applied after leaving a slowing hazard.
 pub const SLOW_DURATION: f32 = 1.5;
 /// Multiplier applied to movement speed while slowed.

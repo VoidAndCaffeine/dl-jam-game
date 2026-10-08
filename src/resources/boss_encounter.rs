@@ -77,6 +77,7 @@ impl BossCoordinator {
     pub fn begin(&mut self) {
         *self = Self {
             active: true,
+            next_combo: crate::constants::BOSS_OPENING_GRACE,
             ..Default::default()
         };
     }
@@ -128,6 +129,7 @@ mod tests {
         assert!(!coord.active);
         coord.begin();
         assert!(coord.active);
+        assert_eq!(coord.next_combo, crate::constants::BOSS_OPENING_GRACE);
         assert_eq!(
             coord.next_amalgamation,
             crate::constants::AMALGAMATION_INTERVAL_P1

@@ -1,3 +1,4 @@
+pub mod attack_effect;
 pub mod boss_ai;
 pub mod boss_animation;
 pub mod boss_attacks;
@@ -10,6 +11,7 @@ pub mod combat;
 pub mod crafting;
 pub mod crop_select;
 pub mod debug_overlay;
+pub mod effect_sprite;
 pub mod hit_effects;
 pub mod inventory;
 pub mod level_movement;

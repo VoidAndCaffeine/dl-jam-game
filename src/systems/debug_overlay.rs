@@ -23,7 +23,7 @@ pub fn debug_aabb_overlay(
     mut gizmos: Gizmos,
     player: Query<(&Transform, &Collider), With<Player>>,
     bosses: Query<&Transform, With<Boss>>,
-    swings: Query<(&Transform, &Sprite), With<AttackVisual>>,
+    swings: Query<(&Transform, &AttackVisual)>,
 ) {
     if !overlay.show_aabbs {
         return;
@@ -45,11 +45,12 @@ pub fn debug_aabb_overlay(
         );
     }
 
-    for (transform, sprite) in swings.iter() {
-        let Some(size) = sprite.custom_size else {
-            continue;
-        };
-        gizmos.rect_2d(isometry(transform), size, Color::srgb(1.0, 0.4, 1.0));
+    for (transform, swing) in swings.iter() {
+        gizmos.rect_2d(
+            isometry(transform),
+            swing.hitbox,
+            Color::srgb(1.0, 0.4, 1.0),
+        );
     }
 }
 

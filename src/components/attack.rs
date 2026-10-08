@@ -33,21 +33,27 @@ impl AttackType {
     }
 }
 
-/// Placeholder swing graphic. Its rectangle matches the swing's hitbox exactly,
-/// and it despawns once `remaining` runs out.
+/// A live swing.
+///
+/// The graphic itself is drawn by the attack-effect shader; this component
+/// carries the lifetime and the hitbox the debug overlay draws, and despawns
+/// the swing once `remaining` runs out.
 #[derive(Component, Reflect, Debug, Clone, Copy)]
 pub struct AttackVisual {
     pub attack_type: AttackType,
     pub remaining: f32,
     pub total: f32,
+    /// The swing's damage footprint (reach × width), for the debug overlay.
+    pub hitbox: Vec2,
 }
 
 impl AttackVisual {
-    pub fn new(attack_type: AttackType) -> Self {
+    pub fn new(attack_type: AttackType, hitbox: Vec2) -> Self {
         Self {
             attack_type,
             remaining: crate::constants::ATTACK_DURATION,
             total: crate::constants::ATTACK_DURATION,
+            hitbox,
         }
     }
 }
@@ -74,9 +80,10 @@ mod tests {
 
     #[test]
     fn a_fresh_visual_starts_at_its_full_duration() {
-        let visual = AttackVisual::new(AttackType::Heavy);
+        let visual = AttackVisual::new(AttackType::Heavy, Vec2::new(70.0, 28.0));
         assert_eq!(visual.remaining, visual.total);
         assert_eq!(visual.attack_type, AttackType::Heavy);
+        assert_eq!(visual.hitbox, Vec2::new(70.0, 28.0));
         assert!(visual.total > 0.0);
     }
 }

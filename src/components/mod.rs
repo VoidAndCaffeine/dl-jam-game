@@ -2,6 +2,7 @@ pub mod attack;
 pub mod boss;
 pub mod boss_animation;
 pub mod collider;
+pub mod effect_sprite;
 pub mod gear;
 pub mod hit_effects;
 pub mod player;

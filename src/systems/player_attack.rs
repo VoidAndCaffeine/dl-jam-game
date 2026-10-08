@@ -4,20 +4,20 @@ use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
 use crate::components::targetable::{Decoy, Targetable};
 use crate::constants::{BOSS_HURTBOX_SCALE, DECOY_SIZE, LIGHT_WIDTH};
 use crate::events::{DamageDealt, HitConfirm, PlaySfx, PlayerDied, Sfx};
+use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::run_data::PlayerGear;
 use crate::states::Phase;
+use crate::systems::attack_effect::{AttackEffectAccess, spawn_swing};
 use crate::systems::combat::{damage_after_armor, hurt_player, swing_hits};
 use crate::utils::targeting::circles_overlap;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
+use bevy::sprite_render::MeshMaterial2d;
 
-/// Swing graphics sit in front of every world sprite.
-const SWING_Z: f32 = 2.0;
-
-/// Turns light and heavy input into a rectangular swing in front of the player.
+/// Turns light and heavy input into a swing in front of the player.
 ///
 /// The swing faces the locked-on target when there is one, otherwise the nearest
 /// targetable, and finally the last movement direction so a keyboard-only player
@@ -39,6 +39,7 @@ pub fn player_attack(
     mut hit_events: MessageWriter<HitConfirm>,
     mut died: MessageWriter<PlayerDied>,
     mut sfx: MessageWriter<PlaySfx>,
+    mut effects: AttackEffectAccess,
     phase: Phase,
 ) {
     state.tick(time.delta_secs());
@@ -149,7 +150,16 @@ pub fn player_attack(
         }
     }
 
-    spawn_swing(&mut commands, origin, facing, reach, width, attack);
+    spawn_swing(
+        &mut commands,
+        &mut effects,
+        origin,
+        facing,
+        reach,
+        width,
+        attack,
+        gear.weapon.map(|piece| piece.set),
+    );
     state.begin(attack);
 }
 
@@ -173,49 +183,30 @@ fn impact_point(origin: Vec2, target_pos: Vec2, reach: f32) -> Vec2 {
     origin + (target_pos - origin).clamp_length_max(reach)
 }
 
-/// Spawns the placeholder swing whose rectangle is the swing's hitbox.
-fn spawn_swing(
-    commands: &mut Commands,
-    origin: Vec2,
-    facing: Vec2,
-    reach: f32,
-    width: f32,
-    attack: AttackType,
-) {
-    let facing = if facing == Vec2::ZERO {
-        Vec2::X
-    } else {
-        facing.normalize()
-    };
-    let center = origin + facing * (reach * 0.5);
-    let angle = facing.y.atan2(facing.x);
-    let color = match attack {
-        AttackType::Light => Color::srgba(0.55, 0.85, 1.0, 0.85),
-        AttackType::Heavy => Color::srgba(1.0, 0.88, 0.45, 0.9),
-    };
-
-    commands.spawn((
-        AttackVisual::new(attack),
-        Sprite {
-            color,
-            custom_size: Some(Vec2::new(reach, width)),
-            ..default()
-        },
-        Transform::from_translation(center.extend(SWING_Z))
-            .with_rotation(Quat::from_rotation_z(angle)),
-        Name::new(format!("{} Swing", attack.label())),
-    ));
-}
-
-/// Despawns swing graphics once their lifetime runs out.
+/// Despawns swing graphics once their lifetime runs out, keeping the shader's
+/// animation clock in step with the swing.
 pub fn tick_attack_visuals(
     mut commands: Commands,
     time: Res<Time>,
-    mut visuals: Query<(Entity, &mut AttackVisual)>,
+    mut effects: AttackEffectAccess,
+    mut visuals: Query<(
+        Entity,
+        &mut AttackVisual,
+        Option<&MeshMaterial2d<AttackEffectMaterial>>,
+    )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, mut visual) in visuals.iter_mut() {
+    let elapsed = time.elapsed_secs();
+    for (entity, mut visual, material) in visuals.iter_mut() {
         visual.remaining -= dt;
+        let progress = if visual.total > 0.0 {
+            1.0 - (visual.remaining / visual.total).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        if let Some(material) = material {
+            effects.set_progress(&material.0, progress, elapsed);
+        }
         if visual.remaining <= 0.0 {
             commands.entity(entity).despawn();
         }
@@ -493,8 +484,8 @@ mod tests {
                     attack_type: AttackType::Light,
                     remaining: 0.0,
                     total: 0.2,
+                    hitbox: Vec2::new(55.0, 28.0),
                 },
-                Sprite::default(),
                 Transform::default(),
             ))
             .id();
@@ -502,5 +493,29 @@ mod tests {
         app.update();
 
         assert!(app.world().get::<AttackVisual>(visual).is_none());
+    }
+
+    #[test]
+    fn a_light_swing_spawns_a_visual_carrying_its_hitbox() {
+        let mut app = setup_app();
+        spawn_boss(&mut app, BossId::BossA, Vec2::new(50.0, 0.0));
+
+        press(&mut app, KeyCode::KeyQ);
+
+        let visual = app
+            .world_mut()
+            .query_filtered::<&AttackVisual, With<AttackVisual>>()
+            .iter(app.world())
+            .next()
+            .copied()
+            .expect("a swing visual is spawned");
+        assert_eq!(visual.attack_type, AttackType::Light);
+        assert_eq!(
+            visual.hitbox,
+            Vec2::new(
+                crate::constants::UNARMED_LIGHT_REACH,
+                crate::constants::LIGHT_WIDTH
+            )
+        );
     }
 }

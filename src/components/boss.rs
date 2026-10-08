@@ -293,6 +293,14 @@ impl Default for BossBrain {
 }
 
 impl BossBrain {
+    /// A brain that waits out the fight's opening buffer before its first pick.
+    pub fn with_opening_grace() -> Self {
+        Self {
+            cooldown: crate::constants::BOSS_OPENING_GRACE,
+            ..Self::default()
+        }
+    }
+
     /// Whether `pattern` was one of the last two picks.
     pub fn recently_used(&self, pattern: PatternType) -> bool {
         self.history.contains(&Some(pattern))
@@ -594,6 +602,16 @@ mod tests {
     #[test]
     fn boss_default_id_is_boss_a() {
         assert_eq!(BossId::default(), BossId::BossA);
+    }
+
+    #[test]
+    fn a_fresh_brain_waits_out_the_opening_grace() {
+        assert_eq!(BossBrain::default().cooldown, 0.0);
+        assert_eq!(
+            BossBrain::with_opening_grace().cooldown,
+            crate::constants::BOSS_OPENING_GRACE
+        );
+        assert!(BossBrain::with_opening_grace().current.is_none());
     }
 
     #[test]

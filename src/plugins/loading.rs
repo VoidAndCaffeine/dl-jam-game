@@ -1,4 +1,5 @@
 use crate::resources::boss_sprite::BossSpriteAssets;
+use crate::resources::effect_sprite::EffectSpriteAssets;
 use crate::resources::player_sprite::PlayerSpriteAssets;
 use crate::resources::run_data::PlayerGear;
 use crate::resources::scene_assets::{LoadTarget, LoadingContext, SceneAssetManifest};
@@ -132,12 +133,16 @@ fn poll_scene_load(
 fn clear_sprite_caches(
     mut player: Option<ResMut<PlayerSpriteAssets>>,
     mut boss: Option<ResMut<BossSpriteAssets>>,
+    mut effect: Option<ResMut<EffectSpriteAssets>>,
 ) {
     if let Some(player) = player.as_deref_mut() {
         player.clear();
     }
     if let Some(boss) = boss.as_deref_mut() {
         boss.clear();
+    }
+    if let Some(effect) = effect.as_deref_mut() {
+        effect.clear();
     }
 }
 
