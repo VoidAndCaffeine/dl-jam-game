@@ -2,7 +2,7 @@ use crate::components::boss::{Dying, PatternType};
 use crate::components::boss_animation::{BossAnimState, BossAnimation, ClipPlayback};
 use crate::components::player::Player;
 use crate::components::player_sprite::{FRAME_COUNT, Facing8};
-use crate::constants::BOSS_WALK_THRESHOLD;
+use crate::constants::{BOSS_STILL_GRACE, BOSS_WALK_THRESHOLD};
 use crate::events::BossAttackStarted;
 use crate::resources::boss_sprite::{BossSpriteAssets, BossSpriteKey};
 use crate::systems::boss_patterns::{clip_windows, pattern_timings};
@@ -128,12 +128,18 @@ pub fn drive_boss_animation(
 
         let travelled = position - previous;
         if travelled.length() > BOSS_WALK_THRESHOLD {
+            anim.still_time = 0.0;
             anim.set_state(BossAnimState::Walk);
             if let Some(facing) = Facing8::from_direction(travelled) {
                 anim.facing = facing;
             }
         } else {
-            anim.set_state(BossAnimState::Idle);
+            // Drop to Idle only after a real pause, so hovering on the walk
+            // threshold does not restart the clip every few frames.
+            anim.still_time += dt;
+            if anim.still_time >= BOSS_STILL_GRACE {
+                anim.set_state(BossAnimState::Idle);
+            }
         }
     }
 }
@@ -343,5 +349,47 @@ mod tests {
         let anim = BossAnimation::new(BossPack::Mercuril, Vec2::new(4.0, 5.0));
         assert_eq!(anim.state, BossAnimState::Idle);
         assert_eq!(anim.last_position, Vec2::new(4.0, 5.0));
+    }
+
+    #[test]
+    fn a_brief_stop_does_not_drop_the_walk_clip() {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .add_message::<BossAttackStarted>()
+            .add_systems(Update, drive_boss_animation)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                16,
+            )));
+        let boss = spawn_boss(&mut app, BossPack::Excavator);
+
+        app.world_mut()
+            .get_mut::<Transform>(boss)
+            .unwrap()
+            .translation
+            .x = 20.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<BossAnimation>(boss).unwrap().state,
+            BossAnimState::Walk
+        );
+
+        // One still frame is inside the grace, so the clip is not restarted.
+        app.update();
+        assert_eq!(
+            app.world().get::<BossAnimation>(boss).unwrap().state,
+            BossAnimState::Walk
+        );
+
+        // A real pause eventually drops to Idle.
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().get::<BossAnimation>(boss).unwrap().state,
+            BossAnimState::Idle
+        );
     }
 }

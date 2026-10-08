@@ -7,12 +7,38 @@ use crate::resources::boss_encounter::BossCoordinator;
 use crate::states::Phase;
 use bevy::prelude::*;
 
+/// Which way a boss steps this frame: `1` toward the player, `-1` away, `0`
+/// hold position.
+///
+/// A lone boss closes to its standoff range and holds. In a dual fight the
+/// attacker closes in, while the other half only backs off when the player
+/// crowds it — otherwise both hold. The wide dead zones are hysteresis: once a
+/// boss is comfortable it stays put instead of twitching in and out of the Walk
+/// clip as the player shuffles.
+pub fn step_sign(distance: f32, acting: bool, dual: bool) -> f32 {
+    if dual {
+        if acting {
+            if distance > BOSS_DUAL_APPROACH_DISTANCE + BOSS_DUAL_DEAD_ZONE {
+                1.0
+            } else {
+                0.0
+            }
+        } else if distance < BOSS_DUAL_RETREAT_DISTANCE - BOSS_DUAL_DEAD_ZONE {
+            -1.0
+        } else {
+            0.0
+        }
+    } else if distance > BOSS_STANDOFF_DISTANCE + BOSS_MOVE_DEAD_ZONE {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 /// Walks bosses around the arena.
 ///
-/// A lone boss closes to its standoff range and holds so the player can still
-/// reach it. During a dual encounter the halves stay in motion: the one that is
-/// attacking lunges in, and the other backs out to the far side. Bosses that
-/// are stunned, charging, blinking, channelling or planted mid-hit stay rooted.
+/// Bosses that are stunned, charging, blinking, channelling or planted mid-hit
+/// stay rooted. See [`step_sign`] for the approach/retreat rules.
 #[allow(clippy::type_complexity)]
 pub fn boss_movement(
     time: Res<Time<Fixed>>,
@@ -66,32 +92,15 @@ pub fn boss_movement(
             continue;
         }
 
-        // The attacker closes in; in a dual fight the other half backs out.
-        let (standoff, retreats) = if coordinator.active {
-            if acting {
-                (BOSS_DUAL_APPROACH_DISTANCE, false)
-            } else {
-                (BOSS_DUAL_RETREAT_DISTANCE, true)
-            }
-        } else {
-            (BOSS_STANDOFF_DISTANCE, false)
-        };
-
-        let dead_zone = 6.0;
-        let step_direction = if distance > standoff + dead_zone {
-            direction
-        } else if retreats && distance < standoff - dead_zone {
-            -direction
-        } else {
-            Vec2::ZERO
-        };
-        if step_direction == Vec2::ZERO {
+        let sign = step_sign(distance, acting, coordinator.active);
+        if sign == 0.0 {
             continue;
         }
 
         let speed = BOSS_MOVE_SPEED * boss.speed_multiplier();
         let half = Vec2::splat(boss.id.size() * 0.5);
-        let moved = grid.move_and_collide(half, from, step_direction * speed * dt);
+        let step = direction * sign * speed * dt;
+        let moved = grid.move_and_collide(half, from, step);
         transform.translation.x = moved.x;
         transform.translation.y = moved.y;
     }
@@ -100,6 +109,53 @@ pub fn boss_movement(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lone_boss_closes_in_then_holds() {
+        assert_eq!(step_sign(500.0, false, false), 1.0);
+        assert_eq!(step_sign(BOSS_STANDOFF_DISTANCE, false, false), 0.0);
+        // Inside the hysteresis band it holds rather than twitching.
+        assert_eq!(
+            step_sign(
+                BOSS_STANDOFF_DISTANCE + BOSS_MOVE_DEAD_ZONE - 1.0,
+                false,
+                false
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn the_dual_attacker_closes_and_the_other_backs_off() {
+        // A far player pulls the attacker in and lets the other hold.
+        assert_eq!(step_sign(BOSS_DUAL_RETREAT_DISTANCE, true, true), 1.0);
+        assert_eq!(step_sign(BOSS_DUAL_RETREAT_DISTANCE, false, true), 0.0);
+        // A crowding player pushes the non-attacker away and lets the attacker hold.
+        assert_eq!(step_sign(BOSS_DUAL_APPROACH_DISTANCE, false, true), -1.0);
+        assert_eq!(step_sign(BOSS_DUAL_APPROACH_DISTANCE, true, true), 0.0);
+    }
+
+    #[test]
+    fn the_dual_half_holds_in_a_wide_band() {
+        // The attacker does not inch forward until well outside its range.
+        assert_eq!(
+            step_sign(
+                BOSS_DUAL_APPROACH_DISTANCE + BOSS_DUAL_DEAD_ZONE - 1.0,
+                true,
+                true
+            ),
+            0.0
+        );
+        // The other half does not flee until the player is well inside its range.
+        assert_eq!(
+            step_sign(
+                BOSS_DUAL_RETREAT_DISTANCE - BOSS_DUAL_DEAD_ZONE + 1.0,
+                false,
+                true
+            ),
+            0.0
+        );
+    }
 
     #[test]
     fn a_boss_closes_the_gap_towards_the_player() {

@@ -225,6 +225,8 @@ pub struct BossAnimation {
     pub action_remaining: f32,
     /// Last frame's world position, used to tell Idle from Walk.
     pub last_position: Vec2,
+    /// Seconds the boss has been still, gating the Walk -> Idle drop.
+    pub still_time: f32,
     /// Timeline of the running attack, if any.
     pub clip: Option<ClipPlayback>,
 }
@@ -239,6 +241,7 @@ impl BossAnimation {
             frame_timer: Timer::from_seconds(BOSS_FRAME_SECONDS, TimerMode::Repeating),
             action_remaining: 0.0,
             last_position: position,
+            still_time: 0.0,
             clip: None,
         }
     }

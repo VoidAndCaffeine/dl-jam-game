@@ -93,6 +93,11 @@ pub const BOSS_DEATH_HOLD: f32 = 0.4;
 pub const MERCURIL_DEATH_FRAMES: usize = 12;
 /// How far a boss must move in a frame to count as walking.
 pub const BOSS_WALK_THRESHOLD: f32 = 0.6;
+/// How long a boss must be still before it drops from Walk to Idle.
+///
+/// This is hysteresis: without it, a boss hovering on the walk threshold
+/// restarts its Walk clip every few frames and visibly flickers.
+pub const BOSS_STILL_GRACE: f32 = 0.18;
 /// Every boss attack sheet is a 25-frame clip.
 pub const BOSS_CLIP_FRAMES: usize = 25;
 /// Seconds to play a whole attack clip at 1x.
@@ -127,10 +132,16 @@ pub const PATTERN_HISTORY: usize = 2;
 pub const BOSS_MOVE_SPEED: f32 = 95.0;
 /// Single bosses close to within this range of the player, then hold.
 pub const BOSS_STANDOFF_DISTANCE: f32 = 105.0;
+/// Hysteresis band around a single boss's standoff so it does not twitch in
+/// and out of the Walk clip as the player shuffles.
+pub const BOSS_MOVE_DEAD_ZONE: f32 = 12.0;
 /// A dual half on its turn closes to this range of the player.
 pub const BOSS_DUAL_APPROACH_DISTANCE: f32 = 96.0;
 /// A dual half not on its turn backs out to this range.
 pub const BOSS_DUAL_RETREAT_DISTANCE: f32 = 260.0;
+/// Wide hysteresis band for the dual halves: between the approach and retreat
+/// ranges both hold station instead of endlessly chasing or fleeing.
+pub const BOSS_DUAL_DEAD_ZONE: f32 = 20.0;
 /// Seconds of player movement a boss leads when aiming a projectile.
 pub const BOSS_AIM_LEAD: f32 = 0.25;
 
@@ -252,10 +263,12 @@ pub const AMALGAMATION_INTERVAL_P2: f32 = 20.0;
 pub const AMALGAMATION_CHANNEL: f32 = 5.0;
 pub const AMALGAMATION_RADIUS: f32 = 320.0;
 pub const AMALGAMATION_DAMAGE: f32 = 50.0;
-/// The dual bosses take turns on this cadence, so the fight stays readable.
-pub const DUAL_COMBO_INTERVAL: f32 = 3.4;
-/// Extra breathing room after a dual attack resolves before the next turn.
-pub const DUAL_COMBO_GAP: f32 = 0.6;
+/// Fallback cadence for a dual turn when no attack was chosen.
+pub const DUAL_COMBO_INTERVAL: f32 = 2.5;
+/// Breathing room after a dual attack's damage window before the next turn.
+/// The next half may wind up during the previous recovery, so the fight keeps
+/// moving without ever stacking two damage windows.
+pub const DUAL_COMBO_GAP: f32 = 0.35;
 
 // --- Lock-on ---
 

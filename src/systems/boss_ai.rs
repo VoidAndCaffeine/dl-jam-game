@@ -8,7 +8,7 @@ use crate::levels::grid::SolidGrid;
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
 use crate::states::Phase;
-use crate::systems::boss_patterns::pattern_duration;
+use crate::systems::boss_patterns::{pattern_duration, pattern_timings};
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 
@@ -142,8 +142,10 @@ pub fn boss_ai(
                 pattern,
                 phase: half_phase,
             });
-            // Let the attack fully resolve before the other half steps up.
-            coordinator.next_combo = pattern_duration(pattern, half_phase) + DUAL_COMBO_GAP;
+            // Hand the next turn over once this attack's damage window closes;
+            // the recovering half's clip keeps playing underneath it.
+            let timings = pattern_timings(pattern, half_phase);
+            coordinator.next_combo = timings.windup + timings.active + DUAL_COMBO_GAP;
             coordinator.flip_turn();
         }
         return;
