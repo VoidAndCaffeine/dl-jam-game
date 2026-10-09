@@ -272,7 +272,7 @@ mod tests {
                 material.label()
             );
         }
-        assert!(summary.contains("Starter Crop 7"));
-        assert!(summary.contains("Boss B Material 1 1"));
+        assert!(summary.contains("Quicksilver Reed 7"));
+        assert!(summary.contains("Mercurial Spike 1"));
     }
 }

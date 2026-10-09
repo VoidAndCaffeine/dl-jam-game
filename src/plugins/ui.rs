@@ -7,6 +7,7 @@
 //! `systems/*` module; this file only lays out and refreshes the visuals.
 
 use crate::components::boss::BossId;
+use crate::components::crop_sprite::CropStage;
 use crate::components::gear::{GearPiece, GearSlot, RECIPE_COUNT, recipe_for_piece};
 use crate::components::player_sprite::{Facing8, PlayerAnimState, PlayerLook};
 use crate::components::pot::CropType;
@@ -55,14 +56,11 @@ const ROW_BORDER: Color = theme::ROW_BORDER;
 #[allow(dead_code)]
 const ROW_BORDER_SELECTED: Color = theme::ROW_BORDER_SELECTED;
 
-// The boss concept art paths. The plant seedlings live under `sprite_packs`
-// as 5x5 sheets (same layout as the effects), animated in the planting pane.
-const BOSS_A_CONCEPT: &str = "refrence_images/boss_a_excavator_concept.png";
-const BOSS_B_CONCEPT: &str = "refrence_images/boss_b_quicksilver_concept.png";
-const PLANT_CINDER_CAP: &str = "sprite_packs/Plants/Cinder Cap Seedling/spritesheet.png";
-const PLANT_QUICKSILVER_REED: &str =
-    "sprite_packs/Plants/Quicksilver Reed Seedling/spritesheet.png";
-const PLANT_TAILINGS_POTATO: &str = "sprite_packs/Plants/Tailings Potato Seedling/spritesheet.png";
+// The boss concept art paths. The plant sheets live under `sprite_packs` as 5x5
+// grids (same layout as the effects) and are animated in the planting pane,
+// which shows the mature plant for the highlighted crop.
+const BOSS_A_CONCEPT: &str = "reference_images/boss_a_excavator_concept.png";
+const BOSS_B_CONCEPT: &str = "reference_images/boss_b_quicksilver_concept.png";
 
 /// The side the animated previews are drawn at inside their panes.
 const PREVIEW_SIZE: f32 = 200.0;
@@ -180,8 +178,8 @@ fn crop_status(crop: CropType, unlocks: &CropUnlocks) -> (String, Color) {
     if !unlocks.is_unlocked(crop) {
         let hint = match crop {
             CropType::Starter => "Locked",
-            CropType::CropA => "Beat Boss A",
-            CropType::CropB => "Beat Boss B",
+            CropType::CropA => "Beat The Excavator",
+            CropType::CropB => "Beat Mercurial",
         };
         return (format!("LOCKED  -  {hint}"), TEXT_BLOCKED);
     }
@@ -199,7 +197,7 @@ fn crop_name_color(crop: CropType, unlocks: &CropUnlocks) -> Color {
 /// Status line for a boss row: locked rows explain how to open them.
 fn boss_status(id: BossId, progress: &BossProgress) -> (String, Color) {
     if !progress.is_unlocked(id) {
-        return ("LOCKED  -  Beat Boss A + Boss B".to_string(), TEXT_BLOCKED);
+        return ("LOCKED  -  Beat The Excavator & Mercurial".to_string(), TEXT_BLOCKED);
     }
     if progress.is_beaten(id) {
         ("BEATEN".to_string(), TEXT_CRAFTABLE)
@@ -225,12 +223,9 @@ fn boss_concept_path(id: BossId) -> &'static str {
     }
 }
 
-fn plant_path(crop: CropType) -> &'static str {
-    match crop {
-        CropType::Starter => PLANT_QUICKSILVER_REED,
-        CropType::CropA => PLANT_CINDER_CAP,
-        CropType::CropB => PLANT_TAILINGS_POTATO,
-    }
+/// The art the planting pane previews for `crop`: its mature, harvestable form.
+fn plant_path(crop: CropType) -> String {
+    crop.sheet_path(CropStage::Grown)
 }
 
 fn label(text: impl Into<String>, size: f32, color: Color) -> impl Bundle {
@@ -1554,7 +1549,7 @@ fn update_plant_preview(
         cache.set_layout(handle);
     }
     let layout = cache.layout().cloned();
-    let sheet = art.texture(plant_path(crop), Some(&server));
+    let sheet = art.texture(&plant_path(crop), Some(&server));
     for mut preview in previews.iter_mut() {
         preview.set_layout(layout.clone());
         preview.set_clips(vec![sheet.clone()]);
@@ -1893,7 +1888,7 @@ mod tests {
 
         let statuses = status_text(&mut app, 0);
         assert_eq!(statuses.len(), 1);
-        assert!(statuses[0].contains("Starter Crop 12/2"));
+        assert!(statuses[0].contains("Quicksilver Reed 12/2"));
         assert!(statuses[0].contains("Craft"));
     }
 
@@ -1904,8 +1899,8 @@ mod tests {
         open_menu(&mut app);
 
         let statuses = status_text(&mut app, 2);
-        assert!(statuses[0].contains("Crop A 0/2"));
-        assert!(statuses[0].contains("Boss A Material 1 0/1"));
+        assert!(statuses[0].contains("Cinder Cap 0/2"));
+        assert!(statuses[0].contains("Rusted Spike 0/1"));
         assert!(statuses[0].contains("Missing"));
     }
 
@@ -1936,7 +1931,7 @@ mod tests {
         let lines = line_text(&mut app, MenuLine::Inventory);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].starts_with("Inventory:"));
-        assert!(lines[0].contains("Crop A 3"));
+        assert!(lines[0].contains("Cinder Cap 3"));
     }
 
     #[test]
@@ -1951,7 +1946,7 @@ mod tests {
         app.update();
 
         let lines = line_text(&mut app, MenuLine::Inventory);
-        assert!(lines[0].contains("Starter Crop 9"));
+        assert!(lines[0].contains("Quicksilver Reed 9"));
     }
 
     #[test]
@@ -2007,12 +2002,12 @@ mod tests {
 
         app.world_mut()
             .resource_mut::<CraftingMenu>()
-            .set_notice("Missing: Crop B x5");
+            .set_notice("Missing: Tailings Potato x5");
         app.update();
 
         assert_eq!(
             line_text(&mut app, MenuLine::Notice),
-            vec!["Missing: Crop B x5".to_string()]
+            vec!["Missing: Tailings Potato x5".to_string()]
         );
     }
 
@@ -2084,7 +2079,7 @@ mod tests {
     #[test]
     fn notice_colours_distinguish_blocked_from_success() {
         assert_eq!(notice_color(""), TEXT_DIM);
-        assert_eq!(notice_color("Missing: Crop B x5"), TEXT_BLOCKED);
+        assert_eq!(notice_color("Missing: Tailings Potato x5"), TEXT_BLOCKED);
         assert_eq!(
             notice_color("Starter Spearblade already owned"),
             TEXT_BLOCKED
@@ -2122,7 +2117,7 @@ mod tests {
             &Inventory::default(),
             &PlayerGear::default(),
         );
-        assert!(blocked.contains("Starter Crop 0/2"));
+        assert!(blocked.contains("Quicksilver Reed 0/2"));
         assert!(blocked.contains("Missing"));
         assert_eq!(color, TEXT_BLOCKED);
     }
@@ -2138,11 +2133,11 @@ mod tests {
             &PlayerGear::default(),
         );
 
-        assert!(status.contains("Starter Crop 1/1"));
-        assert!(status.contains("Crop A 0/1"));
-        assert!(status.contains("Crop B 0/1"));
-        assert!(status.contains("Boss A Material 1 2/2"));
-        assert!(status.contains("Boss B Material 1 0/2"));
+        assert!(status.contains("Quicksilver Reed 1/1"));
+        assert!(status.contains("Cinder Cap 0/1"));
+        assert!(status.contains("Tailings Potato 0/1"));
+        assert!(status.contains("Rusted Spike 2/2"));
+        assert!(status.contains("Mercurial Spike 0/2"));
     }
 
     #[test]
@@ -2226,7 +2221,7 @@ mod tests {
             item_row_entities(&mut app),
             vec![(0, item_row_entities(&mut app)[0].1)]
         );
-        assert_eq!(item_name(&mut app, 0), vec!["Starter Crop".to_string()]);
+        assert_eq!(item_name(&mut app, 0), vec!["Quicksilver Reed".to_string()]);
         assert_eq!(item_detail_text(&mut app, 0), vec!["x0".to_string()]);
     }
 
@@ -2240,7 +2235,7 @@ mod tests {
         open_inventory(&mut app);
 
         assert_eq!(item_row_entities(&mut app).len(), 2);
-        assert_eq!(item_name(&mut app, 1), vec!["Crop A".to_string()]);
+        assert_eq!(item_name(&mut app, 1), vec!["Cinder Cap".to_string()]);
     }
 
     #[test]
@@ -2253,7 +2248,7 @@ mod tests {
         assert_eq!(item_row_entities(&mut app).len(), 2);
         assert_eq!(
             item_name(&mut app, 1),
-            vec!["Boss A Material 1".to_string()]
+            vec!["Rusted Spike".to_string()]
         );
         assert_eq!(item_detail_text(&mut app, 1), vec!["x3".to_string()]);
     }
@@ -2274,7 +2269,7 @@ mod tests {
         assert_eq!(item_row_entities(&mut app).len(), 2);
         assert_eq!(
             item_name(&mut app, 1),
-            vec!["Boss B Material 1".to_string()]
+            vec!["Mercurial Spike".to_string()]
         );
     }
 
@@ -2554,7 +2549,7 @@ mod tests {
         }
         assert_eq!(
             crop_select_texts(&mut app, CropSelectText::RowName(0)),
-            vec!["Starter Crop".to_string()]
+            vec!["Quicksilver Reed".to_string()]
         );
     }
 
@@ -2570,11 +2565,11 @@ mod tests {
         );
         assert_eq!(
             crop_select_texts(&mut app, CropSelectText::RowStatus(1)),
-            vec!["LOCKED  -  Beat Boss A".to_string()]
+            vec!["LOCKED  -  Beat The Excavator".to_string()]
         );
         assert_eq!(
             crop_select_texts(&mut app, CropSelectText::RowStatus(2)),
-            vec!["LOCKED  -  Beat Boss B".to_string()]
+            vec!["LOCKED  -  Beat Mercurial".to_string()]
         );
     }
 
@@ -2655,7 +2650,7 @@ mod tests {
         assert_eq!(crop_status(CropType::Starter, &unlocks).0, "1 days");
         assert_eq!(
             crop_status(CropType::CropA, &unlocks),
-            ("LOCKED  -  Beat Boss A".to_string(), TEXT_BLOCKED)
+            ("LOCKED  -  Beat The Excavator".to_string(), TEXT_BLOCKED)
         );
 
         unlocks.unlock_crop_a();
@@ -2754,7 +2749,7 @@ mod tests {
         );
         assert_eq!(
             crop_select_texts(&mut app, CropSelectText::RowYield(0)),
-            vec!["Yields: Starter Crop x1".to_string()]
+            vec!["Yields: Quicksilver Reed x1".to_string()]
         );
     }
 
@@ -2781,5 +2776,19 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(cameras(&mut app), 0, "the menu camera yields to play");
+    }
+
+    #[test]
+    fn the_boss_concept_art_paths_live_under_reference_images() {
+        // A `refrence_images` typo silently 404s the portraits; keep them under
+        // the real folder so the boss-select art keeps loading.
+        for id in [BossId::BossA, BossId::BossB] {
+            let path = boss_concept_path(id);
+            assert!(
+                path.starts_with("reference_images/"),
+                "{id:?} concept art points at {path}"
+            );
+            assert!(path.ends_with(".png"), "{id:?} concept art is not a png");
+        }
     }
 }

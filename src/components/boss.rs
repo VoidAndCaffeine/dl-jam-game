@@ -26,9 +26,9 @@ impl BossId {
 
     pub fn label(self) -> &'static str {
         match self {
-            BossId::BossA => "Boss A",
-            BossId::BossB => "Boss B",
-            BossId::Dual => "Dual Boss",
+            BossId::BossA => "The Excavator",
+            BossId::BossB => "Mercurial",
+            BossId::Dual => "The Excavator & Mercurial",
         }
     }
 

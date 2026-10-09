@@ -1,5 +1,7 @@
 use crate::resources::boss_sprite::BossSpriteAssets;
+use crate::resources::crop_sprite::CropSpriteAssets;
 use crate::resources::effect_sprite::EffectSpriteAssets;
+use crate::resources::farm::CropUnlocks;
 use crate::resources::player_sprite::PlayerSpriteAssets;
 use crate::resources::run_data::PlayerGear;
 use crate::resources::scene_assets::{LoadTarget, LoadingContext, SceneAssetManifest};
@@ -72,13 +74,19 @@ fn begin_boot_load(
     mut manifest: ResMut<SceneAssetManifest>,
     mut context: ResMut<LoadingContext>,
     gear: Res<PlayerGear>,
+    unlocks: Option<Res<CropUnlocks>>,
     server: Option<Res<AssetServer>>,
 ) {
     let target = LoadTarget::Farm;
     context.target = Some(target);
     context.resume_phase = Some(DayPhase::Farming);
     if let Some(server) = server.as_deref() {
-        manifest.begin(target, target.required_paths(armor_set(&gear)), server);
+        let unlocks = unlocks.as_deref().cloned().unwrap_or_default();
+        manifest.begin(
+            target,
+            target.required_paths(armor_set(&gear), &unlocks),
+            server,
+        );
     }
 }
 
@@ -87,13 +95,19 @@ fn begin_scene_load(
     mut manifest: ResMut<SceneAssetManifest>,
     context: Res<LoadingContext>,
     gear: Res<PlayerGear>,
+    unlocks: Option<Res<CropUnlocks>>,
     server: Option<Res<AssetServer>>,
 ) {
     let Some(target) = context.target else {
         return;
     };
     if let Some(server) = server.as_deref() {
-        manifest.begin(target, target.required_paths(armor_set(&gear)), server);
+        let unlocks = unlocks.as_deref().cloned().unwrap_or_default();
+        manifest.begin(
+            target,
+            target.required_paths(armor_set(&gear), &unlocks),
+            server,
+        );
     }
 }
 
@@ -135,6 +149,7 @@ fn clear_sprite_caches(
     mut player: Option<ResMut<PlayerSpriteAssets>>,
     mut boss: Option<ResMut<BossSpriteAssets>>,
     mut effect: Option<ResMut<EffectSpriteAssets>>,
+    mut crop: Option<ResMut<CropSpriteAssets>>,
 ) {
     if let Some(player) = player.as_deref_mut() {
         player.clear();
@@ -144,6 +159,9 @@ fn clear_sprite_caches(
     }
     if let Some(effect) = effect.as_deref_mut() {
         effect.clear();
+    }
+    if let Some(crop) = crop.as_deref_mut() {
+        crop.clear();
     }
 }
 

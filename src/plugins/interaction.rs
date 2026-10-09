@@ -229,6 +229,7 @@ pub struct HighlightLookups<'w, 's> {
     pots: Query<'w, 's, &'static crate::components::pot::Pot>,
     highlights: Query<'w, 's, &'static HighlightMarker>,
     outlines: Query<'w, 's, &'static MeshMaterial2d<SpriteOutlineMaterial>>,
+    growth_texts: Query<'w, 's, (Entity, &'static crate::plugins::farm::GrowthTimerText)>,
     visibility: Query<'w, 's, &'static mut Visibility>,
 }
 
@@ -240,6 +241,12 @@ fn highlight_interactables_in_range(
     phase: Phase,
 ) {
     if !phase.is_farming() {
+        // Nothing is interactable off the farm, so no crop should show its days.
+        for (entity, _) in lookups.growth_texts.iter() {
+            if let Ok(mut vis) = lookups.visibility.get_mut(entity) {
+                *vis = Visibility::Hidden;
+            }
+        }
         return;
     }
     let Ok(player_transform) = lookups.player.single() else {
@@ -257,16 +264,46 @@ fn highlight_interactables_in_range(
                 .map(|p| p.state == crate::components::pot::PotState::Watered)
                 .unwrap_or(false);
         let active = !hidden && distance <= INTERACTION_RANGE;
+        let highlight = if active { 1.0 } else { 0.0 };
+        let now = time.elapsed_secs();
 
-        // Anything with the shared outline material — pot mounds and the farm
-        // props alike — lights up by drawing an outline around its silhouette.
-        if let (Some(materials), Ok(handle)) =
-            (materials.as_deref_mut(), lookups.outlines.get(entity))
-            && let Some(mut material) = materials.get_mut(handle)
-        {
-            material.params.highlight = if active { 1.0 } else { 0.0 };
-            material.params.time = time.elapsed_secs();
-            continue;
+        // A pot's days-remaining number stays up once the pot is watered too (it
+        // is no longer interactable then, but the growth is still worth reading),
+        // so it only needs the player nearby with no panel in the way.
+        let revealed = !panels.any_open() && distance <= INTERACTION_RANGE;
+        if let Ok(pot) = lookups.pots.get(entity) {
+            for (text_entity, marker) in lookups.growth_texts.iter() {
+                if marker.pot_index == pot.index
+                    && let Ok(mut vis) = lookups.visibility.get_mut(text_entity)
+                {
+                    *vis = if revealed {
+                        Visibility::Visible
+                    } else {
+                        Visibility::Hidden
+                    };
+                }
+            }
+        }
+
+        // Anything with the shared outline material — pot mounds, farm props and
+        // the plants growing on the pots — lights up by outlining its silhouette.
+        // A pot and its plant each own a material, so both light together and the
+        // ring ends up around the outermost edge of the soil and the plant.
+        if let Some(materials) = materials.as_deref_mut() {
+            if let Ok(handle) = lookups.outlines.get(entity)
+                && let Some(mut material) = materials.get_mut(handle)
+            {
+                material.params.highlight = highlight;
+                material.params.time = now;
+            }
+            for child in children.into_iter().flat_map(Children::iter) {
+                if let Ok(handle) = lookups.outlines.get(child)
+                    && let Some(mut material) = materials.get_mut(handle)
+                {
+                    material.params.highlight = highlight;
+                    material.params.time = now;
+                }
+            }
         }
 
         // Everything else keeps the simple highlight child.
@@ -834,6 +871,141 @@ mod tests {
             highlight_of_material(&app, &material),
             0.0,
             "watered soil is not interactable until the next day"
+        );
+    }
+
+    /// Spawns a mound with a plant child that carries its own outline material,
+    /// and returns both materials in `(soil, plant)` order.
+    fn spawn_potted_plant(
+        app: &mut App,
+        pos: Vec2,
+    ) -> (Handle<SpriteOutlineMaterial>, Handle<SpriteOutlineMaterial>) {
+        let soil = app
+            .world_mut()
+            .resource_mut::<Assets<SpriteOutlineMaterial>>()
+            .add(SpriteOutlineMaterial::new(
+                Handle::default(),
+                SpriteOutlineParams::new(64.0),
+            ));
+        let plant = app
+            .world_mut()
+            .resource_mut::<Assets<SpriteOutlineMaterial>>()
+            .add(SpriteOutlineMaterial::new(
+                Handle::default(),
+                SpriteOutlineParams::new(1280.0),
+            ));
+        app.world_mut()
+            .spawn((
+                Interactable,
+                FarmPot,
+                crate::components::pot::Pot::new(0),
+                Transform::from_xyz(pos.x, pos.y, 0.0),
+                MeshMaterial2d(soil.clone()),
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    crate::components::crop_sprite::CropSprite::new(
+                        crate::components::pot::CropType::Starter,
+                        crate::components::crop_sprite::CropStage::Seedling,
+                    ),
+                    Transform::from_xyz(0.0, 0.0, 0.5),
+                    MeshMaterial2d(plant.clone()),
+                ));
+            });
+        (soil, plant)
+    }
+
+    #[test]
+    fn a_plant_child_lights_up_with_its_mound() {
+        let mut app = setup_mound_highlight_app();
+        let (soil, plant) = spawn_potted_plant(&mut app, Vec2::new(10.0, 0.0));
+        app.update();
+
+        assert_eq!(
+            highlight_of_material(&app, &soil),
+            1.0,
+            "the soil outline lights up in range"
+        );
+        assert_eq!(
+            highlight_of_material(&app, &plant),
+            1.0,
+            "the plant outline lights up with the soil so the ring covers both"
+        );
+    }
+
+    #[test]
+    fn a_plant_child_stays_dark_out_of_range() {
+        let mut app = setup_mound_highlight_app();
+        let (soil, plant) = spawn_potted_plant(&mut app, Vec2::new(1000.0, 0.0));
+        app.update();
+
+        assert_eq!(highlight_of_material(&app, &soil), 0.0);
+        assert_eq!(highlight_of_material(&app, &plant), 0.0);
+    }
+
+    #[test]
+    fn a_pots_days_number_shows_while_nearby_even_once_watered() {
+        let mut app = setup_mound_highlight_app();
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<SpriteOutlineMaterial>>()
+            .add(SpriteOutlineMaterial::new(
+                Handle::default(),
+                SpriteOutlineParams::new(64.0),
+            ));
+        let pot = app
+            .world_mut()
+            .spawn((
+                Interactable,
+                FarmPot,
+                crate::components::pot::Pot::new(3),
+                Transform::from_xyz(10.0, 0.0, 0.0),
+                MeshMaterial2d(material),
+            ))
+            .id();
+        let text = app
+            .world_mut()
+            .spawn((
+                crate::plugins::farm::GrowthTimerText { pot_index: 3 },
+                Transform::default(),
+                Visibility::Inherited,
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(text).unwrap(),
+            &Visibility::Visible,
+            "an in-range pot shows its days"
+        );
+
+        // Watering makes the pot non-interactable, but the number stays up.
+        app.world_mut()
+            .get_mut::<crate::components::pot::Pot>(pot)
+            .unwrap()
+            .state = crate::components::pot::PotState::Watered;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(text).unwrap(),
+            &Visibility::Visible,
+            "a watered pot still shows its days"
+        );
+
+        let player = app
+            .world_mut()
+            .query_filtered::<Entity, With<Player>>()
+            .single(app.world_mut())
+            .unwrap();
+        app.world_mut()
+            .get_mut::<Transform>(player)
+            .unwrap()
+            .translation
+            .x = 1000.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<Visibility>(text).unwrap(),
+            &Visibility::Hidden,
+            "walking away hides the number again"
         );
     }
 

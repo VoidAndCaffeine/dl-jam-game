@@ -24,8 +24,8 @@ impl GearSet {
     pub fn label(&self) -> &'static str {
         match self {
             GearSet::Starter => "Starter Set",
-            GearSet::BossA => "Boss A Set",
-            GearSet::BossB => "Boss B Set",
+            GearSet::BossA => "Excavator Set",
+            GearSet::BossB => "Mercurial Set",
             GearSet::Master => "Master Set",
         }
     }
@@ -127,10 +127,10 @@ impl MaterialType {
 
     pub fn label(&self) -> &'static str {
         match self {
-            MaterialType::BossA1 => "Boss A Material 1",
-            MaterialType::BossA2 => "Boss A Material 2",
-            MaterialType::BossB1 => "Boss B Material 1",
-            MaterialType::BossB2 => "Boss B Material 2",
+            MaterialType::BossA1 => "Rusted Spike",
+            MaterialType::BossA2 => "Rusted Plate",
+            MaterialType::BossB1 => "Mercurial Spike",
+            MaterialType::BossB2 => "Mercurial Plate",
         }
     }
 }

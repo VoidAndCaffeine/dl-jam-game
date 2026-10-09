@@ -171,6 +171,35 @@ mod tests {
     }
 
     #[test]
+    fn every_arena_boss_spawns_clear_of_the_walls() {
+        use crate::components::boss::BossId;
+        use crate::constants::boss_size;
+
+        // A boss collides with its whole sprite box, so the spawn has to clear
+        // the walls for that box, not just the tile it stands on.
+        let cases = [
+            (LevelId::ArenaA, vec![boss_size(BossId::BossA)]),
+            (LevelId::ArenaB, vec![boss_size(BossId::BossB)]),
+            (
+                LevelId::ArenaDual,
+                vec![boss_size(BossId::BossA), boss_size(BossId::BossB)],
+            ),
+        ];
+        for (id, sizes) in cases {
+            let (def, grid) = build_level(id);
+            let spawns = prop_positions(&grid, &def, PropKind::BossSpawn);
+            assert_eq!(spawns.len(), sizes.len(), "{}", id.file_name());
+            for (position, size) in spawns.iter().zip(sizes) {
+                assert!(
+                    !grid.aabb_hits(*position, Vec2::splat(size * 0.5), &[]),
+                    "{}: a boss spawns stuck in a wall at {position:?}",
+                    id.file_name()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn level_entities_remember_their_room() {
         assert_eq!(LevelEntity::of(LevelId::Farm).level, LevelId::Farm);
     }

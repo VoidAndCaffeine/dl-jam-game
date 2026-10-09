@@ -6,6 +6,7 @@ pub mod boss_sprite;
 pub mod camera;
 pub mod crafting_menu;
 pub mod crop_select;
+pub mod crop_sprite;
 pub mod day_cycle;
 pub mod debug_overlay;
 pub mod drop_rng;

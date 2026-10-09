@@ -290,13 +290,13 @@ mod tests {
         assert!(
             texts
                 .iter()
-                .any(|text| text.contains("Starter Crop 12") && text.starts_with("Inventory:")),
+                .any(|text| text.contains("Quicksilver Reed 12") && text.starts_with("Inventory:")),
             "inventory line missing from {texts:?}"
         );
         assert!(
             texts
                 .iter()
-                .any(|text| text.contains("Starter Crop 12/2") && text.contains("Craft")),
+                .any(|text| text.contains("Quicksilver Reed 12/2") && text.contains("Craft")),
             "craftable row status missing from {texts:?}"
         );
     }
@@ -378,7 +378,7 @@ mod tests {
             .map(|text| text.0.clone())
             .collect();
         assert!(
-            texts.iter().any(|text| text == "Starter Crop"),
+            texts.iter().any(|text| text == "Quicksilver Reed"),
             "crop row missing from {texts:?}"
         );
         assert!(

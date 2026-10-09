@@ -492,11 +492,11 @@ mod tests {
     fn row_labels_cover_every_kind() {
         assert_eq!(
             InventoryRow::Crop(CropType::Starter).label(),
-            "Starter Crop"
+            "Quicksilver Reed"
         );
         assert_eq!(
             InventoryRow::Material(MaterialType::BossA1).label(),
-            "Boss A Material 1"
+            "Rusted Spike"
         );
         assert_eq!(
             InventoryRow::Gear(GearPiece::new(GearSet::Starter, GearSlot::Weapon)).label(),

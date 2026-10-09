@@ -1,9 +1,12 @@
 use crate::components::collider::Collider;
+use crate::components::crop_sprite::{CROP_FRAME_COUNT, CROP_SPRITE_SIZE, CropSprite};
+use crate::components::player_sprite::{FRAME_COLUMNS, FRAME_SIZE};
 use crate::components::pot::{Pot, PotState};
 use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
-use crate::materials::sprite_outline::{SpriteOutlineMaterial, SpriteOutlineParams};
+use crate::materials::sprite_outline::{SpriteOutlineMaterial, SpriteOutlineParams, atlas_rect};
 use crate::plugins::interaction::{FarmPot, Interactable};
 use crate::resources::crop_select::CropSelectMenu;
+use crate::resources::crop_sprite::{CropSpriteAssets, CropSpriteKey};
 use crate::resources::day_cycle::DayCycle;
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::inventory::Inventory;
@@ -16,6 +19,8 @@ use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite_render::{Material2dPlugin, MeshMaterial2d};
+use rand::rngs::SmallRng;
+use rand::{RngExt, SeedableRng};
 
 pub struct FarmPlugin;
 
@@ -26,6 +31,7 @@ impl Plugin for FarmPlugin {
             .init_resource::<FarmState>()
             .init_resource::<Inventory>()
             .init_resource::<CropSelectMenu>()
+            .init_resource::<CropSpriteAssets>()
             .init_resource::<DayCycle>()
             .init_resource::<FarmAssets>()
             .init_resource::<MoundSources>()
@@ -40,6 +46,23 @@ impl Plugin for FarmPlugin {
                 (build_mound_textures, attach_mound_visuals)
                     .chain()
                     .after(LevelSet::Load),
+            )
+            // The plant child is spawned from the pot's growth state, then given
+            // its sprite once the renderer's assets exist. The visual steps run
+            // outside the farming check so a plant keeps animating on the farm
+            // during boss select.
+            .add_systems(
+                Update,
+                sync_crop_sprites
+                    .after(LevelSet::Load)
+                    .after(begin_next_day)
+                    .after(debug_advance_day),
+            )
+            .add_systems(
+                Update,
+                (attach_crop_visuals, animate_crop_sprites)
+                    .chain()
+                    .after(sync_crop_sprites),
             )
             .add_systems(FixedUpdate, pot_interaction_handler)
             .add_systems(FixedUpdate, update_pot_visuals)
@@ -69,12 +92,31 @@ pub const MOUND_SIZE: f32 = 48.0;
 /// Side of the square mound texture the source art is baked down to.
 pub const MOUND_TEX_SIZE: u32 = 64;
 
-/// Z of a dry mound, below the crop sprite layer at [`CROP_SPRITE_Z`].
-pub const MOUND_DRY_Z: f32 = 0.0;
-/// Z of a wet mound, above the crop sprite so the soaked soil reads on top.
-pub const MOUND_WET_Z: f32 = 1.0;
-/// Where a crop's own (future) sprite sits, between the dry and wet mounds.
+/// Z of the soil mound. Dry and wet soil share the pot's one mound quad, so a
+/// single layer holds both.
+pub const MOUND_Z: f32 = 0.0;
+/// Where a crop's sprite sits, on top of the soil it is planted in.
 pub const CROP_SPRITE_Z: f32 = 0.5;
+/// How far a crop is lifted off its pot at its full scale. The plant art carries
+/// its own soil in the lower half of the frame, so centring it on the pot sinks
+/// it into the ground; half a tile brings the soil line back up to the mound. A
+/// smaller crop is lifted proportionally less.
+pub const CROP_VERTICAL_OFFSET: f32 = 16.0;
+/// Y of the days-remaining text from its pot. The plant rises above the soil, so
+/// the number sits down at the soil line instead of over the plant.
+pub const GROWTH_TEXT_OFFSET: f32 = -8.0;
+/// Z of the days-remaining text, above the plant so it stays legible.
+pub const GROWTH_TEXT_Z: f32 = 1.5;
+
+/// Side of the square crop sheet the plant art is drawn from: a 5x5 grid of
+/// [`FRAME_SIZE`] frames.
+pub const CROP_SHEET_SIZE: u32 = FRAME_SIZE * FRAME_COLUMNS;
+/// Outline reach for a crop, in sheet texels. Tuned so a plant's ring reads at
+/// the same world thickness as the 64px mound default.
+pub const CROP_OUTLINE_WIDTH: f32 = 7.5;
+/// The tint a crop is drawn with while its soil is soaked. The plant art bakes
+/// its own soil, so this cool cast stands in for the wet mound it covers.
+pub const WATERED_TINT: Vec4 = Vec4::new(0.55, 0.72, 1.0, 1.0);
 
 /// Marker component linking a growth timer Text2d to its pot by index.
 #[derive(Component)]
@@ -89,6 +131,7 @@ pub struct GrowthTimerText {
 #[derive(Resource, Default)]
 pub struct FarmAssets {
     quad: Option<Handle<Mesh>>,
+    crop_quad: Option<Handle<Mesh>>,
     dry: Option<Handle<Image>>,
     wet: Option<Handle<Image>>,
 }
@@ -97,6 +140,13 @@ impl FarmAssets {
     fn quad(&mut self, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
         self.quad
             .get_or_insert_with(|| meshes.add(Rectangle::new(MOUND_SIZE, MOUND_SIZE)))
+            .clone()
+    }
+
+    /// The quad a crop sprite is drawn on, sized to [`CROP_SPRITE_SIZE`].
+    fn crop_quad(&mut self, meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+        self.crop_quad
+            .get_or_insert_with(|| meshes.add(Rectangle::new(CROP_SPRITE_SIZE, CROP_SPRITE_SIZE)))
             .clone()
     }
 }
@@ -132,7 +182,7 @@ pub fn spawn_pot(
         },
         Interactable::new(),
         FarmPot,
-        Transform::from_xyz(position.x, position.y, MOUND_DRY_Z),
+        Transform::from_xyz(position.x, position.y, MOUND_Z),
         Name::new(format!("Pot {}", index)),
     ));
 
@@ -151,7 +201,7 @@ pub fn spawn_pot(
             ..default()
         },
         TextColor(Color::WHITE),
-        Transform::from_xyz(position.x, position.y + POT_SIZE * 0.6, CROP_SPRITE_Z + 0.1),
+        Transform::from_xyz(position.x, position.y + GROWTH_TEXT_OFFSET, GROWTH_TEXT_Z),
         Name::new(format!("Growth Timer Text {}", index)),
     ));
 
@@ -272,7 +322,7 @@ fn attach_mound_visuals(
     meshes: Option<ResMut<Assets<Mesh>>>,
     materials: Option<ResMut<Assets<SpriteOutlineMaterial>>>,
     mut assets: ResMut<FarmAssets>,
-    mut pots: Query<(Entity, &Pot, &mut Transform), Without<Mesh2d>>,
+    pots: Query<(Entity, &Pot), Without<Mesh2d>>,
 ) {
     let (Some(mut meshes), Some(mut materials)) = (meshes, materials) else {
         return;
@@ -283,12 +333,7 @@ fn attach_mound_visuals(
     let quad = assets.quad(&mut meshes);
 
     let mut attached = 0usize;
-    for (entity, pot, mut transform) in pots.iter_mut() {
-        transform.translation.z = if pot.state == PotState::Watered {
-            MOUND_WET_Z
-        } else {
-            MOUND_DRY_Z
-        };
+    for (entity, pot) in pots.iter() {
         let texture = mound_texture(&assets, pot.state, &dry);
         let params = SpriteOutlineParams::new(MOUND_TEX_SIZE as f32);
         let material = materials.add(SpriteOutlineMaterial::new(texture, params));
@@ -416,10 +461,10 @@ fn advance_day(
 
 #[allow(clippy::type_complexity)]
 fn update_pot_visuals(
-    mut pots: Query<
+    pots: Query<
         (
             &Pot,
-            &mut Transform,
+            &Transform,
             Option<&MeshMaterial2d<SpriteOutlineMaterial>>,
         ),
         Without<GrowthTimerText>,
@@ -436,14 +481,7 @@ fn update_pot_visuals(
         return;
     };
 
-    for (pot, mut transform, material) in pots.iter_mut() {
-        // Dry soil sits under the crop sprite; soaked soil reads on top of it.
-        transform.translation.z = if pot.state == PotState::Watered {
-            MOUND_WET_Z
-        } else {
-            MOUND_DRY_Z
-        };
-
+    for (pot, transform, material) in pots.iter() {
         if let (Some(materials), Some(handle)) = (materials.as_deref_mut(), material)
             && let Some(mut material) = materials.get_mut(handle)
         {
@@ -458,7 +496,7 @@ fn update_pot_visuals(
             if marker.pot_index == pot.index {
                 // Keep text position synced with pot (in case pot moves)
                 text_transform.translation.x = transform.translation.x;
-                text_transform.translation.y = transform.translation.y + POT_SIZE * 0.6;
+                text_transform.translation.y = transform.translation.y + GROWTH_TEXT_OFFSET;
 
                 if pot.state == PotState::Empty || pot.days_remaining == 0 {
                     text.0.clear();
@@ -480,9 +518,135 @@ fn snapshot_pots(pots: Query<&Pot>, mut farm: ResMut<FarmState>) {
     farm.pots = snapshot;
 }
 
+/// The frame phase a plant in pot `pot_index` starts at, so two plants of the
+/// same crop do not sway in lockstep. Seeded from the pot index, so it is stable
+/// for that pot and needs no shared RNG.
+fn crop_phase(pot_index: usize) -> usize {
+    let mut rng = SmallRng::seed_from_u64(pot_index as u64 ^ 0x9E37_79B9_7F4A_7C15);
+    rng.random_range(0..CROP_FRAME_COUNT)
+}
+
+/// Gives every planted pot a crop child and clears it from a pot that was
+/// harvested. The child is a plain entity here; [`attach_crop_visuals`] dresses
+/// it once the renderer's assets exist, exactly like the pot mounds.
+fn sync_crop_sprites(
+    mut commands: Commands,
+    pots: Query<(Entity, &Pot, Option<&Children>)>,
+    mut sprites: Query<&mut CropSprite>,
+    phase: Phase,
+) {
+    if !phase.is_farming() {
+        return;
+    }
+    for (entity, pot, children) in pots.iter() {
+        let planted = pot.state != PotState::Empty;
+        let child = children.and_then(|kids| kids.iter().find(|child| sprites.contains(*child)));
+        match (planted, child) {
+            (true, Some(child)) => {
+                if let Ok(mut sprite) = sprites.get_mut(child) {
+                    sprite.set_stage(pot.crop_type.stage_for_days_remaining(pot.days_remaining));
+                    sprite.watered = pot.watered_today;
+                }
+            }
+            (true, None) => {
+                let stage = pot.crop_type.stage_for_days_remaining(pot.days_remaining);
+                let mut crop =
+                    CropSprite::new(pot.crop_type, stage).with_phase(crop_phase(pot.index));
+                crop.watered = pot.watered_today;
+                let index = pot.index;
+                let scale = pot.crop_type.sprite_scale();
+                commands.entity(entity).with_children(|parent| {
+                    parent.spawn((
+                        crop,
+                        Transform::from_xyz(0.0, CROP_VERTICAL_OFFSET * scale, CROP_SPRITE_Z)
+                            .with_scale(Vec3::splat(scale)),
+                        Name::new(format!("Crop {}", index)),
+                    ));
+                });
+            }
+            (false, Some(child)) => {
+                commands.entity(child).despawn();
+            }
+            (false, None) => {}
+        }
+    }
+}
+
+/// Gives every visual-less crop child its quad and outline material. Each plant
+/// owns its own material so its outline can light up with its pot.
+fn attach_crop_visuals(
+    mut commands: Commands,
+    server: Option<Res<AssetServer>>,
+    meshes: Option<ResMut<Assets<Mesh>>>,
+    materials: Option<ResMut<Assets<SpriteOutlineMaterial>>>,
+    mut farm: ResMut<FarmAssets>,
+    mut cache: ResMut<CropSpriteAssets>,
+    crops: Query<(Entity, &CropSprite), Without<Mesh2d>>,
+) {
+    if crops.is_empty() {
+        return;
+    }
+    let (Some(server), Some(mut meshes), Some(mut materials)) = (server, meshes, materials) else {
+        return;
+    };
+
+    let quad = farm.crop_quad(&mut meshes);
+    let mut attached = 0usize;
+    for (entity, crop) in crops.iter() {
+        let image = cache.image_for(CropSpriteKey::new(crop.crop, crop.stage), &server);
+        let mut params =
+            SpriteOutlineParams::atlas(CROP_SHEET_SIZE as f32, FRAME_COLUMNS, crop.frame);
+        params.outline_width = CROP_OUTLINE_WIDTH;
+        let material = materials.add(SpriteOutlineMaterial::new(image, params));
+        commands
+            .entity(entity)
+            .insert((Mesh2d(quad.clone()), MeshMaterial2d(material)));
+        attached += 1;
+    }
+    if attached > 0 {
+        log::info!("attached crop visuals to {attached} plants");
+    }
+}
+
+/// Advances every plant's clip and points its material at the current frame,
+/// swapping the sheet when the crop grows into a new stage.
+fn animate_crop_sprites(
+    time: Res<Time>,
+    server: Option<Res<AssetServer>>,
+    mut materials: Option<ResMut<Assets<SpriteOutlineMaterial>>>,
+    mut cache: ResMut<CropSpriteAssets>,
+    mut crops: Query<(&mut CropSprite, &MeshMaterial2d<SpriteOutlineMaterial>)>,
+) {
+    let Some(server) = server else {
+        return;
+    };
+    let dt = time.delta_secs();
+    for (mut crop, handle) in crops.iter_mut() {
+        crop.advance(dt);
+        let image = cache.image_for(CropSpriteKey::new(crop.crop, crop.stage), server.as_ref());
+        if let Some(materials) = materials.as_deref_mut()
+            && let Some(mut material) = materials.get_mut(handle)
+        {
+            if material.texture != image {
+                material.texture = image;
+            }
+            material.params.uv_rect = atlas_rect(FRAME_COLUMNS, crop.atlas_frame());
+            let tint = if crop.watered {
+                WATERED_TINT
+            } else {
+                Vec4::ONE
+            };
+            if material.params.tint != tint {
+                material.params.tint = tint;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::crop_sprite::CropStage;
     use crate::components::pot::CropType;
     use crate::events::InteractionType;
     use crate::levels::LevelId;
@@ -875,6 +1039,225 @@ mod tests {
             .expect("pot entity")
     }
 
+    /// The plant child of `pot`, if it has grown one yet.
+    fn crop_child(app: &mut App, pot: Entity) -> Option<Entity> {
+        let children: Vec<Entity> = app
+            .world()
+            .get::<Children>(pot)
+            .map(|kids| kids.iter().collect())
+            .unwrap_or_default();
+        children
+            .into_iter()
+            .find(|child| app.world().get::<CropSprite>(*child).is_some())
+    }
+
+    #[test]
+    fn planting_a_crop_grows_a_plant_child() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::CropA);
+        app.update();
+
+        let child = crop_child(&mut app, pot).expect("a plant is spawned");
+        let crop = app.world().get::<CropSprite>(child).unwrap();
+        assert_eq!(crop.crop, CropType::CropA);
+        assert_eq!(
+            crop.stage,
+            CropStage::Seedling,
+            "a fresh planting is a seedling"
+        );
+    }
+
+    #[test]
+    fn an_empty_pot_has_no_plant() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+
+        assert!(crop_child(&mut app, pot).is_none());
+    }
+
+    #[test]
+    fn the_plant_follows_every_growth_stage() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::CropB);
+        app.update();
+        let child = crop_child(&mut app, pot).unwrap();
+
+        let expected = [
+            CropStage::Growing,
+            CropStage::GrowingLarge,
+            CropStage::Grown,
+        ];
+        for stage in expected {
+            {
+                let mut planted = app.world_mut().get_mut::<Pot>(pot).unwrap();
+                planted.water();
+                planted.advance_day();
+            }
+            app.update();
+            assert_eq!(
+                app.world().get::<CropSprite>(child).unwrap().stage,
+                stage,
+                "the plant should show its next stage as it matures"
+            );
+        }
+    }
+
+    #[test]
+    fn harvesting_a_pot_clears_its_plant() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = grow_pot_to_ready(&mut app, 0);
+        app.update();
+        assert!(crop_child(&mut app, pot).is_some());
+
+        app.world_mut().get_mut::<Pot>(pot).unwrap().harvest();
+        app.update();
+
+        assert!(
+            crop_child(&mut app, pot).is_none(),
+            "harvesting must remove the plant"
+        );
+    }
+
+    #[test]
+    fn a_plant_comes_back_after_a_boss_fight_round_trip() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::CropA);
+        app.update();
+
+        request_level(&mut app, LevelId::ArenaA);
+        request_level(&mut app, LevelId::Farm);
+
+        let restored = pot_entity(&mut app, 0);
+        let child = crop_child(&mut app, restored).expect("the plant is restored");
+        assert_eq!(
+            app.world().get::<CropSprite>(child).unwrap().crop,
+            CropType::CropA
+        );
+    }
+
+    #[test]
+    fn the_plant_sits_above_the_soil_layer() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::Starter);
+        app.update();
+
+        let soil_z = app.world().get::<Transform>(pot).unwrap().translation.z;
+        let child = crop_child(&mut app, pot).unwrap();
+        let plant_z = app.world().get::<Transform>(child).unwrap().translation.z;
+        assert!(
+            plant_z > soil_z,
+            "the plant draws on top of the soil: {plant_z} vs {soil_z}"
+        );
+    }
+
+    #[test]
+    fn a_crop_is_drawn_smaller_the_more_its_art_fills_the_frame() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+
+        for (index, crop) in [(0usize, CropType::Starter), (1, CropType::CropA)] {
+            let pot = pot_entity(&mut app, index);
+            app.world_mut().get_mut::<Pot>(pot).unwrap().plant(crop);
+            app.update();
+
+            let child = crop_child(&mut app, pot).unwrap();
+            let transform = *app.world().get::<Transform>(child).unwrap();
+            let scale = crop.sprite_scale();
+            assert_eq!(
+                transform.scale,
+                Vec3::splat(scale),
+                "{crop:?} should be drawn at its own scale"
+            );
+            assert_eq!(
+                transform.translation.y,
+                CROP_VERTICAL_OFFSET * scale,
+                "{crop:?} is lifted in proportion to its size so its soil lines up"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pot_phase_is_always_a_valid_frame() {
+        for index in 0..64 {
+            assert!(crop_phase(index) < CROP_FRAME_COUNT);
+        }
+    }
+
+    #[test]
+    fn plants_of_the_same_crop_do_not_all_share_a_phase() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        for index in 0..4 {
+            let pot = pot_entity(&mut app, index);
+            app.world_mut()
+                .get_mut::<Pot>(pot)
+                .unwrap()
+                .plant(CropType::Starter);
+        }
+        app.update();
+
+        let phases: Vec<usize> = (0..4)
+            .map(|index| {
+                let pot = pot_entity(&mut app, index);
+                let child = crop_child(&mut app, pot).unwrap();
+                app.world().get::<CropSprite>(child).unwrap().phase
+            })
+            .collect();
+        assert!(
+            phases.iter().any(|phase| *phase != phases[0]),
+            "some plants must start on different frames: {phases:?}"
+        );
+    }
+
+    #[test]
+    fn a_watered_crop_is_marked_soaked() {
+        let mut app = setup_farm_app();
+        enter_playing(&mut app);
+        let pot = pot_entity(&mut app, 0);
+        app.world_mut()
+            .get_mut::<Pot>(pot)
+            .unwrap()
+            .plant(CropType::CropA);
+        app.update();
+
+        let child = crop_child(&mut app, pot).unwrap();
+        assert!(
+            app.world().get::<CropSprite>(child).unwrap().watered,
+            "planting waters the crop, so it starts soaked"
+        );
+
+        // Next day it is planted but no longer watered until the player acts.
+        app.world_mut().get_mut::<Pot>(pot).unwrap().advance_day();
+        app.update();
+        assert!(
+            !app.world().get::<CropSprite>(child).unwrap().watered,
+            "the soaked tint clears once the day turns over"
+        );
+    }
+
     fn grow_pot_to_ready(app: &mut App, index: usize) -> Entity {
         let pot = pot_entity(app, index);
         let mut pots = app.world_mut().get_mut::<Pot>(pot).expect("pot entity");
@@ -917,6 +1300,7 @@ mod tests {
         let wet = Handle::<Image>::default();
         let assets = FarmAssets {
             quad: None,
+            crop_quad: None,
             dry: Some(dry.clone()),
             wet: Some(wet.clone()),
         };
@@ -930,6 +1314,7 @@ mod tests {
         let dry = Handle::<Image>::default();
         let assets = FarmAssets {
             quad: None,
+            crop_quad: None,
             dry: Some(dry.clone()),
             wet: None,
         };

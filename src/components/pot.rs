@@ -35,9 +35,9 @@ impl CropType {
 
     pub fn label(&self) -> &'static str {
         match self {
-            CropType::Starter => "Starter Crop",
-            CropType::CropA => "Crop A",
-            CropType::CropB => "Crop B",
+            CropType::Starter => "Quicksilver Reed",
+            CropType::CropA => "Cinder Cap",
+            CropType::CropB => "Tailings Potato",
         }
     }
 }

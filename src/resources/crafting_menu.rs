@@ -43,7 +43,7 @@ mod tests {
             selected: 3,
             ..default()
         };
-        menu.set_notice("Crafted Boss A Set");
+        menu.set_notice("Crafted Excavator Set");
         menu.close_menu();
         menu.open_menu();
 
@@ -57,7 +57,7 @@ mod tests {
         let mut menu = CraftingMenu::default();
         menu.open_menu();
         menu.selected = 5;
-        menu.set_notice("Missing: Crop B");
+        menu.set_notice("Missing: Tailings Potato");
         menu.close_menu();
 
         assert!(!menu.open);

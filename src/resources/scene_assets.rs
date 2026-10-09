@@ -3,8 +3,10 @@ use crate::components::boss_animation::{BossAnimState, BossPack};
 use crate::components::effect_sprite::EffectKind;
 use crate::components::gear::GearSet;
 use crate::components::player_sprite::{Facing8, PlayerAnimState, PlayerLook};
+use crate::components::pot::CropType;
 use crate::levels::LevelId;
 use crate::plugins::prop::PropArt;
+use crate::resources::farm::CropUnlocks;
 use crate::states::DayPhase;
 use bevy::asset::LoadState;
 use bevy::prelude::*;
@@ -69,7 +71,10 @@ impl LoadTarget {
     }
 
     /// Every sheet this scene needs, player look first then boss packs.
-    pub fn required_paths(self, armor: Option<GearSet>) -> Vec<String> {
+    ///
+    /// Only the crops the run has unlocked (nobody can plant the rest) are
+    /// preloaded, so a boss reward adds its crop art to the next farm load.
+    pub fn required_paths(self, armor: Option<GearSet>, unlocks: &CropUnlocks) -> Vec<String> {
         let mut paths = player_paths(self.player_look(armor));
         match self {
             LoadTarget::Farm => {
@@ -81,6 +86,14 @@ impl LoadTarget {
                 // Both farm props: the crafting station and the boss door.
                 paths.push(PropArt::CraftingStation.texture_path().to_string());
                 paths.push(PropArt::BossDoor.texture_path().to_string());
+                // Every growth stage of every crop the player can actually plant,
+                // so a plant never has to wait on a load as it matures. Locked
+                // crops load only once their boss is beaten.
+                for crop in CropType::ALL {
+                    if unlocks.is_unlocked(crop) {
+                        paths.extend(crop.sheet_paths());
+                    }
+                }
             }
             LoadTarget::BossSelect => {
                 // The menu is text-only, so a single idle frame per boss is
@@ -293,12 +306,24 @@ pub struct LoadingContext {
 mod tests {
     use super::*;
 
+    /// A run that has unlocked every crop.
+    fn all_unlocked() -> CropUnlocks {
+        let mut unlocks = CropUnlocks::new();
+        unlocks.unlock_crop_a();
+        unlocks.unlock_crop_b();
+        unlocks
+    }
+
     #[test]
     fn the_farm_loads_only_the_farmer() {
-        let paths = LoadTarget::Farm.required_paths(Some(GearSet::Master));
-        // 7 player clips * 8 facings + 4 tile images + 2 prop images
-        assert_eq!(paths.len(), 7 * Facing8::ALL.len() + 4 + 2);
-        // First 56 should be farmer spritesheets, then the tiles and props.
+        let paths = LoadTarget::Farm.required_paths(Some(GearSet::Master), &all_unlocked());
+        // 7 player clips * 8 facings + 4 tile images + 2 prop images + 9 crop sheets
+        let crop_sheets = CropType::Starter.sheet_paths().len()
+            + CropType::CropA.sheet_paths().len()
+            + CropType::CropB.sheet_paths().len();
+        assert_eq!(crop_sheets, 9, "2 reed + 3 cinder + 4 potato");
+        assert_eq!(paths.len(), 7 * Facing8::ALL.len() + 4 + 2 + crop_sheets);
+        // First 56 should be farmer spritesheets, then the tiles, props and crops.
         let farmer_paths: Vec<_> = paths.iter().take(56).collect();
         assert!(
             farmer_paths
@@ -306,7 +331,7 @@ mod tests {
                 .all(|path| path.starts_with("sprite_packs/Farmer-spritesheet/"))
         );
         let scene_paths: Vec<_> = paths.iter().skip(56).collect();
-        assert_eq!(scene_paths.len(), 6);
+        assert_eq!(scene_paths.len(), 6 + crop_sheets);
         assert!(scene_paths.iter().any(|p| p.contains("grass")));
         assert!(scene_paths.iter().any(|p| p.contains("dirt_dry")));
         assert!(scene_paths.iter().any(|p| p.contains("water")));
@@ -321,11 +346,39 @@ mod tests {
                 .iter()
                 .any(|p| p.contains("images/props/boss_door.png"))
         );
+        assert!(
+            scene_paths
+                .iter()
+                .any(|p| p.contains("sprite_packs/Plants/Cinder Cap Seedling/spritesheet.png")),
+            "the farm preloads crop art"
+        );
+    }
+
+    #[test]
+    fn the_farm_only_preloads_plantable_crops() {
+        // A fresh run can plant nothing but the starter reed.
+        let starter =
+            LoadTarget::Farm.required_paths(Some(GearSet::Master), &CropUnlocks::default());
+        assert!(starter.iter().any(|p| p.contains("Quicksilver Reed")));
+        assert!(!starter.iter().any(|p| p.contains("Cinder Cap")));
+        assert!(!starter.iter().any(|p| p.contains("Tailings Potato")));
+
+        // Beating boss A unlocks its crop, and only its sheets are added.
+        let mut unlocks = CropUnlocks::default();
+        unlocks.unlock_crop_a();
+        let with_a = LoadTarget::Farm.required_paths(Some(GearSet::Master), &unlocks);
+        assert!(with_a.iter().any(|p| p.contains("Cinder Cap")));
+        assert!(!with_a.iter().any(|p| p.contains("Tailings Potato")));
+        assert_eq!(
+            with_a.len(),
+            starter.len() + CropType::CropA.sheet_paths().len()
+        );
     }
 
     #[test]
     fn arenas_load_the_worn_armor_look_and_one_boss() {
-        let paths = LoadTarget::ArenaA.required_paths(Some(GearSet::BossA));
+        let paths =
+            LoadTarget::ArenaA.required_paths(Some(GearSet::BossA), &CropUnlocks::default());
         assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len() + 5);
         assert!(
             paths
@@ -354,7 +407,8 @@ mod tests {
 
     #[test]
     fn arena_b_loads_the_other_boss() {
-        let paths = LoadTarget::ArenaB.required_paths(Some(GearSet::BossB));
+        let paths =
+            LoadTarget::ArenaB.required_paths(Some(GearSet::BossB), &CropUnlocks::default());
         assert_eq!(paths.len(), (5 + 6) * Facing8::ALL.len() + 4);
         assert!(
             paths
@@ -375,7 +429,8 @@ mod tests {
 
     #[test]
     fn the_dual_arena_loads_both_bosses() {
-        let paths = LoadTarget::ArenaDual.required_paths(Some(GearSet::BossB));
+        let paths =
+            LoadTarget::ArenaDual.required_paths(Some(GearSet::BossB), &CropUnlocks::default());
         assert_eq!(paths.len(), (5 + 6 + 6) * Facing8::ALL.len() + 10);
         assert!(
             paths
@@ -397,7 +452,7 @@ mod tests {
 
     #[test]
     fn boss_select_preloads_the_farmer_and_one_idle_frame_per_boss() {
-        let paths = LoadTarget::BossSelect.required_paths(Some(GearSet::Master));
+        let paths = LoadTarget::BossSelect.required_paths(Some(GearSet::Master), &all_unlocked());
         assert_eq!(paths.len(), 7 * Facing8::ALL.len() + 2);
         assert!(
             paths
@@ -449,7 +504,7 @@ mod tests {
             LoadTarget::ArenaB,
             LoadTarget::ArenaDual,
         ] {
-            let paths = target.required_paths(Some(GearSet::BossA));
+            let paths = target.required_paths(Some(GearSet::BossA), &all_unlocked());
             let mut unique = paths.clone();
             unique.sort_unstable();
             unique.dedup();

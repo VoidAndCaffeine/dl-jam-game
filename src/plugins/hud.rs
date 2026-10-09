@@ -587,7 +587,7 @@ mod tests {
         assert_eq!(boss_group_visibility(&mut app), Visibility::Inherited);
         let (red, _) = bar_widths::<BossHealthBar>(&mut app);
         assert_eq!(red, Val::Percent(25.0), "dual halves share one pool");
-        assert_eq!(boss_name(&mut app), "Dual Boss");
+        assert_eq!(boss_name(&mut app), "The Excavator & Mercurial");
     }
 
     #[test]

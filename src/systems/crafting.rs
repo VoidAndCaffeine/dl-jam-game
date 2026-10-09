@@ -575,7 +575,7 @@ mod tests {
                 ]
             }
             .notice(),
-            "Missing: Crop B x2, Boss B Material 1 x1"
+            "Missing: Tailings Potato x2, Mercurial Spike x1"
         );
         assert_eq!(
             CraftOutcome::AlreadyOwned {
@@ -723,7 +723,7 @@ mod tests {
 
         assert!(gear(&app).owned.is_empty());
         assert!(crafted(&app).is_empty());
-        assert_eq!(menu(&app).notice, "Missing: Starter Crop x2");
+        assert_eq!(menu(&app).notice, "Missing: Quicksilver Reed x2");
     }
 
     #[test]

@@ -18,7 +18,7 @@ pub struct FarmState {
     pub pots: Vec<Pot>,
 }
 
-#[derive(Resource, Reflect, Serialize, Deserialize, Debug)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug)]
 pub struct CropUnlocks {
     pub starter: bool,
     pub crop_a: bool,
