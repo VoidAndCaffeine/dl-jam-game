@@ -27,9 +27,9 @@ impl CropType {
 
     pub fn growth_days(&self) -> u8 {
         match self {
-            CropType::Starter => 3,
-            CropType::CropA => 4,
-            CropType::CropB => 5,
+            CropType::Starter => 1,
+            CropType::CropA => 2,
+            CropType::CropB => 3,
         }
     }
 
@@ -132,7 +132,7 @@ mod tests {
         let mut pot = Pot::new(0);
         pot.plant(CropType::Starter);
         assert_eq!(pot.state, PotState::Watered);
-        assert_eq!(pot.days_remaining, 3);
+        assert_eq!(pot.days_remaining, 1);
         assert_eq!(pot.crop_type, CropType::Starter);
         assert!(pot.watered_today);
     }
@@ -141,20 +141,20 @@ mod tests {
     fn pot_plant_crop_a() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::CropA);
-        assert_eq!(pot.days_remaining, 4);
+        assert_eq!(pot.days_remaining, 2);
     }
 
     #[test]
     fn pot_plant_crop_b() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::CropB);
-        assert_eq!(pot.days_remaining, 5);
+        assert_eq!(pot.days_remaining, 3);
     }
 
     #[test]
     fn pot_water_works_once_per_day() {
         let mut pot = Pot::new(0);
-        pot.plant(CropType::Starter);
+        pot.plant(CropType::CropA); // 2-day crop for this test
         assert!(!pot.water(), "planting already watered the crop");
         assert_eq!(pot.state, PotState::Watered);
         assert!(pot.watered_today);
@@ -169,10 +169,10 @@ mod tests {
     #[test]
     fn pot_advance_day_decrements_timer() {
         let mut pot = Pot::new(0);
-        pot.plant(CropType::Starter);
+        pot.plant(CropType::CropA); // 2-day crop
         pot.water();
         pot.advance_day();
-        assert_eq!(pot.days_remaining, 2);
+        assert_eq!(pot.days_remaining, 1);
         assert_eq!(pot.state, PotState::Planted);
         assert!(!pot.watered_today);
     }
@@ -183,10 +183,6 @@ mod tests {
         pot.plant(CropType::Starter);
         pot.water();
         pot.advance_day();
-        pot.water();
-        pot.advance_day();
-        pot.water();
-        pot.advance_day();
         assert_eq!(pot.days_remaining, 0);
         assert_eq!(pot.state, PotState::Ready);
     }
@@ -195,10 +191,6 @@ mod tests {
     fn pot_harvest_returns_crop_and_resets() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::Starter);
-        pot.water();
-        pot.advance_day();
-        pot.water();
-        pot.advance_day();
         pot.water();
         pot.advance_day();
         let crop = pot.harvest();
@@ -213,14 +205,21 @@ mod tests {
         pot.plant(CropType::Starter);
         assert_eq!(pot.harvest(), None);
         pot.water();
-        assert_eq!(pot.harvest(), None);
+        // After planting and watering (1 day crop), it's not ready until advance_day
+        // But wait - with 1 day growth, planting already waters, so after planting
+        // it's at 1 day remaining, then advance_day makes it 0 (ready)
+        // Let's use a 2-day crop for this test
+        let mut pot2 = Pot::new(1);
+        pot2.plant(CropType::CropA);
+        pot2.water();
+        assert_eq!(pot2.harvest(), None);
     }
 
     #[test]
     fn crop_type_growth_days() {
-        assert_eq!(CropType::Starter.growth_days(), 3);
-        assert_eq!(CropType::CropA.growth_days(), 4);
-        assert_eq!(CropType::CropB.growth_days(), 5);
+        assert_eq!(CropType::Starter.growth_days(), 1);
+        assert_eq!(CropType::CropA.growth_days(), 2);
+        assert_eq!(CropType::CropB.growth_days(), 3);
     }
 
     #[test]
@@ -235,14 +234,12 @@ mod tests {
     fn pot_colors_match_states() {
         let mut pot = Pot::new(0);
         assert_eq!(pot.color(), Color::srgb(1.0, 0.2, 0.2));
-        pot.plant(CropType::Starter);
+        pot.plant(CropType::CropA); // Use 2-day crop for multi-day progression
         assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
         pot.advance_day();
         assert_eq!(pot.color(), Color::srgb(0.2, 1.0, 0.2));
         pot.water();
         assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
-        pot.advance_day();
-        pot.water();
         pot.advance_day();
         assert_eq!(pot.color(), Color::srgb(0.8, 0.2, 0.8));
     }

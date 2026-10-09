@@ -49,7 +49,14 @@ fn setup_app() -> App {
 }
 
 fn enter_playing(app: &mut App) {
+    // Boot settles into the title screen, then a new run begins.
     for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Playing);
+    for _ in 0..2 {
         app.update();
     }
 }

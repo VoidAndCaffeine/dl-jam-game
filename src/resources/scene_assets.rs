@@ -4,6 +4,7 @@ use crate::components::effect_sprite::EffectKind;
 use crate::components::gear::GearSet;
 use crate::components::player_sprite::{Facing8, PlayerAnimState, PlayerLook};
 use crate::levels::LevelId;
+use crate::plugins::prop::PropArt;
 use crate::states::DayPhase;
 use bevy::asset::LoadState;
 use bevy::prelude::*;
@@ -71,7 +72,16 @@ impl LoadTarget {
     pub fn required_paths(self, armor: Option<GearSet>) -> Vec<String> {
         let mut paths = player_paths(self.player_look(armor));
         match self {
-            LoadTarget::Farm => {}
+            LoadTarget::Farm => {
+                // Floor/wall tiles for the farm level (TileKind indices: Grass=0, Dirt=1, Water=2, Wall=3)
+                paths.push("images/tiles/grass.png".to_string());
+                paths.push("images/tiles/dirt_dry.png".to_string());
+                paths.push("images/tiles/water.png".to_string());
+                paths.push("images/tiles/wall.png".to_string());
+                // Both farm props: the crafting station and the boss door.
+                paths.push(PropArt::CraftingStation.texture_path().to_string());
+                paths.push(PropArt::BossDoor.texture_path().to_string());
+            }
             LoadTarget::BossSelect => {
                 // The menu is text-only, so a single idle frame per boss is
                 // enough to back a future portrait without holding both full
@@ -286,11 +296,30 @@ mod tests {
     #[test]
     fn the_farm_loads_only_the_farmer() {
         let paths = LoadTarget::Farm.required_paths(Some(GearSet::Master));
-        assert_eq!(paths.len(), 7 * Facing8::ALL.len());
+        // 7 player clips * 8 facings + 4 tile images + 2 prop images
+        assert_eq!(paths.len(), 7 * Facing8::ALL.len() + 4 + 2);
+        // First 56 should be farmer spritesheets, then the tiles and props.
+        let farmer_paths: Vec<_> = paths.iter().take(56).collect();
         assert!(
-            paths
+            farmer_paths
                 .iter()
                 .all(|path| path.starts_with("sprite_packs/Farmer-spritesheet/"))
+        );
+        let scene_paths: Vec<_> = paths.iter().skip(56).collect();
+        assert_eq!(scene_paths.len(), 6);
+        assert!(scene_paths.iter().any(|p| p.contains("grass")));
+        assert!(scene_paths.iter().any(|p| p.contains("dirt_dry")));
+        assert!(scene_paths.iter().any(|p| p.contains("water")));
+        assert!(scene_paths.iter().any(|p| p.contains("wall")));
+        assert!(
+            scene_paths
+                .iter()
+                .any(|p| p.contains("images/props/crafting_station.png"))
+        );
+        assert!(
+            scene_paths
+                .iter()
+                .any(|p| p.contains("images/props/boss_door.png"))
         );
     }
 

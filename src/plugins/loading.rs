@@ -101,14 +101,15 @@ fn armor_set(gear: &PlayerGear) -> Option<crate::components::gear::GearSet> {
     gear.armor.map(|piece| piece.set)
 }
 
-/// Boot is done when the farm's sheets have settled; then play begins.
+/// Boot is done when the farm's sheets have settled; then the title screen
+/// takes over. `New Game` moves on to `Playing` (the farm is already resident).
 fn poll_boot_load(
     manifest: Res<SceneAssetManifest>,
     server: Option<Res<AssetServer>>,
     mut next_game: ResMut<NextState<GameState>>,
 ) {
     if manifest.is_complete(server.as_deref()) {
-        next_game.set(GameState::Playing);
+        next_game.set(GameState::MainMenu);
     }
 }
 
@@ -271,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn boot_shows_a_loading_screen_then_enters_playing() {
+    fn boot_shows_a_loading_screen_then_enters_the_title_screen() {
         let mut app = setup_app();
         // The default GameState is LoadingAssets, so the first update enters it.
         app.update();
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(game_state(&app), GameState::LoadingAssets);
 
         settle(&mut app, 3);
-        assert_eq!(game_state(&app), GameState::Playing);
+        assert_eq!(game_state(&app), GameState::MainMenu);
         assert_eq!(roots(&mut app), 0, "the bar is torn down on entry");
     }
 
@@ -287,6 +288,13 @@ mod tests {
     fn an_in_game_target_resumes_its_phase() {
         let mut app = setup_app();
         settle(&mut app, 3);
+        assert_eq!(game_state(&app), GameState::MainMenu);
+
+        // Starting a run drops into Playing, where the day phases exist.
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.update();
         assert_eq!(game_state(&app), GameState::Playing);
 
         {

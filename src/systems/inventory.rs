@@ -121,9 +121,14 @@ pub fn toggle_inventory_panel(
     keys: Res<ButtonInput<KeyCode>>,
     mut panel: ResMut<InventoryPanel>,
     mut menu: ResMut<CraftingMenu>,
+    pause: Option<Res<crate::resources::pause::PauseMenu>>,
     phase: Phase,
 ) {
     if !phase.blocks_world() {
+        return;
+    }
+    // The pause overlay owns input while it is up.
+    if pause.as_ref().is_some_and(|pause| pause.open) {
         return;
     }
     if keys.just_pressed(KeyCode::KeyI) {

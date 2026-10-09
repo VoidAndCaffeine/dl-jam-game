@@ -5,6 +5,9 @@ use bevy::prelude::*;
 pub enum GameState {
     #[default]
     LoadingAssets,
+    /// The title screen, shown once the boot assets have settled. No world is
+    /// spawned here; `New Game` moves on to [`GameState::Playing`].
+    MainMenu,
     Playing,
     Victory,
 }

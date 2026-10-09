@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::plugins::{
     AudioPlugin, BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, HudPlugin, InteractionPlugin,
-    LevelPlugin, LoadingPlugin, UIPlugin,
+    LevelPlugin, LoadingPlugin, MainMenuPlugin, PausePlugin, PropPlugin, UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
@@ -39,7 +39,10 @@ impl Plugin for GamePlugin {
             .init_resource::<PlayerSpriteAssets>()
             .add_plugins(InteractionPlugin)
             .add_plugins(LoadingPlugin)
+            .add_plugins(MainMenuPlugin)
+            .add_plugins(PausePlugin)
             .add_plugins(LevelPlugin)
+            .add_plugins(PropPlugin)
             .add_plugins(FarmPlugin)
             .add_plugins(GearPlugin)
             .add_plugins(BossSelectPlugin)
@@ -111,7 +114,14 @@ mod tests {
     }
 
     fn enter_playing(app: &mut App) {
+        // Boot settles into the title screen, then a new run begins.
         for _ in 0..3 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        for _ in 0..2 {
             app.update();
         }
     }

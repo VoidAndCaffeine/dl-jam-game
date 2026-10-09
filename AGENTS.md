@@ -15,14 +15,18 @@
 ### App States (`bevy_state`)
 ```
 GameState::LoadingAssets            (boot: preload the farm behind a bar)
+    → GameState::MainMenu            (title screen: New Game; difficulty/load reserved)
     → GameState::Playing { day: u32, phase: DayPhase }
         → DayPhase::Farming         (plant, water, harvest, craft)
         → DayPhase::BossSelect      (choose Boss A / B / Dual)
         → DayPhase::BossFight       (combat)
         → DayPhase::Loading         (preload the next scene; stays in Playing)
         → DayPhase::Result          (victory/defeat screen → next day)
-    → GameState::Victory            (dual boss beaten)
+    → GameState::Victory            (dual boss beaten; Continue Playing / Main Menu)
 ```
+
+Pause is **not** a state: `PauseMenu` is a resource overlay that sits on top of
+any `Playing` phase and freezes the world by pausing `Time<Virtual>`.
 
 ### Plugins (modular)
 | Plugin | Responsibility |
@@ -33,9 +37,37 @@ GameState::LoadingAssets            (boot: preload the farm behind a bar)
 | `DayCyclePlugin` | Day/Night transitions, progression tracking |
 | `PersistencePlugin` | Save/Load architecture (stubbed early, implement late) |
 | `LevelPlugin` | Loads rooms from `levels/*.txt`, spawns tiles + props, owns `SolidGrid` |
-| `UIPlugin` | Crafting menu, inventory, boss select, crop select panels |
+| `MainMenuPlugin` | Title screen: `New Game` (resets the run), reserved difficulty/load slots |
+| `PausePlugin` | Pause overlay: Resume, Return to Main Menu, reserved difficulty slot |
+| `UIPlugin` | Forge, inventory, boss select and planting panels (presentation only) |
+| `ui_theme` | Shared menu widgets: skinnable buttons, panes, animated previews |
 | `HudPlugin` | Player/boss health bars, day counter, phase input hints |
 | `AudioPlugin` | Music/SFX management |
+
+### Menu system
+- Every menu button is a `ui_theme::MenuButton` styled from `MenuButtonVisuals`.
+  It resolves to an explicit `ButtonArt` path, then a per-button
+  `images/ui/buttons/<skin>_{normal,hovered,selected}.png` if that file exists,
+  then the shared `frame_*.png`. `build.rs` bakes the list of files that exist
+  into the binary, so a button with no custom art falls back quietly instead of
+  logging a missing path (same on native and wasm). **Adding art requires a
+  rebuild** (`cargo run` / `trunk`). The shared frame is a 9-slice with a 14px
+  inset and a 44px row height; author override art at the same inset.
+- Button skins: `new_game`, `difficulty`, `load_game`, `resume`,
+  `return_to_main_menu`, `continue_playing`, `boss_a`, `boss_b`, `dual_boss`,
+  `infinite_mode`, `starter_crop`, `crop_a`, `crop_b`. Gear and inventory rows
+  intentionally share the frame (their labels are dynamic).
+- Menus spawn/despawn from resource flags (`open`/`selected`) in their
+  `systems/*` module; `plugins/ui.rs` only lays out and refreshes the visuals.
+- Selection is a `MenuButtonSelected` flag; a single `style_menu_buttons` system
+  in `MenuStyleSet` paints background (hover) and border (selection). Refresh
+  systems run `.before(MenuStyleSet)` so a change lands the same frame.
+- Animated previews (`AnimatedPreview`) reuse the 5×5 player atlas in a UI
+  `ImageNode`; the forge alternates light/heavy swings for weapons and idles
+  armor, the planting pane shows the sapling placeholder. Boss select shows the
+  matching concept art (both halves for the dual boss).
+- Reserved slots (difficulty, load game, infinite mode) are spawned hidden so
+  they keep their layout room and can be revealed via `MenuFeatureFlags`.
 
 ### Resources (all `#[derive(Resource, Serialize, Deserialize, Reflect)]`)
 ```rust
@@ -174,6 +206,7 @@ assets/
 │   ├── gear/         # 4 sets × (weapon + armor) = 8 sprites
 │   ├── bosses/       # Boss A, Boss B, Dual (spritesheets)
 │   ├── ui/           # panels, buttons, icons, pot frames
+│   │   └── buttons/  # frame_normal/hovered/selected.png (9-slice, shared)
 │   └── tiles/        # floor, walls, arena
 ├── audio/
 │   ├── sfx/          # .ogg (plant, water, harvest, craft, hit, boss)
@@ -218,12 +251,14 @@ assets/
 | Open Crafting | Tab / C |
 | Open Inventory | I (toggle, works in every phase) |
 | Boss Select | Click UI |
-| Pause | Escape |
+| Pause | Escape (opens the pause overlay; Resume is auto-selected) |
 
 Panels are mutually exclusive and freeze movement + world interaction while open.
-Esc closes whichever panel is open. Interacting with an empty pot opens the
-`CropSelectMenu` picker (locked crops are shown dimmed with their unlock hint);
-the crop is planted only when the player confirms.
+Esc closes whichever panel is open; with none open it opens the pause overlay
+(`PausePlugin` claims Esc before the panel handlers so one press never both
+closes a panel and opens pause). Interacting with an empty pot opens the
+`CropSelectMenu` picker (locked crops are shown dimmed with their unlock hint
+and their harvest yield); the crop is planted only when the player confirms.
 
 ## 8. Persistence Architecture (Save/Load Ready)
 
@@ -280,11 +315,14 @@ src/
 │   ├── gear.rs
 │   ├── level.rs            # LevelPlugin — load rooms, spawn TilemapChunk + props
 │   ├── loading.rs          # LoadingPlugin — scene preload + progress bar
+│   ├── main_menu.rs        # MainMenuPlugin — title screen + New Game reset
+│   ├── pause.rs            # PausePlugin — overlay, virtual-time pause
 │   ├── boss.rs
 │   ├── day_cycle.rs
 │   ├── persistence.rs
-│   ├── ui.rs
-│   ├── hud.rs               # HudPlugin — player/boss health bars, day counter, input hints
+│   ├── ui.rs               # forge / inventory / boss select / planting panels
+│   ├── ui_theme.rs         # shared skinnable buttons, panes, animated previews
+│   ├── hud.rs              # HudPlugin — player/boss health bars, day counter, input hints
 │   └── audio.rs
 ├── components/
 │   ├── player.rs
@@ -296,6 +334,12 @@ src/
 │   ├── run_data.rs
 │   ├── inventory.rs
 │   ├── crop_select.rs      # CropSelectMenu — crop picker state + target pot
+│   ├── crafting_menu.rs    # CraftingMenu — forge state + notice
+│   ├── boss_select.rs      # BossSelectMenu — boss list + confirmation
+│   ├── inventory_panel.rs  # InventoryPanel — inventory state + notice
+│   ├── main_menu.rs        # MainMenu, MenuFeatureFlags, NewGameRequested
+│   ├── pause.rs            # PauseMenu — pause overlay state
+│   ├── menu_text.rs        # placeholder gear descriptions, crop yields, boss drops
 │   ├── scene_assets.rs     # LoadTarget + SceneAssetManifest + LoadingContext
 │   ├── level.rs            # ActiveLevel, LevelEntity, PlayerSpawn, BossSpawn, LevelRequest
 │   └── save_manager.rs

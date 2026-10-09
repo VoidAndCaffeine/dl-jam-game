@@ -2,6 +2,7 @@ use crate::components::boss::BossId;
 use crate::components::player::{Health, Player};
 use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
+use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::day_cycle::{DayCycle, Outcome};
 use crate::resources::drop_rng::DropRng;
@@ -20,6 +21,8 @@ impl Plugin for DayCyclePlugin {
         app.init_resource::<DayCycle>()
             .init_resource::<BossProgress>()
             .init_resource::<DropRng>()
+            .init_resource::<crate::plugins::ui_theme::MenuArt>()
+            .init_resource::<VictorySelection>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_systems(
@@ -33,7 +36,18 @@ impl Plugin for DayCyclePlugin {
                 OnExit(DayPhase::Result),
                 (despawn_result_screen, restore_player_health),
             )
-            .add_systems(Update, result_continue);
+            .add_systems(Update, result_continue)
+            .add_systems(
+                OnEnter(GameState::Victory),
+                (reset_victory_selection, spawn_victory_screen).chain(),
+            )
+            .add_systems(OnExit(GameState::Victory), despawn_victory_screen)
+            .add_systems(
+                Update,
+                (victory_keyboard, victory_click, refresh_victory_screen)
+                    .chain()
+                    .run_if(in_state(GameState::Victory)),
+            );
     }
 }
 
@@ -182,6 +196,198 @@ fn despawn_result_screen(mut commands: Commands, screens: Query<Entity, With<Res
     for entity in screens.iter() {
         commands.entity(entity).despawn();
     }
+}
+
+// --- Victory screen ----------------------------------------------------------
+
+/// The selection on the run-complete screen. `Continue Playing` is first and
+/// selected on entry.
+#[derive(Resource, Reflect, Default, Debug, Clone)]
+pub struct VictorySelection {
+    pub selected: usize,
+}
+
+#[derive(Component, Reflect, Debug, Default)]
+pub struct VictoryScreenRoot;
+
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VictoryAction {
+    ContinuePlaying,
+    ReturnToMainMenu,
+}
+
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct VictoryButton {
+    pub action: VictoryAction,
+    pub index: usize,
+}
+
+const VICTORY_CONTINUE: usize = 0;
+const VICTORY_MENU: usize = 1;
+
+fn spawn_victory_screen(
+    mut commands: Commands,
+    mut art: ResMut<MenuArt>,
+    server: Option<Res<AssetServer>>,
+) {
+    commands
+        .spawn((
+            Name::new("Victory Root"),
+            VictoryScreenRoot,
+            theme::screen_root_node(),
+            BackgroundColor(Color::srgba(0.03, 0.03, 0.05, 0.92)),
+            GlobalZIndex(450),
+        ))
+        .with_children(|screen| {
+            screen
+                .spawn((
+                    Name::new("Victory Panel"),
+                    Node {
+                        width: Val::Px(560.0),
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(12.0),
+                        padding: UiRect::all(Val::Px(26.0)),
+                        border: UiRect::all(Val::Px(2.0)),
+                        border_radius: BorderRadius::all(Val::Px(10.0)),
+                        ..default()
+                    },
+                    BackgroundColor(theme::PANEL_BG),
+                    BorderColor::all(theme::PANEL_BORDER),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Name::new("Title"),
+                        theme::label("VICTORY", 56.0, theme::TEXT_CRAFTABLE),
+                    ));
+                    panel.spawn((
+                        Name::new("Subtitle"),
+                        theme::label(
+                            "The dual horror is undone. The vines keep growing.",
+                            16.0,
+                            theme::TEXT_DIM,
+                        ),
+                    ));
+
+                    spawn_victory_button(
+                        &mut art,
+                        server.as_deref(),
+                        panel,
+                        VictoryAction::ContinuePlaying,
+                        VICTORY_CONTINUE,
+                        "Continue Playing",
+                    );
+                    spawn_victory_button(
+                        &mut art,
+                        server.as_deref(),
+                        panel,
+                        VictoryAction::ReturnToMainMenu,
+                        VICTORY_MENU,
+                        "Return to Main Menu",
+                    );
+
+                    panel.spawn((
+                        Name::new("Hint"),
+                        theme::label(
+                            "Arrows select   |   Enter / Space confirm",
+                            13.0,
+                            theme::TEXT_DIM,
+                        ),
+                    ));
+                });
+        });
+}
+
+fn spawn_victory_button(
+    art: &mut MenuArt,
+    server: Option<&AssetServer>,
+    parent: &mut ChildSpawnerCommands,
+    action: VictoryAction,
+    index: usize,
+    label: &str,
+) {
+    let skin = match action {
+        VictoryAction::ContinuePlaying => "continue_playing",
+        VictoryAction::ReturnToMainMenu => "return_to_main_menu",
+    };
+    let spec = ButtonSpec::new(index, label).label_size(22.0).skin(skin);
+    let visuals = art.resolve(&spec, server);
+    theme::spawn_menu_button(
+        parent,
+        spec,
+        visuals,
+        VictoryButton { action, index },
+        |_| {},
+    );
+}
+
+fn despawn_victory_screen(mut commands: Commands, roots: Query<Entity, With<VictoryScreenRoot>>) {
+    for entity in roots.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+fn victory_keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut selection: ResMut<VictorySelection>,
+    mut next_game: ResMut<NextState<GameState>>,
+    mut day_cycle: ResMut<DayCycle>,
+) {
+    let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
+    let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
+    if up {
+        selection.selected = selection.selected.saturating_sub(1);
+    } else if down {
+        selection.selected = (selection.selected + 1).min(VICTORY_MENU);
+    }
+
+    let confirm = keys.just_pressed(KeyCode::Enter)
+        || keys.just_pressed(KeyCode::Space)
+        || keys.just_pressed(KeyCode::KeyE);
+    if !confirm {
+        return;
+    }
+    if selection.selected == VICTORY_CONTINUE {
+        day_cycle.run_complete = false;
+        next_game.set(GameState::Playing);
+    } else {
+        next_game.set(GameState::MainMenu);
+    }
+}
+
+fn victory_click(
+    buttons: Query<(Entity, &VictoryButton), Changed<Interaction>>,
+    interactions: Query<&Interaction>,
+    mut selection: ResMut<VictorySelection>,
+    mut next_game: ResMut<NextState<GameState>>,
+    mut day_cycle: ResMut<DayCycle>,
+) {
+    for (entity, button) in buttons.iter() {
+        if interactions.get(entity) != Ok(&Interaction::Pressed) {
+            continue;
+        }
+        selection.selected = button.index;
+        match button.action {
+            VictoryAction::ContinuePlaying => {
+                day_cycle.run_complete = false;
+                next_game.set(GameState::Playing);
+            }
+            VictoryAction::ReturnToMainMenu => next_game.set(GameState::MainMenu),
+        }
+    }
+}
+
+fn refresh_victory_screen(
+    selection: Res<VictorySelection>,
+    mut buttons: Query<(&VictoryButton, &mut MenuButtonSelected)>,
+) {
+    for (button, mut selected) in buttons.iter_mut() {
+        selected.0 = button.index == selection.selected;
+    }
+}
+
+fn reset_victory_selection(mut selection: ResMut<VictorySelection>) {
+    selection.selected = VICTORY_CONTINUE;
 }
 
 #[cfg(test)]
@@ -465,6 +671,77 @@ mod tests {
                 .next()
                 .is_none(),
             "result screen is cleaned up on the way out"
+        );
+    }
+
+    fn enter_victory(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        app.update();
+        app.update();
+    }
+
+    fn victory_roots(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<Entity, With<VictoryScreenRoot>>()
+            .iter(app.world())
+            .count()
+    }
+
+    fn tap(app: &mut App, key: KeyCode) {
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release(key);
+            input.press(key);
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .clear_just_pressed(key);
+        app.update();
+    }
+
+    #[test]
+    fn the_victory_screen_spawns_with_continue_first() {
+        let mut app = setup_app();
+        enter_victory(&mut app);
+
+        assert_eq!(victory_roots(&mut app), 1);
+        assert_eq!(
+            app.world().resource::<VictorySelection>().selected,
+            0,
+            "continue playing is auto-selected"
+        );
+    }
+
+    #[test]
+    fn continue_playing_returns_to_the_farm_and_clears_run_complete() {
+        let mut app = setup_app();
+        enter_victory(&mut app);
+        app.world_mut().resource_mut::<DayCycle>().run_complete = true;
+
+        tap(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Playing
+        );
+        assert!(!app.world().resource::<DayCycle>().run_complete);
+        assert_eq!(victory_roots(&mut app), 0);
+    }
+
+    #[test]
+    fn return_to_main_menu_leaves_the_run() {
+        let mut app = setup_app();
+        enter_victory(&mut app);
+        app.world_mut().resource_mut::<VictorySelection>().selected = 1;
+
+        tap(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::MainMenu
         );
     }
 }

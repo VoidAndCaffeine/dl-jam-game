@@ -1,5 +1,6 @@
 use crate::components::player::{INTERACTION_RANGE, Player};
 use crate::events::InteractionEvent;
+use crate::materials::sprite_outline::SpriteOutlineMaterial;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::inventory_panel::InventoryPanel;
@@ -9,6 +10,7 @@ use crate::utils::interaction_math::{
 };
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
+use bevy::sprite_render::MeshMaterial2d;
 
 #[derive(Component, Reflect, Default, Debug)]
 pub struct Interactable;
@@ -56,10 +58,20 @@ pub struct OpenPanels<'w> {
     menu: Res<'w, CraftingMenu>,
     inventory: Res<'w, InventoryPanel>,
     crop_select: Res<'w, CropSelectMenu>,
+    pause: Option<Res<'w, crate::resources::pause::PauseMenu>>,
 }
 
 impl OpenPanels<'_> {
     pub fn any_open(&self) -> bool {
+        self.menu.open
+            || self.inventory.open
+            || self.crop_select.open
+            || self.pause.as_ref().is_some_and(|pause| pause.open)
+    }
+
+    /// True when a panel other than the pause overlay is open. Used so `Esc`
+    /// opens the pause menu only when nothing else has focus.
+    pub fn any_open_except_pause(&self) -> bool {
         self.menu.open || self.inventory.open || self.crop_select.open
     }
 }
@@ -208,53 +220,67 @@ fn mouse_raycast_interaction(
     }
 }
 
+/// Everything the highlight system reads to decide what to light up.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct HighlightLookups<'w, 's> {
+    player: Query<'w, 's, &'static Transform, With<Player>>,
+    interactables:
+        Query<'w, 's, (Entity, &'static Transform, Option<&'static Children>), With<Interactable>>,
+    pots: Query<'w, 's, &'static crate::components::pot::Pot>,
+    highlights: Query<'w, 's, &'static HighlightMarker>,
+    outlines: Query<'w, 's, &'static MeshMaterial2d<SpriteOutlineMaterial>>,
+    visibility: Query<'w, 's, &'static mut Visibility>,
+}
+
 fn highlight_interactables_in_range(
-    player_query: Query<&Transform, With<Player>>,
-    interactables: Query<(Entity, &Transform, &Children), With<Interactable>>,
-    pots: Query<&crate::components::pot::Pot>,
-    highlights: Query<&HighlightMarker>,
-    mut visibility: Query<&mut Visibility>,
+    mut lookups: HighlightLookups,
+    mut materials: Option<ResMut<Assets<SpriteOutlineMaterial>>>,
+    time: Res<Time>,
     panels: OpenPanels,
     phase: Phase,
 ) {
     if !phase.is_farming() {
         return;
     }
-    let Ok(player_transform) = player_query.single() else {
+    let Ok(player_transform) = lookups.player.single() else {
         return;
     };
     let player_pos = player_transform.translation.truncate();
 
-    for (entity, transform, children) in interactables.iter() {
+    for (entity, transform, children) in lookups.interactables.iter() {
         let distance = player_pos.distance(transform.translation.truncate());
 
         let hidden = panels.any_open()
-            || pots
+            || lookups
+                .pots
                 .get(entity)
                 .map(|p| p.state == crate::components::pot::PotState::Watered)
                 .unwrap_or(false);
-        if hidden {
-            // Still need to hide the highlight if it was previously visible
-            for child in children.iter() {
-                if highlights.get(child).is_ok() {
-                    if let Ok(mut vis) = visibility.get_mut(child) {
-                        *vis = Visibility::Hidden;
-                    }
-                    break;
-                }
-            }
+        let active = !hidden && distance <= INTERACTION_RANGE;
+
+        // Anything with the shared outline material — pot mounds and the farm
+        // props alike — lights up by drawing an outline around its silhouette.
+        if let (Some(materials), Ok(handle)) =
+            (materials.as_deref_mut(), lookups.outlines.get(entity))
+            && let Some(mut material) = materials.get_mut(handle)
+        {
+            material.params.highlight = if active { 1.0 } else { 0.0 };
+            material.params.time = time.elapsed_secs();
             continue;
         }
 
-        // Find the highlight child
+        // Everything else keeps the simple highlight child.
+        let Some(children) = children else {
+            continue;
+        };
         for child in children.iter() {
-            if highlights.get(child).is_ok() {
-                if let Ok(mut vis) = visibility.get_mut(child) {
-                    if distance <= INTERACTION_RANGE {
-                        *vis = Visibility::Visible;
+            if lookups.highlights.get(child).is_ok() {
+                if let Ok(mut vis) = lookups.visibility.get_mut(child) {
+                    *vis = if active {
+                        Visibility::Visible
                     } else {
-                        *vis = Visibility::Hidden;
-                    }
+                        Visibility::Hidden
+                    };
                 }
                 break;
             }
@@ -266,6 +292,7 @@ fn highlight_interactables_in_range(
 mod tests {
     use super::*;
     use crate::events::InteractionType;
+    use crate::materials::sprite_outline::SpriteOutlineParams;
     use crate::states::{DayPhase, GameState};
     use bevy::ecs::message::MessageReader;
     use bevy::state::app::StatesPlugin;
@@ -703,5 +730,147 @@ mod tests {
     fn interactable_default() {
         let interactable = Interactable;
         let _ = interactable;
+    }
+
+    fn setup_mound_highlight_app() -> App {
+        let mut app = App::new();
+        app.init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<CraftingMenu>()
+            .init_resource::<InventoryPanel>()
+            .init_resource::<CropSelectMenu>()
+            .init_resource::<Assets<SpriteOutlineMaterial>>()
+            .add_plugins((MinimalPlugins, TransformPlugin, StatesPlugin))
+            .init_state::<GameState>()
+            .init_state::<DayPhase>()
+            .add_message::<InteractionEvent>()
+            .add_systems(Update, highlight_interactables_in_range);
+
+        app.world_mut()
+            .spawn((Player, Transform::from_xyz(0.0, 0.0, 1.0)));
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.world_mut()
+            .resource_mut::<NextState<DayPhase>>()
+            .set(DayPhase::Farming);
+
+        app.update();
+        app
+    }
+
+    /// Spawns a mound-style interactable that carries its own material rather
+    /// than a highlight child, and returns that material.
+    fn spawn_mound(
+        app: &mut App,
+        pos: Vec2,
+        state: crate::components::pot::PotState,
+    ) -> Handle<SpriteOutlineMaterial> {
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<SpriteOutlineMaterial>>()
+            .add(SpriteOutlineMaterial::new(
+                Handle::default(),
+                SpriteOutlineParams::new(64.0),
+            ));
+        let mut pot = crate::components::pot::Pot::new(0);
+        pot.state = state;
+        app.world_mut().spawn((
+            Interactable,
+            FarmPot,
+            pot,
+            Transform::from_xyz(pos.x, pos.y, 0.0),
+            MeshMaterial2d(material.clone()),
+        ));
+        material
+    }
+
+    fn highlight_of_material(app: &App, material: &Handle<SpriteOutlineMaterial>) -> f32 {
+        app.world()
+            .resource::<Assets<SpriteOutlineMaterial>>()
+            .get(material)
+            .expect("the mound material exists")
+            .params
+            .highlight
+    }
+
+    #[test]
+    fn a_mound_material_lights_its_outline_when_the_player_is_in_range() {
+        let mut app = setup_mound_highlight_app();
+        let material = spawn_mound(
+            &mut app,
+            Vec2::new(10.0, 0.0),
+            crate::components::pot::PotState::Empty,
+        );
+        app.update();
+
+        assert_eq!(highlight_of_material(&app, &material), 1.0);
+    }
+
+    #[test]
+    fn a_mound_material_goes_dark_when_the_player_is_out_of_range() {
+        let mut app = setup_mound_highlight_app();
+        let material = spawn_mound(
+            &mut app,
+            Vec2::new(1000.0, 0.0),
+            crate::components::pot::PotState::Empty,
+        );
+        app.update();
+
+        assert_eq!(highlight_of_material(&app, &material), 0.0);
+    }
+
+    #[test]
+    fn a_watered_mound_never_lights_its_outline() {
+        let mut app = setup_mound_highlight_app();
+        let material = spawn_mound(
+            &mut app,
+            Vec2::new(10.0, 0.0),
+            crate::components::pot::PotState::Watered,
+        );
+        app.update();
+
+        assert_eq!(
+            highlight_of_material(&app, &material),
+            0.0,
+            "watered soil is not interactable until the next day"
+        );
+    }
+
+    /// Spawns a farm prop (crafting station / boss door) carrying the shared
+    /// outline material, and returns that material.
+    fn spawn_prop(app: &mut App, pos: Vec2) -> Handle<SpriteOutlineMaterial> {
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<SpriteOutlineMaterial>>()
+            .add(SpriteOutlineMaterial::new(
+                Handle::default(),
+                SpriteOutlineParams::new(crate::plugins::prop::PROP_TEX_SIZE as f32),
+            ));
+        app.world_mut().spawn((
+            Interactable,
+            CraftingStation,
+            Transform::from_xyz(pos.x, pos.y, 0.0),
+            MeshMaterial2d(material.clone()),
+        ));
+        material
+    }
+
+    #[test]
+    fn a_prop_lights_its_outline_when_the_player_is_in_range() {
+        let mut app = setup_mound_highlight_app();
+        let material = spawn_prop(&mut app, Vec2::new(10.0, 0.0));
+        app.update();
+
+        assert_eq!(highlight_of_material(&app, &material), 1.0);
+    }
+
+    #[test]
+    fn a_prop_goes_dark_when_the_player_is_out_of_range() {
+        let mut app = setup_mound_highlight_app();
+        let material = spawn_prop(&mut app, Vec2::new(1000.0, 0.0));
+        app.update();
+
+        assert_eq!(highlight_of_material(&app, &material), 0.0);
     }
 }

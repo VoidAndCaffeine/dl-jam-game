@@ -4,14 +4,15 @@ use crate::levels::grid::SolidGrid;
 use crate::levels::{LevelId, PropKind, TileKind};
 use crate::plugins::farm::spawn_pot;
 use crate::plugins::gear::spawn_crafting_station;
-use crate::plugins::interaction::{BossArenaEntry, HIGHLIGHT_Z, HighlightMarker, Interactable};
+use crate::plugins::interaction::{BossArenaEntry, Interactable};
+use crate::plugins::prop::PropArt;
 use crate::resources::farm::FarmState;
 use crate::resources::level::{
     ActiveLevel, BossSpawn, LevelEntity, LevelRequest, LevelSet, PlayerSpawn, build_level,
     prop_position, prop_positions,
 };
 use crate::states::{DayPhase, GameState};
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetServer, RenderAssetUsages};
 use bevy::ecs::system::SystemParam;
 use bevy::image::{Image, ImageSampler};
 use bevy::prelude::*;
@@ -20,11 +21,21 @@ use bevy::sprite_render::{TileData, TilemapChunk, TilemapChunkMeshCache, Tilemap
 
 pub const ARENA_GATE_SIZE: f32 = 64.0;
 
+/// Holds the loaded tile images and the built array texture tileset.
+#[derive(Resource, Default)]
+struct TileAssets {
+    /// Handles to the 4 tile images in TileKind order: Grass=0, Dirt=1, Water=2, Wall=3
+    handles: [Option<Handle<Image>>; 4],
+    /// The built array texture (32x32x4 layers) once all images are loaded
+    tileset: Option<Handle<Image>>,
+}
+
 /// World sprites and their highlight children sit at z = 0 and z = -0.1, so the
 /// room's tiles have to be well behind both or they cover the highlights.
 pub const FLOOR_Z: f32 = -10.0;
 
 const TILE_ART_SIZE: u32 = 32;
+#[allow(dead_code)]
 const MIN_TILE_LAYERS: usize = 2;
 
 pub struct LevelPlugin;
@@ -38,10 +49,13 @@ impl Plugin for LevelPlugin {
             .init_resource::<LevelRequest>()
             .init_resource::<FarmState>()
             .init_resource::<BuiltTiles>()
+            .init_resource::<TileAssets>()
             .configure_sets(Update, (LevelSet::Load, LevelSet::TileChunk).chain())
             .add_systems(
                 OnEnter(GameState::Playing),
-                enter_level.in_set(LevelSet::Load),
+                (enter_level, grab_tile_handles)
+                    .chain()
+                    .in_set(LevelSet::Load),
             )
             .add_systems(OnExit(GameState::Playing), despawn_all_levels)
             .add_systems(
@@ -51,6 +65,7 @@ impl Plugin for LevelPlugin {
                     .run_if(in_state(GameState::Playing))
                     .run_if(not_scene_loading),
             )
+            .add_systems(Update, build_tileset.in_set(LevelSet::TileChunk))
             .add_systems(Update, sync_tilemap_chunk.in_set(LevelSet::TileChunk));
     }
 }
@@ -60,6 +75,124 @@ impl Plugin for LevelPlugin {
 /// optional so it is valid during the boot `LoadingAssets` state.
 fn not_scene_loading(day: Option<Res<State<DayPhase>>>) -> bool {
     !day.is_some_and(|state| state.get() == &DayPhase::Loading)
+}
+
+/// Grabs the handles for the 4 tile images once the farm scene is loading.
+/// Runs once on entering Playing state.
+fn grab_tile_handles(
+    mut tile_assets: ResMut<TileAssets>,
+    server: Option<Res<AssetServer>>,
+    images: Option<Res<Assets<Image>>>,
+) {
+    // Skip in headless tests (no asset server or image assets)
+    if server.is_none() || images.is_none() {
+        return;
+    }
+
+    // Load the 4 tile images in TileKind order: Grass=0, Dirt=1, Water=2, Wall=3
+    let server = server.unwrap();
+    tile_assets.handles[0] = Some(server.load("images/tiles/grass.png"));
+    tile_assets.handles[1] = Some(server.load("images/tiles/dirt_dry.png"));
+    tile_assets.handles[2] = Some(server.load("images/tiles/water.png"));
+    tile_assets.handles[3] = Some(server.load("images/tiles/wall.png"));
+}
+
+/// Builds the array texture tileset from the 4 loaded tile images.
+/// Runs in TileChunk set after all 4 images are loaded.
+fn build_tileset(
+    mut tile_assets: ResMut<TileAssets>,
+    server: Option<Res<AssetServer>>,
+    mut images: Option<ResMut<Assets<Image>>>,
+) {
+    // Skip if already built or missing render resources (headless tests)
+    if tile_assets.tileset.is_some() || server.is_none() || images.is_none() {
+        return;
+    }
+
+    // Check if all 4 images are loaded
+    let server = server.unwrap();
+    let all_loaded = tile_assets.handles.iter().all(|handle| {
+        handle.as_ref().is_some_and(|h| {
+            matches!(
+                server.get_load_state(h.id()),
+                Some(bevy::asset::LoadState::Loaded)
+            )
+        })
+    });
+
+    if !all_loaded {
+        return;
+    }
+
+    // Build the array texture from the 4 images
+    let tileset = build_tileset_from_images(&tile_assets.handles, images.as_mut().unwrap());
+    tile_assets.tileset = Some(tileset);
+}
+
+/// Builds a 32x32x4 array texture from the 4 loaded tile images.
+fn build_tileset_from_images(
+    handles: &[Option<Handle<Image>>; 4],
+    images: &mut Assets<Image>,
+) -> Handle<Image> {
+    let mut layer_data = Vec::new();
+
+    for handle_opt in handles.iter() {
+        let handle = handle_opt.as_ref().expect("handle should exist");
+        let image = images.get(handle).expect("image should be loaded");
+
+        // Resize to 32x32 if needed
+        let resized = resize_image_to_tile_size(image);
+
+        // Convert to RGBA8
+        let rgba = resized.to_rgba8();
+        layer_data.push(rgba);
+    }
+
+    // Ensure we have exactly 4 layers
+    assert_eq!(layer_data.len(), 4, "expected 4 tile layers");
+
+    let pixels = (TILE_ART_SIZE * TILE_ART_SIZE) as usize;
+    let mut data = Vec::with_capacity(pixels * 4 * 4);
+
+    for layer in layer_data.iter() {
+        for pixel in layer.pixels() {
+            data.extend_from_slice(&pixel.0);
+        }
+    }
+
+    let mut tileset_image = Image::new(
+        Extent3d {
+            width: TILE_ART_SIZE,
+            height: TILE_ART_SIZE,
+            depth_or_array_layers: 4,
+        },
+        TextureDimension::D2,
+        data,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    tileset_image.sampler = ImageSampler::nearest();
+    images.add(tileset_image)
+}
+
+/// Resizes an image to 32x32 using the image crate.
+fn resize_image_to_tile_size(image: &Image) -> image::DynamicImage {
+    // Convert Bevy image to image crate format - always use RGBA
+    let width = image.width();
+    let height = image.height();
+
+    let data = image.data.as_ref().expect("image data should exist");
+    let rgba =
+        image::ImageBuffer::<image::Rgba<u8>, Vec<u8>>::from_raw(width, height, data.clone())
+            .expect("valid rgba data");
+    let dynamic = image::DynamicImage::ImageRgba8(rgba);
+
+    // Resize to 32x32 using Lanczos3 for quality
+    dynamic.resize_exact(
+        TILE_ART_SIZE,
+        TILE_ART_SIZE,
+        image::imageops::FilterType::Lanczos3,
+    )
 }
 
 /// Loads the farm when play starts.
@@ -151,7 +284,7 @@ fn swap_level(
     let mut spawned: Vec<Entity> = Vec::new();
 
     for (index, position) in pots.into_iter().enumerate() {
-        let entity = spawn_pot(commands, index, position);
+        let entity = spawn_pot(commands, index, position, Some(tag));
         if let Some(saved) = farm.pots.get(index) {
             commands.entity(entity).insert(*saved);
         }
@@ -198,36 +331,24 @@ impl Movers<'_, '_> {
     }
 }
 
+/// Spawns the boss door at a world position. The position comes from the level's
+/// `x` marker.
+///
+/// Only the gameplay components are attached here; [`crate::plugins::prop::PropPlugin`]
+/// draws the door's art and interaction outline once the renderer is up.
 fn spawn_arena_gate(commands: &mut Commands, position: Vec2) -> Entity {
     commands
         .spawn((
             Interactable::new(),
             BossArenaEntry,
+            PropArt::BossDoor,
             Collider {
                 size: Vec2::splat(ARENA_GATE_SIZE),
                 is_solid: true,
             },
-            Sprite {
-                color: Color::srgb(0.55, 0.25, 0.75),
-                custom_size: Some(Vec2::splat(ARENA_GATE_SIZE)),
-                ..default()
-            },
             Transform::from_xyz(position.x, position.y, 0.0),
-            Name::new("Arena Gate"),
+            Name::new("Boss Door"),
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                HighlightMarker,
-                Sprite {
-                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
-                    custom_size: Some(Vec2::splat(ARENA_GATE_SIZE * 1.15)),
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, HIGHLIGHT_Z),
-                Visibility::Hidden,
-                Name::new("Highlight"),
-            ));
-        })
         .id()
 }
 
@@ -239,13 +360,15 @@ pub struct BuiltTiles {
 
 /// Draws the room's tiles as a single chunk. Needs the render world, so it does
 /// nothing in headless tests that run without a renderer.
+#[allow(clippy::too_many_arguments)]
 fn sync_tilemap_chunk(
     mut commands: Commands,
     active: Res<ActiveLevel>,
     grid: Res<SolidGrid>,
     mut built: ResMut<BuiltTiles>,
+    tile_assets: Res<TileAssets>,
     cache: Option<Res<TilemapChunkMeshCache>>,
-    mut images: Option<ResMut<Assets<Image>>>,
+    images: Option<ResMut<Assets<Image>>>,
     existing: Query<Entity, With<TileChunkMarker>>,
 ) {
     if cache.is_none() || images.is_none() {
@@ -256,6 +379,11 @@ fn sync_tilemap_chunk(
     if active.def.width == 0 || active.def.height == 0 {
         return;
     }
+    // Wait for the real tileset to be built
+    let tileset = match &tile_assets.tileset {
+        Some(h) => h.clone(),
+        None => return, // not ready yet
+    };
     if built.level == Some(active.id) && existing.iter().next().is_some() {
         return;
     }
@@ -273,7 +401,7 @@ fn sync_tilemap_chunk(
         TilemapChunk {
             chunk_size: UVec2::new(def.width, def.height),
             tile_display_size: UVec2::splat(grid.tile_size() as u32),
-            tileset: placeholder_tileset(images.as_mut().unwrap()),
+            tileset,
             ..default()
         },
         TilemapChunkTileData(tile_data),
@@ -316,6 +444,7 @@ pub fn level_tile_data(def: &crate::utils::level_parse::LevelDef) -> Vec<Option<
 ///
 /// Bevy samples the tileset as a 2D array with one layer per `TileKind`, so the
 /// layers must line up with `TileKind::tileset_index`.
+#[allow(dead_code)]
 fn placeholder_tileset(images: &mut Assets<Image>) -> Handle<Image> {
     let colors: Vec<[u8; 4]> = TileKind::ALL
         .iter()
@@ -325,6 +454,7 @@ fn placeholder_tileset(images: &mut Assets<Image>) -> Handle<Image> {
     placeholder_tileset_from_colors(images, &colors)
 }
 
+#[allow(dead_code)]
 fn placeholder_color(kind: TileKind) -> [u8; 4] {
     match kind {
         TileKind::Void => [0, 0, 0, 0],
@@ -335,6 +465,7 @@ fn placeholder_color(kind: TileKind) -> [u8; 4] {
     }
 }
 
+#[allow(dead_code)]
 fn placeholder_tileset_from_colors(
     images: &mut Assets<Image>,
     colors: &[[u8; 4]],

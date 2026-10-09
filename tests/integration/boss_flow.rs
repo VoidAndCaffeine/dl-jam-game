@@ -15,7 +15,7 @@ use dl_jam::resources::farm::CropUnlocks;
 use dl_jam::resources::level::ActiveLevel;
 use dl_jam::resources::player_attack_state::PlayerAttackState;
 use dl_jam::resources::player_status::PlayerStatus;
-use dl_jam::states::DayPhase;
+use dl_jam::states::{DayPhase, GameState};
 
 fn setup_app() -> App {
     let mut app = App::new();
@@ -29,7 +29,14 @@ fn setup_app() -> App {
 }
 
 fn enter_playing(app: &mut App) {
+    // Boot settles into the title screen, then a new run begins.
     for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Playing);
+    for _ in 0..2 {
         app.update();
     }
 }

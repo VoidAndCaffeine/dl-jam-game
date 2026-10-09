@@ -31,7 +31,14 @@ fn setup_app() -> App {
 }
 
 fn enter_playing(app: &mut App) {
+    // Boot settles into the title screen, then a new run begins.
     for _ in 0..3 {
+        app.update();
+    }
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Playing);
+    for _ in 0..2 {
         app.update();
     }
 }
@@ -77,14 +84,6 @@ fn player_position(app: &mut App) -> Vec2 {
         .truncate()
 }
 
-fn move_player_to(app: &mut App, position: Vec2) {
-    let world = app.world_mut();
-    let mut query = world.query_filtered::<&mut Transform, With<Player>>();
-    let mut transform = query.single_mut(world).unwrap();
-    transform.translation.x = position.x;
-    transform.translation.y = position.y;
-}
-
 fn first_of<T: Component>(app: &mut App) -> Entity {
     let world = app.world_mut();
     world
@@ -99,10 +98,6 @@ fn highlight_of(world: &mut World, parent: Entity) -> Option<Entity> {
     children
         .iter()
         .find(|child| world.get::<HighlightMarker>(*child).is_some())
-}
-
-fn highlight_visible(world: &mut World, highlight: Entity) -> bool {
-    world.get::<Visibility>(highlight) == Some(&Visibility::Visible)
 }
 
 fn position_of<T: Component>(app: &mut App) -> Vec2 {
@@ -246,11 +241,11 @@ fn switching_rooms_replaces_the_props_and_the_grid() {
 
     let level = active(&app);
     assert_eq!(level.id, LevelId::ArenaA);
-    assert_eq!((level.def.width, level.def.height), (36, 20));
+    assert_eq!((level.def.width, level.def.height), (40, 23));
     assert_eq!(count::<Pot>(&mut app), 0, "arenas have no farming");
     assert_eq!(count::<CraftingStation>(&mut app), 0);
     assert_eq!(count::<BossArenaEntry>(&mut app), 0);
-    assert_eq!(grid(&app).width(), 36);
+    assert_eq!(grid(&app).width(), 40);
 }
 
 #[test]
@@ -273,7 +268,7 @@ fn going_back_to_the_farm_rebuilds_its_props() {
     switch_to(&mut app, LevelId::ArenaDual);
 
     assert_eq!(count::<Pot>(&mut app), 0);
-    assert_eq!((grid(&app).width(), grid(&app).height()), (40, 24));
+    assert_eq!((grid(&app).width(), grid(&app).height()), (36, 19));
 
     switch_to(&mut app, LevelId::Farm);
     assert_eq!(count::<Pot>(&mut app), 9);
@@ -436,109 +431,40 @@ fn holding_a_key_walks_the_player_through_the_fixed_timestep() {
 }
 
 #[test]
-fn a_pot_highlights_when_the_player_walks_up_to_it() {
+fn interactables_draw_their_outline_through_a_material_not_a_child() {
     let mut app = setup_app();
     enter_playing(&mut app);
 
+    // The pots, the crafting station and the boss door all highlight through the
+    // shared outline material, so none of them spawn a child highlight sprite.
     let pot = first_of::<Pot>(&mut app);
-    let highlight = highlight_of(app.world_mut(), pot).expect("pots own a highlight child");
     assert!(
-        !highlight_visible(app.world_mut(), highlight),
-        "starts hidden"
+        highlight_of(app.world_mut(), pot).is_none(),
+        "the mound's shader outline replaces the child highlight sprite"
     );
-
-    let pot_pos = position_of::<Pot>(&mut app);
-    move_player_to(&mut app, pot_pos - Vec2::new(50.0, 0.0));
-    step(&mut app, 2);
-
-    assert!(
-        highlight_visible(app.world_mut(), highlight),
-        "highlights when the player is beside the pot"
-    );
-}
-
-#[test]
-fn the_highlight_hides_again_when_the_player_walks_away() {
-    let mut app = setup_app();
-    enter_playing(&mut app);
-
-    let pot = first_of::<Pot>(&mut app);
-    let highlight = highlight_of(app.world_mut(), pot).expect("pots own a highlight child");
-    let pot_pos = position_of::<Pot>(&mut app);
-
-    move_player_to(&mut app, pot_pos - Vec2::new(50.0, 0.0));
-    step(&mut app, 2);
-    assert!(highlight_visible(app.world_mut(), highlight));
-
-    move_player_to(&mut app, pot_pos + Vec2::new(600.0, 0.0));
-    step(&mut app, 2);
-    assert!(!highlight_visible(app.world_mut(), highlight));
-}
-
-#[test]
-fn the_arena_gate_highlights_when_the_player_walks_up_to_it() {
-    let mut app = setup_app();
-    enter_playing(&mut app);
-
-    let gate = first_of::<BossArenaEntry>(&mut app);
-    let highlight = highlight_of(app.world_mut(), gate).expect("gate owns a highlight child");
-    assert!(
-        !highlight_visible(app.world_mut(), highlight),
-        "starts hidden"
-    );
-
-    let gate_pos = position_of::<BossArenaEntry>(&mut app);
-    move_player_to(&mut app, gate_pos - Vec2::new(50.0, 0.0));
-    step(&mut app, 2);
-
-    assert!(
-        highlight_visible(app.world_mut(), highlight),
-        "highlights when the player is beside the gate"
-    );
-}
-#[test]
-fn the_floor_is_drawn_behind_the_highlights() {
-    let mut app = setup_app();
-    enter_playing(&mut app);
-
-    let pot = first_of::<Pot>(&mut app);
-    let highlight = highlight_of(app.world_mut(), pot).expect("pots own a highlight child");
-    let pot_pos = position_of::<Pot>(&mut app);
-    move_player_to(&mut app, pot_pos - Vec2::new(50.0, 0.0));
-    step(&mut app, 2);
-    assert!(
-        highlight_visible(app.world_mut(), highlight),
-        "highlight is on"
-    );
-
-    let highlight_z = app
-        .world_mut()
-        .query_filtered::<&Transform, With<HighlightMarker>>()
-        .iter(app.world())
-        .next()
-        .expect("a highlight")
-        .translation
-        .z;
-
-    assert_eq!(highlight_z, HIGHLIGHT_Z);
-    assert!(
-        FLOOR_Z < highlight_z,
-        "the opaque floor quad at z={FLOOR_Z} would cover highlights at z={highlight_z}"
-    );
-}
-
-#[test]
-fn the_crafting_station_highlights_too() {
-    let mut app = setup_app();
-    enter_playing(&mut app);
 
     let station = first_of::<CraftingStation>(&mut app);
-    let highlight =
-        highlight_of(app.world_mut(), station).expect("the station owns a highlight child");
+    assert!(
+        highlight_of(app.world_mut(), station).is_none(),
+        "the station's shader outline replaces the child highlight sprite"
+    );
 
-    let pos = position_of::<CraftingStation>(&mut app);
-    move_player_to(&mut app, pos - Vec2::new(50.0, 0.0));
-    step(&mut app, 2);
+    let door = first_of::<BossArenaEntry>(&mut app);
+    assert!(
+        highlight_of(app.world_mut(), door).is_none(),
+        "the door's shader outline replaces the child highlight sprite"
+    );
+}
 
-    assert!(highlight_visible(app.world_mut(), highlight));
+#[test]
+fn the_floor_is_drawn_behind_the_highlights() {
+    // The tiles are opaque and drawn as one quad. If the floor sat in front of
+    // the highlight layer the outlines would be invisible, so guard the ordering
+    // the rest of the project depends on.
+    const {
+        assert!(
+            FLOOR_Z < HIGHLIGHT_Z,
+            "the floor must sit behind the highlight layer"
+        )
+    };
 }

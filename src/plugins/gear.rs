@@ -1,5 +1,6 @@
 use crate::components::collider::Collider;
-use crate::plugins::interaction::{CraftingStation, HighlightMarker, Interactable};
+use crate::plugins::interaction::{CraftingStation, Interactable};
+use crate::plugins::prop::PropArt;
 use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
 use crate::systems::crafting::{
@@ -36,36 +37,22 @@ impl Plugin for GearPlugin {
 
 /// Spawns the crafting station at a world position. The position comes from the
 /// level's `s` marker.
+///
+/// Only the gameplay components are attached here; [`crate::plugins::prop::PropPlugin`]
+/// draws the station's art and interaction outline once the renderer is up.
 pub fn spawn_crafting_station(commands: &mut Commands, position: Vec2) -> Entity {
     commands
         .spawn((
             Interactable::new(),
             CraftingStation,
+            PropArt::CraftingStation,
             Collider {
                 size: Vec2::splat(CRAFTING_STATION_SIZE),
                 is_solid: true,
             },
-            Sprite {
-                color: Color::BLACK,
-                custom_size: Some(Vec2::splat(CRAFTING_STATION_SIZE)),
-                ..default()
-            },
             Transform::from_xyz(position.x, position.y, 0.0),
             Name::new("Crafting Station"),
         ))
-        .with_children(|parent| {
-            parent.spawn((
-                HighlightMarker,
-                Sprite {
-                    color: Color::srgba(1.0, 1.0, 0.0, 0.5),
-                    custom_size: Some(Vec2::splat(CRAFTING_STATION_SIZE * 1.15)),
-                    ..default()
-                },
-                Transform::from_xyz(0.0, 0.0, crate::plugins::interaction::HIGHLIGHT_Z),
-                Visibility::Hidden,
-                Name::new("Highlight"),
-            ));
-        })
         .id()
 }
 
@@ -196,6 +183,11 @@ mod tests {
         let entity = station_entity(&mut app);
 
         assert!(app.world().get::<Interactable>(entity).is_some());
+        assert!(app.world().get::<CraftingStation>(entity).is_some());
+        assert_eq!(
+            app.world().get::<PropArt>(entity),
+            Some(&PropArt::CraftingStation)
+        );
 
         let collider = app
             .world()
@@ -203,13 +195,6 @@ mod tests {
             .expect("Station must have a collider");
         assert!(collider.is_solid);
         assert_eq!(collider.size, Vec2::splat(CRAFTING_STATION_SIZE));
-
-        let sprite = app
-            .world()
-            .get::<Sprite>(entity)
-            .expect("Station needs a sprite");
-        assert_eq!(sprite.color, Color::BLACK);
-        assert_eq!(sprite.custom_size, Some(Vec2::splat(CRAFTING_STATION_SIZE)));
 
         let actual = app
             .world()
@@ -221,40 +206,17 @@ mod tests {
     }
 
     #[test]
-    fn crafting_station_has_hidden_highlight_child() {
+    fn crafting_station_draws_its_outline_through_a_material_not_a_child() {
         let mut app = setup_gear_app();
         let entity = station_entity(&mut app);
-
-        // Move player far away so highlight stays hidden
-        let far_pos = Vec2::new(-1000.0, -1000.0);
-        move_player(&mut app, far_pos);
         app.update();
 
-        let child_entities: Vec<Entity> = {
-            let mut query = app.world_mut().query::<&Children>();
-            query
-                .get_mut(app.world_mut(), entity)
-                .map(|children| children.iter().collect())
-                .unwrap_or_default()
-        };
-        assert_eq!(child_entities.len(), 1, "station should have one child");
-
-        let highlight = child_entities
-            .into_iter()
-            .find(|child| app.world().get::<HighlightMarker>(*child).is_some())
-            .expect("Highlight child not found");
-
-        assert_eq!(
-            app.world().get::<Visibility>(highlight).unwrap(),
-            &Visibility::Hidden
-        );
-        assert_eq!(
-            app.world()
-                .get::<Transform>(highlight)
-                .unwrap()
-                .translation
-                .z,
-            -0.1
+        // The shared outline material draws the highlight around the station's
+        // own sprite, so no separate highlight child is spawned (this matches the
+        // pot mounds). The material itself only attaches under a renderer.
+        assert!(
+            app.world().get::<Children>(entity).is_none(),
+            "the station should not carry a highlight child"
         );
     }
 
