@@ -1,6 +1,7 @@
 use crate::components::boss::{Boss, BossSpawnMarker};
 use crate::components::player::{Health, Player};
 use crate::resources::farm::DayCounter;
+use crate::resources::player_status::PlayerStatus;
 use crate::states::{GameState, Phase};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -24,7 +25,17 @@ const FARMING_HINT: &str =
 const BOSS_SELECT_HINT: &str = "Arrows Select   |   Enter / Space Choose   |   Esc Back";
 const BOSS_FIGHT_HINT: &str =
     "WASD Move   |   Q / LMB Light   |   E / RMB Heavy   |   Z / X Lock   |   I Inventory";
+/// Shown in place of [`BOSS_FIGHT_HINT`] while madness reverses the controls,
+/// spelling out the swapped left/right keys. ASCII only: the default font has no
+/// symbol glyphs.
+const INVERTED_HINT: &str = "CONTROLS INVERTED   |   D = Left   A = Right   |   Q / LMB Light   |   E / RMB Heavy   |   Z / X Lock   |   I Inventory";
 const RESULT_HINT: &str = "Any key to continue";
+
+/// The red the hint text flashes to while the controls are reversed. It eases
+/// back to [`TEXT_DIM`] and forth again once per [`HINT_PULSE_PERIOD`].
+const HINT_RED: Color = Color::srgb(1.0, 0.15, 0.15);
+/// Seconds for one full red-to-dim-to-red pulse of the hint text.
+const HINT_PULSE_PERIOD: f32 = 0.5;
 
 /// Spawns the whole HUD (player health, boss health, day, hints) when play
 /// begins, and tears it back down on the way out.
@@ -41,6 +52,7 @@ impl Plugin for HudPlugin {
                     update_boss_health,
                     update_day_text,
                     update_hints,
+                    pulse_hints,
                 )
                     .run_if(in_state(GameState::Playing)),
             );
@@ -61,6 +73,13 @@ pub struct DayText;
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct HintsText;
+
+/// Drives the red pulse on the hint text while madness reverses the controls.
+/// `elapsed` is the time within the current pulse, reset when the effect lapses.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct HintsPulse {
+    pub elapsed: f32,
+}
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct BossNameText;
@@ -244,7 +263,7 @@ fn spawn_hud(mut commands: Commands) {
                 },
             ))
             .with_children(|hints| {
-                hints.spawn((HintsText, label("", 15.0, TEXT_DIM)));
+                hints.spawn((HintsText, HintsPulse::default(), label("", 15.0, TEXT_DIM)));
             });
         });
 }
@@ -326,8 +345,14 @@ fn update_day_text(day: Res<DayCounter>, mut texts: Query<&mut Text, With<DayTex
     }
 }
 
-fn update_hints(phase: Phase, mut texts: Query<&mut Text, With<HintsText>>) {
-    let hint = if phase.is_farming() {
+fn update_hints(
+    phase: Phase,
+    status: Res<PlayerStatus>,
+    mut texts: Query<&mut Text, With<HintsText>>,
+) {
+    let hint = if phase.is_boss_fight() && status.is_reversed() {
+        INVERTED_HINT
+    } else if phase.is_farming() {
         FARMING_HINT
     } else if phase.is_boss_select() {
         BOSS_SELECT_HINT
@@ -343,6 +368,38 @@ fn update_hints(phase: Phase, mut texts: Query<&mut Text, With<HintsText>>) {
             text.0 = hint.to_string();
         }
     }
+}
+
+/// Flashes the hint text red and back while madness reverses the controls,
+/// settling it to the normal dim colour once the effect lapses.
+fn pulse_hints(
+    time: Res<Time>,
+    status: Res<PlayerStatus>,
+    mut hints: Query<(&mut TextColor, &mut HintsPulse), With<HintsText>>,
+) {
+    let reversed = status.is_reversed();
+    for (mut color, mut pulse) in hints.iter_mut() {
+        if reversed {
+            pulse.elapsed += time.delta_secs();
+            color.0 = hint_pulse_color(pulse.elapsed);
+        } else if pulse.elapsed != 0.0 {
+            pulse.elapsed = 0.0;
+            color.0 = TEXT_DIM;
+        }
+    }
+}
+
+/// A red-to-dim colour for the hint pulse, starting at full red on the frame
+/// the reversal lands so the change reads as a flash.
+fn hint_pulse_color(elapsed: f32) -> Color {
+    let blend = (elapsed / HINT_PULSE_PERIOD * std::f32::consts::TAU).cos() * 0.5 + 0.5;
+    let dim = TEXT_DIM.to_srgba();
+    let red = HINT_RED.to_srgba();
+    Color::srgb(
+        dim.red + (red.red - dim.red) * blend,
+        dim.green + (red.green - dim.green) * blend,
+        dim.blue + (red.blue - dim.blue) * blend,
+    )
 }
 
 /// Advances one bar's red fill instantly and eases its yellow fill after it.
@@ -390,6 +447,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, StatesPlugin, HudPlugin))
             .init_resource::<Time>()
             .init_resource::<DayCounter>()
+            .init_resource::<PlayerStatus>()
             .init_state::<GameState>()
             .init_state::<DayPhase>();
         app
@@ -485,6 +543,29 @@ mod tests {
             .next()
             .map(|text| text.0.clone())
             .expect("hints text exists")
+    }
+
+    fn hints_color(app: &mut App) -> Color {
+        app.world_mut()
+            .query_filtered::<&TextColor, With<HintsText>>()
+            .iter(app.world())
+            .next()
+            .map(|color| color.0)
+            .expect("hints text exists")
+    }
+
+    fn reverse(app: &mut App, seconds: f32) {
+        app.world_mut()
+            .resource_mut::<PlayerStatus>()
+            .apply_reversal(seconds);
+    }
+
+    /// Advances the clock by `millis` then runs a frame.
+    fn advance(app: &mut App, millis: u64) {
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_millis(millis));
+        app.update();
     }
 
     #[test]
@@ -614,5 +695,75 @@ mod tests {
 
         set_phase(&mut app, DayPhase::Result);
         assert_eq!(hints_text(&mut app), RESULT_HINT);
+    }
+
+    #[test]
+    fn hints_show_the_inverted_banner_while_reversed() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        set_phase(&mut app, DayPhase::BossFight);
+        assert_eq!(hints_text(&mut app), BOSS_FIGHT_HINT);
+
+        reverse(&mut app, 2.0);
+        tick(&mut app);
+        assert_eq!(hints_text(&mut app), INVERTED_HINT);
+
+        app.world_mut().resource_mut::<PlayerStatus>().clear();
+        tick(&mut app);
+        assert_eq!(hints_text(&mut app), BOSS_FIGHT_HINT);
+    }
+
+    #[test]
+    fn hint_text_pulses_red_while_reversed() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        set_phase(&mut app, DayPhase::BossFight);
+        reverse(&mut app, 10.0);
+
+        // The frame the reversal lands is the brightest: nearly full red.
+        tick(&mut app);
+        let bright = hints_color(&mut app).to_srgba();
+        assert!(
+            bright.red > 0.95 && bright.green < 0.2,
+            "starts red, got {bright:?}"
+        );
+
+        // Half a pulse later it has eased back toward the dim colour.
+        advance(&mut app, 250);
+        let dim = hints_color(&mut app).to_srgba();
+        assert!(
+            dim.green > bright.green,
+            "pulses back toward dim, got {dim:?}"
+        );
+    }
+
+    #[test]
+    fn hint_colour_returns_to_dim_when_the_reversal_expires() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        set_phase(&mut app, DayPhase::BossFight);
+        reverse(&mut app, 10.0);
+        tick(&mut app);
+        assert_ne!(hints_color(&mut app), TEXT_DIM);
+
+        app.world_mut().resource_mut::<PlayerStatus>().clear();
+        tick(&mut app);
+        assert_eq!(hints_color(&mut app), TEXT_DIM);
+    }
+
+    #[test]
+    fn pulse_starts_at_full_red_and_returns_to_dim() {
+        let start = hint_pulse_color(0.0).to_srgba();
+        let red = HINT_RED.to_srgba();
+        assert!((start.red - red.red).abs() < 0.001, "starts red: {start:?}");
+        assert!((start.green - red.green).abs() < 0.001);
+
+        let half = hint_pulse_color(HINT_PULSE_PERIOD * 0.5).to_srgba();
+        let dim = TEXT_DIM.to_srgba();
+        assert!(
+            (half.red - dim.red).abs() < 0.001,
+            "dims mid-pulse: {half:?}"
+        );
+        assert!((half.green - dim.green).abs() < 0.001);
     }
 }

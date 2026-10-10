@@ -54,6 +54,7 @@ impl Plugin for BossPlugin {
             .add_message::<HitConfirm>()
             .add_message::<BossAttackStarted>()
             .add_message::<PlaySfx>()
+            .add_message::<crate::events::PlayLoopSfx>()
             .add_message::<MouseWheel>()
             .add_systems(Update, spawn_boss.after(LevelSet::Load))
             .add_systems(

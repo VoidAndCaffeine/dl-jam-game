@@ -235,8 +235,6 @@ pub const BLINK_VANISH: f32 = boss_frame(6);
 /// Frames 15-25: recovery.
 pub const BLINK_RECOVERY: f32 = boss_frame(11);
 pub const DECOY_COUNT_P2: u32 = 3;
-pub const DECOY_SPLASH_RADIUS: f32 = 36.0;
-pub const DECOY_SPLASH_DAMAGE: f32 = 15.0;
 pub const DECOY_SIZE: f32 = 48.0;
 
 // --- Boss B: Quicksilver Wave ---
@@ -254,10 +252,14 @@ pub const WAVE_LENGTH: f32 = 150.0;
 pub const WAVE_WIDTH: f32 = 47.0;
 pub const WAVE_DAMAGE: f32 = 22.0;
 pub const WAVE_LIFE: f32 = 4.0;
-/// Mercury left behind by a phase-2 wave.
+/// Mercury left behind by a phase-2 wave or a popped decoy.
 pub const MERCURY_POOL_LIFE: f32 = 4.0;
 pub const MERCURY_POOL_RADIUS: f32 = 40.0;
 pub const MERCURY_POOL_DAMAGE: f32 = 10.0;
+/// Enraged mercury: a wider, nastier puddle that lingers longer.
+pub const MERCURY_POOL_LIFE_P2: f32 = 5.0;
+pub const MERCURY_POOL_RADIUS_P2: f32 = 56.0;
+pub const MERCURY_POOL_DAMAGE_P2: f32 = 16.0;
 /// Movement multiplier while standing on a mercury surface.
 pub const MERCURY_SLIP: f32 = 1.6;
 

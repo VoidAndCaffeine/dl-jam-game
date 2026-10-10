@@ -26,16 +26,20 @@ pub fn gear_description(piece: GearPiece) -> &'static str {
 
 /// Per-piece weapon descriptions.
 const STARTER_WEAPON_TEXT: &str = "A light weapon, made of reinforced reeds, leather, and iron.";
-const BOSS_A_WEAPON_TEXT: &str = "A spear making excellent use of the highly flammable Cinder Cap spores.";
+const BOSS_A_WEAPON_TEXT: &str =
+    "A spear making excellent use of the highly flammable Cinder Cap spores.";
 const BOSS_B_WEAPON_TEXT: &str = "A weapon of shifting form, although usually a spear.";
-const FINAL_WEAPON_TEXT: &str = "A reinforced spear taking the best and worst from the other weapons";
+const FINAL_WEAPON_TEXT: &str =
+    "A reinforced spear taking the best and worst from the other weapons";
 
 /// Per-piece armor descriptions.
-const STARTER_ARMOR: &str = "A light set of winterized armor made of woven reeds. Just don't go mad.";
+const STARTER_ARMOR: &str =
+    "A light set of winterized armor made of woven reeds. Just don't go mad.";
 const BOSS_A_ARMOR: &str = "An oddly warm set of winterized armor. Stay away from open flames.";
-const BOSS_B_ARMOR: &str = "A heavy set of winterized armor. Heavy yet flexible, just don't breathe too deeply.";
-const FINAL_ARMOR: &str = "A perfect set of winterized armor. Taking the best and worst from all other armor.";
-
+const BOSS_B_ARMOR: &str =
+    "A heavy set of winterized armor. Heavy yet flexible, just don't breathe too deeply.";
+const FINAL_ARMOR: &str =
+    "A perfect set of winterized armor. Taking the best and worst from all other armor.";
 
 /// One line describing what a crop yields when harvested.
 ///

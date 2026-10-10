@@ -58,6 +58,25 @@ fn damage_player(
     }
 }
 
+/// Builds a mercury puddle sized for `phase`. Enraged pools are wider, hit
+/// harder and linger longer.
+pub fn mercury_pool(position: Vec2, phase: u8) -> BossAttack {
+    let (radius, damage, life) = if phase >= 2 {
+        (
+            MERCURY_POOL_RADIUS_P2,
+            MERCURY_POOL_DAMAGE_P2,
+            MERCURY_POOL_LIFE_P2,
+        )
+    } else {
+        (MERCURY_POOL_RADIUS, MERCURY_POOL_DAMAGE, MERCURY_POOL_LIFE)
+    };
+    BossAttack::new(AttackKind::MercuryPool, position)
+        .with_phase(phase)
+        .with_radius(radius * HITBOX_SHRINK)
+        .with_damage(damage)
+        .with_lifetime(life)
+}
+
 /// Rotates a unit direction by `angle` radians.
 fn rotate(direction: Vec2, angle: f32) -> Vec2 {
     if angle == 0.0 {
@@ -198,7 +217,7 @@ pub fn tick_boss_attacks(
                     attack.impacted = true;
                     sfx.write(PlaySfx(Sfx::SlamImpact));
                     if attack.phase >= 2 {
-                        spawn_slam_aftermath(&mut commands, &attack);
+                        spawn_slam_aftermath(&mut commands, &attack, &mut sfx);
                     }
                 }
                 // The quake stays live across its active frames.
@@ -300,11 +319,7 @@ pub fn tick_boss_attacks(
                 }
                 if attack.phase >= 2 && attack.aux_timer <= 0.0 {
                     attack.aux_timer = 0.9;
-                    let pool = BossAttack::new(AttackKind::MercuryPool, attack.position)
-                        .with_radius(MERCURY_POOL_RADIUS * HITBOX_SHRINK)
-                        .with_damage(MERCURY_POOL_DAMAGE)
-                        .with_lifetime(MERCURY_POOL_LIFE)
-                        .with_phase(attack.phase);
+                    let pool = mercury_pool(attack.position, attack.phase);
                     spawn_attack(&mut commands, pool, 0.0);
                 }
                 if attack.remaining <= 0.0 {
@@ -389,7 +404,12 @@ pub fn tick_boss_attacks(
 }
 
 /// Acid pools and extra debris left by a phase-2 slam.
-fn spawn_slam_aftermath(commands: &mut Commands, attack: &BossAttack) {
+fn spawn_slam_aftermath(
+    commands: &mut Commands,
+    attack: &BossAttack,
+    sfx: &mut MessageWriter<PlaySfx>,
+) {
+    sfx.write(PlaySfx(Sfx::AcidForm));
     for index in 0..SLAM_ACID_POOLS_P2 {
         let angle = (index as f32) * std::f32::consts::TAU / SLAM_ACID_POOLS_P2 as f32;
         let offset = Vec2::new(angle.cos(), angle.sin()) * attack.radius;
@@ -423,6 +443,7 @@ pub fn tick_surge_chargers(
     grid: Res<SolidGrid>,
     player: Query<&Transform, With<Player>>,
     mut bosses: Query<(Entity, &Boss, &mut Transform, &mut SurgeCharger), Without<Player>>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
     let dt = time.delta_secs();
     let player_pos = player.single().map(|t| t.translation.truncate()).ok();
@@ -442,6 +463,7 @@ pub fn tick_surge_chargers(
                         (player_pos - from).normalize_or(charger.direction),
                     );
                 }
+                sfx.write(PlaySfx(Sfx::SurgeCharge));
             }
             continue;
         }
@@ -555,6 +577,17 @@ mod tests {
             EffectKind::DebrisShadow,
             "a falling attack telegraphs with the ground shadow"
         );
+    }
+
+    #[test]
+    fn an_enraged_mercury_pool_outgrows_a_phase_one_pool() {
+        let calm = mercury_pool(Vec2::new(3.0, 4.0), 1);
+        let enraged = mercury_pool(Vec2::new(3.0, 4.0), 2);
+        assert_eq!(calm.kind, AttackKind::MercuryPool);
+        assert_eq!(enraged.kind, AttackKind::MercuryPool);
+        assert!(enraged.radius > calm.radius, "wider");
+        assert!(enraged.damage > calm.damage, "harder");
+        assert!(enraged.remaining > calm.remaining, "longer-lived");
     }
 
     #[test]

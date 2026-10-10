@@ -117,7 +117,7 @@ fn entering_play_loads_the_farm_and_places_everything() {
 
     let level = active(&app);
     assert_eq!(level.id, LevelId::Farm);
-    assert_eq!((level.def.width, level.def.height), (40, 24));
+    assert_eq!((level.def.width, level.def.height), (27, 18));
 
     assert_eq!(count::<Pot>(&mut app), 9);
     assert_eq!(count::<CraftingStation>(&mut app), 1);
@@ -125,8 +125,8 @@ fn entering_play_loads_the_farm_and_places_everything() {
     assert_eq!(count::<FarmPot>(&mut app), 9);
 
     let grid = grid(&app);
-    assert_eq!(grid.width(), 40);
-    assert_eq!(grid.height(), 24);
+    assert_eq!(grid.width(), 27);
+    assert_eq!(grid.height(), 18);
 }
 
 #[test]

@@ -197,7 +197,10 @@ fn crop_name_color(crop: CropType, unlocks: &CropUnlocks) -> Color {
 /// Status line for a boss row: locked rows explain how to open them.
 fn boss_status(id: BossId, progress: &BossProgress) -> (String, Color) {
     if !progress.is_unlocked(id) {
-        return ("LOCKED  -  Beat The Excavator & Mercurial".to_string(), TEXT_BLOCKED);
+        return (
+            "LOCKED  -  Beat The Excavator & Mercurial".to_string(),
+            TEXT_BLOCKED,
+        );
     }
     if progress.is_beaten(id) {
         ("BEATEN".to_string(), TEXT_CRAFTABLE)
@@ -348,6 +351,7 @@ impl Plugin for UIPlugin {
             .init_resource::<CropSelectMenu>()
             .add_message::<crate::events::GearCrafted>()
             .add_message::<crate::events::GearEquipped>()
+            .add_message::<crate::events::PlaySfx>()
             // The title and victory screens have no world camera of their own.
             .add_systems(OnEnter(GameState::MainMenu), ensure_menu_camera)
             .add_systems(OnExit(GameState::MainMenu), despawn_menu_camera)
@@ -2246,10 +2250,7 @@ mod tests {
         open_inventory(&mut app);
 
         assert_eq!(item_row_entities(&mut app).len(), 2);
-        assert_eq!(
-            item_name(&mut app, 1),
-            vec!["Rusted Spike".to_string()]
-        );
+        assert_eq!(item_name(&mut app, 1), vec!["Rusted Spike".to_string()]);
         assert_eq!(item_detail_text(&mut app, 1), vec!["x3".to_string()]);
     }
 
@@ -2267,10 +2268,7 @@ mod tests {
 
         assert_eq!(inventory_root_entities(&mut app).len(), 1);
         assert_eq!(item_row_entities(&mut app).len(), 2);
-        assert_eq!(
-            item_name(&mut app, 1),
-            vec!["Mercurial Spike".to_string()]
-        );
+        assert_eq!(item_name(&mut app, 1), vec!["Mercurial Spike".to_string()]);
     }
 
     #[test]

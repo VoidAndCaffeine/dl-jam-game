@@ -5,7 +5,7 @@ use crate::components::boss_animation::ClipWindows;
 use crate::components::player::{Movement, Player};
 use crate::components::targetable::{Decoy, Targetable};
 use crate::constants::*;
-use crate::events::{BossAttackStarted, PlaySfx, Sfx};
+use crate::events::{BossAttackStarted, PlayLoopSfx, PlaySfx, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::boss_rng::BossRng;
 use crate::systems::boss_animation::constrained_aim;
@@ -148,6 +148,7 @@ pub fn spawn_pattern_attacks(
     player: Query<(&Transform, &Movement), With<Player>>,
     boss_transforms: Query<&Transform, (With<Boss>, Without<Player>)>,
     mut sfx: MessageWriter<PlaySfx>,
+    mut loop_sfx: MessageWriter<PlayLoopSfx>,
 ) {
     let player = player.single().ok();
     let player_pos = player.map(|(transform, _)| transform.translation.truncate());
@@ -185,6 +186,8 @@ pub fn spawn_pattern_attacks(
                         0.0
                     },
                 });
+                // The caustic-trail sizzle is driven by the charge itself (see
+                // `drive_surge_sizzle`), so it starts and stops with the charger.
                 sfx.write(PlaySfx(Sfx::SurgeWindup));
             }
             PatternType::ExcavatorSlam => {
@@ -270,7 +273,10 @@ pub fn spawn_pattern_attacks(
                 if enraged {
                     spawn_wave(Vec2::new(-aim.y, aim.x));
                 }
-                sfx.write(PlaySfx(Sfx::WaveLaunch));
+                loop_sfx.write(PlayLoopSfx {
+                    sfx: Sfx::WaveLaunch,
+                    duration: WAVE_WINDUP + WAVE_LIFE,
+                });
             }
             PatternType::MadnessSpray => {
                 let droplets = if enraged {
@@ -308,6 +314,10 @@ pub fn spawn_pattern_attacks(
                     spawn_attack(&mut commands, droplet, angle);
                 }
                 sfx.write(PlaySfx(Sfx::SprayWindup));
+                loop_sfx.write(PlayLoopSfx {
+                    sfx: Sfx::SprayRelease,
+                    duration: if enraged { WISP_LIFE } else { SPRAY_LIFE },
+                });
             }
             PatternType::Amalgamation => {
                 let center = grid.center();
@@ -319,7 +329,12 @@ pub fn spawn_pattern_attacks(
                     .with_windup(AMALGAMATION_CHANNEL);
                 spawn_attack(&mut commands, amalgam, 0.0);
                 sfx.write(PlaySfx(Sfx::AmalgamWarning));
-                sfx.write(PlaySfx(Sfx::AmalgamChannel));
+                // The halves blink together as the channel begins.
+                sfx.write(PlaySfx(Sfx::Blink));
+                loop_sfx.write(PlayLoopSfx {
+                    sfx: Sfx::AmalgamChannel,
+                    duration: AMALGAMATION_CHANNEL,
+                });
             }
         }
     }
@@ -359,10 +374,7 @@ pub fn resolve_pending_blinks(
                 .with_radius(DECOY_SIZE * 0.5)
                 .with_lifetime(6.0);
             let decoy_entity = spawn_attack(&mut commands, decoy, 0.0);
-            commands.entity(decoy_entity).insert((
-                Targetable,
-                Decoy::new(DECOY_SPLASH_RADIUS, DECOY_SPLASH_DAMAGE),
-            ));
+            commands.entity(decoy_entity).insert((Targetable, Decoy));
             sfx.write(PlaySfx(Sfx::DecoySpawn));
         }
 

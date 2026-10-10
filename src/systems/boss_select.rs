@@ -1,5 +1,5 @@
 use crate::components::boss::BossId;
-use crate::events::{BossSelected, InteractionEvent, InteractionType};
+use crate::events::{BossSelected, InteractionEvent, InteractionType, PlaySfx, Sfx};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::level::LevelRequest;
@@ -67,6 +67,7 @@ fn boss_select_keyboard(
     mut next_phase: ResMut<NextState<DayPhase>>,
     mut request: ResMut<LevelRequest>,
     mut selected_events: MessageWriter<BossSelected>,
+    mut sfx: MessageWriter<PlaySfx>,
     phase: Phase,
 ) {
     if !phase.is_boss_select() || !menu.open {
@@ -82,6 +83,7 @@ fn boss_select_keyboard(
             && let Some(id) = menu.pending_boss
         {
             selected_events.write(BossSelected(id));
+            sfx.write(PlaySfx(Sfx::MenuConfirm));
             request.0 = Some(id.arena());
             context.target = Some(LoadTarget::for_boss(id));
             context.resume_phase = Some(DayPhase::BossFight);
@@ -157,6 +159,7 @@ impl Plugin for BossSelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BossSelectMenu>()
             .add_message::<BossSelected>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(Update, open_boss_select_on_gate.in_set(BossSelectSet::Menu))
             .add_systems(
                 Update,

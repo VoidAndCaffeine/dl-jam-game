@@ -115,15 +115,21 @@ pub fn tick_dying_bosses(
             commands.entity(entity).despawn();
         }
         defeated.write(BossDefeated(BossId::Dual));
+        // The two halves die together, each with its own death rattle.
+        sfx.write(PlaySfx(Sfx::BossADeath));
+        sfx.write(PlaySfx(Sfx::BossBDeath));
         sfx.write(PlaySfx(Sfx::BossDefeated));
-        sfx.write(PlaySfx(Sfx::MaterialDrop));
     }
 
     for (entity, id) in singles {
         commands.entity(entity).despawn();
         defeated.write(BossDefeated(id));
+        sfx.write(PlaySfx(match id {
+            BossId::BossA => Sfx::BossADeath,
+            BossId::BossB => Sfx::BossBDeath,
+            BossId::Dual => Sfx::BossADeath,
+        }));
         sfx.write(PlaySfx(Sfx::BossDefeated));
-        sfx.write(PlaySfx(Sfx::MaterialDrop));
     }
 }
 

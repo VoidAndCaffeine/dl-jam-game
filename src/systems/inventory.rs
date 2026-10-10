@@ -1,6 +1,6 @@
 use crate::components::gear::{GearPiece, MaterialType};
 use crate::components::pot::CropType;
-use crate::events::{GearCrafted, GearEquipped};
+use crate::events::{GearCrafted, GearEquipped, PlaySfx};
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
@@ -88,6 +88,7 @@ pub struct EquipWork<'w> {
     pub unlocks: Res<'w, CropUnlocks>,
     pub crafted: MessageWriter<'w, GearCrafted>,
     pub equipped: MessageWriter<'w, GearEquipped>,
+    pub sfx: MessageWriter<'w, PlaySfx>,
     pub game_state: Res<'w, State<GameState>>,
 }
 
@@ -107,6 +108,7 @@ impl EquipWork<'_> {
             &mut self.gear,
             &mut self.crafted,
             &mut self.equipped,
+            &mut self.sfx,
         )
     }
 }
@@ -304,6 +306,7 @@ mod tests {
             .add_message::<InteractionEvent>()
             .add_message::<GearCrafted>()
             .add_message::<GearEquipped>()
+            .add_message::<PlaySfx>()
             .add_systems(
                 Update,
                 (

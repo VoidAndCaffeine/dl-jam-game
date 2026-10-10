@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn the_farm_places_its_props_where_the_file_says() {
         let (def, grid) = build_level(LevelId::Farm);
-        assert_eq!(def.width, 40);
+        assert_eq!(def.width, 27);
 
         let spawn = prop_position(&grid, &def, PropKind::PlayerSpawn).unwrap();
         let pots = prop_positions(&grid, &def, PropKind::Pot);

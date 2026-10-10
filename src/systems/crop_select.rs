@@ -1,5 +1,5 @@
 use crate::components::pot::{CropType, Pot, PotState};
-use crate::events::CropPlanted;
+use crate::events::{CropPlanted, PlaySfx, Sfx};
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::states::Phase;
@@ -40,6 +40,7 @@ fn plant_selected(
     unlocks: &CropUnlocks,
     pots: &mut Query<&mut Pot>,
     planted_events: &mut MessageWriter<CropPlanted>,
+    sfx: &mut MessageWriter<PlaySfx>,
 ) {
     let Some(crop) = CropType::ALL.get(menu.selected).copied() else {
         menu.close_menu();
@@ -59,6 +60,7 @@ fn plant_selected(
     }
     pot.plant(crop);
     planted_events.write(CropPlanted(crop));
+    sfx.write(PlaySfx(Sfx::CropPlant));
     menu.close_menu();
 }
 
@@ -69,6 +71,7 @@ pub struct PlantingWork<'w, 's> {
     pub unlocks: Res<'w, CropUnlocks>,
     pub pots: Query<'w, 's, &'static mut Pot>,
     pub planted_events: MessageWriter<'w, CropPlanted>,
+    pub sfx: MessageWriter<'w, PlaySfx>,
 }
 
 impl PlantingWork<'_, '_> {
@@ -78,6 +81,7 @@ impl PlantingWork<'_, '_> {
             &self.unlocks,
             &mut self.pots,
             &mut self.planted_events,
+            &mut self.sfx,
         );
     }
 }
@@ -150,6 +154,7 @@ impl Plugin for CropSelectPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CropSelectMenu>()
             .add_message::<CropPlanted>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(
                 Update,
                 (

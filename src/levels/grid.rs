@@ -653,19 +653,21 @@ mod tests {
     fn the_farm_border_is_solid_in_world_space_too() {
         let level = LevelId::Farm.parse().unwrap();
         let grid = SolidGrid::from_level(&level);
-        assert_eq!(grid.width(), 40);
-        assert_eq!(grid.height(), 24);
+        assert_eq!(grid.width(), 27);
+        assert_eq!(grid.height(), 18);
         assert!(grid.is_solid(0, 0));
-        assert!(grid.is_solid(39, 23));
-        assert!(grid.is_solid(0, 23));
-        assert!(grid.is_solid(39, 0));
+        assert!(grid.is_solid(26, 17));
+        assert!(grid.is_solid(0, 17));
+        assert!(grid.is_solid(26, 0));
     }
 
     #[test]
     fn the_farm_path_is_walkable_end_to_end() {
         let level = LevelId::Farm.parse().unwrap();
         let grid = SolidGrid::from_level(&level);
-        let path_row = 19;
+        // The farm's interior is wide open, so a middle row walks corner to
+        // corner; deriving it keeps the test valid as the layout changes.
+        let path_row = level.height / 2;
         let world_row = level.world_row(path_row);
 
         let start = grid.tile_center(1, world_row);

@@ -3,7 +3,7 @@ use crate::constants::{
     BOSS_PATTERN_COOLDOWN, BOSS_PATTERN_COOLDOWN_P2, DUAL_COMBO_GAP, DUAL_COMBO_INTERVAL,
     PHASE_STUN_DURATION, PHASE_THRESHOLD,
 };
-use crate::events::{BossAttackStarted, BossPhaseChanged, PlaySfx, Sfx};
+use crate::events::{BossAttackStarted, BossPhaseChanged};
 use crate::levels::grid::SolidGrid;
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
@@ -33,7 +33,6 @@ pub fn boss_ai(
     mut rng: ResMut<BossRng>,
     mut changed: MessageWriter<BossPhaseChanged>,
     mut started: MessageWriter<BossAttackStarted>,
-    mut sfx: MessageWriter<PlaySfx>,
     phase: Phase,
 ) {
     if !phase.is_boss_fight() {
@@ -58,7 +57,6 @@ pub fn boss_ai(
                 boss_id: role.map(|dual_role| dual_role.id()).unwrap_or(boss.id),
                 new_phase: 2,
             });
-            sfx.write(PlaySfx(phase_two_cue(role, boss.id)));
         }
         if boss.stun_remaining > 0.0 {
             boss.stun_remaining = (boss.stun_remaining - dt).max(0.0);
@@ -193,15 +191,6 @@ fn cooldown_for(phase: u8) -> f32 {
         BOSS_PATTERN_COOLDOWN_P2
     } else {
         BOSS_PATTERN_COOLDOWN
-    }
-}
-
-fn phase_two_cue(role: Option<&DualRole>, id: BossId) -> Sfx {
-    match role {
-        Some(DualRole::Quicksilver) => Sfx::QuicksilverPhase2,
-        Some(DualRole::Excavator) => Sfx::ExcavatorPhase2,
-        None if id == BossId::BossB => Sfx::QuicksilverPhase2,
-        None => Sfx::ExcavatorPhase2,
     }
 }
 

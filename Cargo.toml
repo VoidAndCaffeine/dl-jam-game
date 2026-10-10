@@ -60,6 +60,10 @@ path = "tests/integration/boss_flow.rs"
 name = "full_run"
 path = "tests/integration/full_run.rs"
 
+[[test]]
+name = "audio_assets"
+path = "tests/integration/audio_assets.rs"
+
 [dev-dependencies]
 serde_json = "1.0"
 bincode = "1.3"

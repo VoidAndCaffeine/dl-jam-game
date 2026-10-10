@@ -8,6 +8,48 @@
     <link data-trunk rel="rust" href="Cargo.toml" data-target-name="dl_jam" data-cargo-profile="wasm-release" data-wasm-opt="z" />
     <link data-trunk rel="copy-dir" href="assets"/>
 
+    <script>
+        // Browsers block audio until the page has been interacted with: an
+        // AudioContext created on load starts "suspended" and stays silent
+        // until resume() is called inside a user gesture. Bevy's audio (via
+        // cpal) creates exactly one AudioContext at startup and only ever
+        // resumes it there, so without this every sound plays into a suspended
+        // context and is never heard.
+        //
+        // Remember each AudioContext that gets created, then resume them all on
+        // the first real interaction.
+        (function () {
+            var Ctx = window.AudioContext || window.webkitAudioContext;
+            if (!Ctx) return;
+
+            var contexts = [];
+            function Patched() {
+                var ctx = new Ctx(arguments.length ? arguments[0] : undefined);
+                contexts.push(ctx);
+                return ctx;
+            }
+            Patched.prototype = Ctx.prototype;
+            Object.setPrototypeOf(Patched, Ctx);
+            window.AudioContext = Patched;
+            window.webkitAudioContext = Patched;
+
+            function resumeAll() {
+                for (var i = 0; i < contexts.length; i++) {
+                    var ctx = contexts[i];
+                    if (ctx && ctx.state === "suspended") {
+                        var result = ctx.resume();
+                        if (result && result.catch) result.catch(function () {});
+                    }
+                }
+            }
+
+            ["pointerdown", "mousedown", "touchstart", "touchend", "keydown", "click"].forEach(
+                function (type) {
+                    window.addEventListener(type, resumeAll, { passive: true });
+                }
+            );
+        })();
+    </script>
 
     <style>
         /* Center canvas and prevent scrollbars */

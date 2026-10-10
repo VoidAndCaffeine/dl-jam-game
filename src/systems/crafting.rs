@@ -1,5 +1,5 @@
 use crate::components::gear::{GearPiece, ItemCost, RECIPE_COUNT, RECIPES, recipe_for_piece};
-use crate::events::{GearCrafted, GearEquipped, InteractionEvent, InteractionType};
+use crate::events::{GearCrafted, GearEquipped, InteractionEvent, InteractionType, PlaySfx, Sfx};
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
 use crate::resources::run_data::PlayerGear;
@@ -111,15 +111,18 @@ pub fn apply(
     gear: &mut PlayerGear,
     crafted_events: &mut MessageWriter<GearCrafted>,
     equipped_events: &mut MessageWriter<GearEquipped>,
+    sfx: &mut MessageWriter<PlaySfx>,
 ) -> CraftOutcome {
     let outcome = perform(action, inventory, gear);
     match &outcome {
         CraftOutcome::Crafted { piece } => {
             crafted_events.write(GearCrafted(*piece));
             equipped_events.write(GearEquipped(piece.slot));
+            sfx.write(PlaySfx(Sfx::GearCraft));
         }
         CraftOutcome::Equipped { piece } => {
             equipped_events.write(GearEquipped(piece.slot));
+            sfx.write(PlaySfx(Sfx::GearEquip));
         }
         _ => {}
     }
@@ -134,6 +137,7 @@ pub struct CraftingWork<'w> {
     pub gear: ResMut<'w, PlayerGear>,
     pub crafted: MessageWriter<'w, GearCrafted>,
     pub equipped: MessageWriter<'w, GearEquipped>,
+    pub sfx: MessageWriter<'w, PlaySfx>,
     pub game_state: Res<'w, State<GameState>>,
     pub day_phase: Res<'w, State<DayPhase>>,
 }
@@ -150,6 +154,7 @@ impl CraftingWork<'_> {
             &mut self.gear,
             &mut self.crafted,
             &mut self.equipped,
+            &mut self.sfx,
         )
     }
 }
@@ -321,6 +326,7 @@ mod tests {
             .add_message::<InteractionEvent>()
             .add_message::<GearCrafted>()
             .add_message::<GearEquipped>()
+            .add_message::<PlaySfx>()
             .add_systems(
                 Update,
                 (

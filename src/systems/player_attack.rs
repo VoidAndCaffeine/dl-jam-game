@@ -1,9 +1,9 @@
 use crate::components::attack::{AttackType, AttackVisual};
-use crate::components::boss::Boss;
-use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
+use crate::components::boss::{Boss, BossAttack};
+use crate::components::player::{Movement, Player};
 use crate::components::targetable::{Decoy, Targetable};
 use crate::constants::{BOSS_HURTBOX_SCALE, DECOY_SIZE, LIGHT_WIDTH};
-use crate::events::{DamageDealt, HitConfirm, PlaySfx, PlayerDied, Sfx};
+use crate::events::{DamageDealt, HitConfirm, PlaySfx, Sfx};
 use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::lock_on::LockOn;
@@ -11,8 +11,8 @@ use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::run_data::PlayerGear;
 use crate::states::Phase;
 use crate::systems::attack_effect::{AttackEffectAccess, spawn_swing};
-use crate::systems::combat::{damage_after_armor, hurt_player, swing_hits};
-use crate::utils::targeting::circles_overlap;
+use crate::systems::boss_attacks::{mercury_pool, spawn_attack};
+use crate::systems::combat::{damage_after_armor, swing_hits};
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
 use bevy::sprite_render::MeshMaterial2d;
@@ -33,18 +33,26 @@ pub fn player_attack(
     gear: Res<PlayerGear>,
     inventory: Res<InventoryPanel>,
     lock: Res<LockOn>,
-    mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
-    targetables: Query<(Entity, &Transform, Option<&Boss>, Option<&Decoy>), With<Targetable>>,
+    player: Query<(&Transform, &Movement), With<Player>>,
+    targetables: Query<
+        (
+            Entity,
+            &Transform,
+            Option<&Boss>,
+            Option<&Decoy>,
+            Option<&BossAttack>,
+        ),
+        With<Targetable>,
+    >,
     mut damage_events: MessageWriter<DamageDealt>,
     mut hit_events: MessageWriter<HitConfirm>,
-    mut died: MessageWriter<PlayerDied>,
     mut sfx: MessageWriter<PlaySfx>,
     mut effects: AttackEffectAccess,
     phase: Phase,
 ) {
     state.tick(time.delta_secs());
 
-    let Ok((transform, mut health, mut movement)) = player.single_mut() else {
+    let Ok((transform, movement)) = player.single() else {
         return;
     };
     let origin = transform.translation.truncate();
@@ -54,7 +62,7 @@ pub fn player_attack(
         let locked_pos = lock
             .target
             .and_then(|entity| targetables.get(entity).ok())
-            .map(|(_, transform, _, _)| transform.translation.truncate());
+            .map(|(_, transform, _, _, _)| transform.translation.truncate());
         let nearest = nearest_targetable_position(&targetables, origin);
         if let Some(target) = locked_pos.or(nearest) {
             state.facing = (target - origin).normalize_or(Vec2::X);
@@ -99,7 +107,7 @@ pub fn player_attack(
     };
 
     let facing = state.facing;
-    for (entity, target_transform, boss, decoy) in targetables.iter() {
+    for (entity, target_transform, boss, decoy, decoy_attack) in targetables.iter() {
         let target_pos = target_transform.translation.truncate();
         let half = if let Some(boss) = boss {
             Vec2::splat(boss.id.size() * 0.5 * BOSS_HURTBOX_SCALE)
@@ -110,27 +118,22 @@ pub fn player_attack(
             continue;
         }
 
-        if let Some(decoy) = decoy {
+        if decoy.is_some() {
             hit_events.write(HitConfirm {
                 target: entity,
                 position: target_pos,
             });
             sfx.write(PlaySfx(Sfx::DecoyPop));
-            if circles_overlap(target_pos, decoy.splash_radius, origin, PLAYER_SIZE * 0.5)
-                && !health.is_invulnerable()
-            {
-                let lethal = hurt_player(
-                    &mut health,
-                    &mut movement,
-                    decoy.splash_damage,
-                    target_pos,
-                    origin,
-                );
-                sfx.write(PlaySfx(Sfx::PlayerHit));
-                if lethal {
-                    died.write(PlayerDied);
-                }
+            // Popping a decoy leaves a mercury puddle that keeps hurting
+            // anyone standing in it, instead of bursting for instant splash
+            // damage. The decoy carries the phase it was spawned in, so an
+            // enraged fight leaves a bigger, nastier pool.
+            let pool_phase = decoy_attack.map_or(1, |attack| attack.phase);
+            let mut pool = mercury_pool(target_pos, pool_phase);
+            if let Some(owner) = decoy_attack.and_then(|attack| attack.owner) {
+                pool = pool.owned_by(owner);
             }
+            spawn_attack(&mut commands, pool, 0.0);
             commands.entity(entity).despawn();
             continue;
         }
@@ -161,17 +164,30 @@ pub fn player_attack(
         gear.weapon.map(|piece| piece.set),
     );
     state.begin(attack);
+    sfx.write(PlaySfx(match attack {
+        AttackType::Light => Sfx::PlayerSwingLight,
+        AttackType::Heavy => Sfx::PlayerSwingHeavy,
+    }));
 }
 
 /// The nearest targetable's world position to `origin`.
 #[allow(clippy::type_complexity)]
 fn nearest_targetable_position(
-    targetables: &Query<(Entity, &Transform, Option<&Boss>, Option<&Decoy>), With<Targetable>>,
+    targetables: &Query<
+        (
+            Entity,
+            &Transform,
+            Option<&Boss>,
+            Option<&Decoy>,
+            Option<&BossAttack>,
+        ),
+        With<Targetable>,
+    >,
     origin: Vec2,
 ) -> Option<Vec2> {
     targetables
         .iter()
-        .map(|(_, transform, _, _)| transform.translation.truncate())
+        .map(|(_, transform, _, _, _)| transform.translation.truncate())
         .min_by(|a, b| {
             a.distance_squared(origin)
                 .total_cmp(&b.distance_squared(origin))
@@ -216,8 +232,9 @@ pub fn tick_attack_visuals(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::boss::{BossId, Dying};
-    use crate::components::player::Movement;
+    use crate::components::boss::{AttackKind, BossId, Dying};
+    use crate::components::player::{Health, Movement};
+    use crate::events::PlayerDied;
     use crate::resources::boss_encounter::SharedBossHealth;
     use crate::resources::player_status::PlayerStatus;
     use crate::states::{DayPhase, GameState};
@@ -458,20 +475,47 @@ mod tests {
     }
 
     #[test]
-    fn striking_a_decoy_destroys_it_and_can_splash_the_player() {
+    fn striking_a_decoy_destroys_it_and_leaves_a_mercury_pool() {
         let mut app = setup_app();
         let decoy = app
             .world_mut()
-            .spawn((
-                Targetable,
-                Decoy::new(200.0, 10.0),
-                Transform::from_xyz(50.0, 0.0, 0.0),
-            ))
+            .spawn((Targetable, Decoy, Transform::from_xyz(50.0, 0.0, 0.0)))
             .id();
 
         press(&mut app, KeyCode::KeyQ);
 
         assert!(app.world().get::<Decoy>(decoy).is_none());
+        let pool = find_mercury_pool(&mut app).expect("a mercury pool is left behind");
+        assert_eq!(pool.position, Vec2::new(50.0, 0.0));
+        assert_eq!(pool.phase, 1);
+    }
+
+    #[test]
+    fn popping_an_enraged_decoy_leaves_a_bigger_pool() {
+        let mut app = setup_app();
+        app.world_mut().spawn((
+            Targetable,
+            Decoy,
+            BossAttack::new(AttackKind::Decoy, Vec2::new(50.0, 0.0)).with_phase(2),
+            Transform::from_xyz(50.0, 0.0, 0.0),
+        ));
+
+        press(&mut app, KeyCode::KeyQ);
+
+        let pool = find_mercury_pool(&mut app).expect("a mercury pool is left behind");
+        assert_eq!(pool.phase, 2);
+        assert!(
+            pool.radius > crate::constants::MERCURY_POOL_RADIUS * crate::constants::HITBOX_SHRINK,
+            "an enraged pool should be wider than a phase-1 one"
+        );
+    }
+
+    fn find_mercury_pool(app: &mut App) -> Option<BossAttack> {
+        app.world_mut()
+            .query::<&BossAttack>()
+            .iter(app.world())
+            .find(|attack| attack.kind == AttackKind::MercuryPool)
+            .cloned()
     }
 
     #[test]

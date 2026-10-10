@@ -18,6 +18,7 @@ impl Plugin for GearPlugin {
         app.init_resource::<PlayerGear>()
             .add_message::<crate::events::GearCrafted>()
             .add_message::<crate::events::GearEquipped>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(OnExit(GameState::Playing), despawn_crafting_station)
             .add_systems(
                 Update,

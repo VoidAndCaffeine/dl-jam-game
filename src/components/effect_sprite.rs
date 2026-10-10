@@ -1,8 +1,8 @@
 use crate::components::boss::AttackKind;
 use crate::constants::{
     ACID_POOL_RADIUS, AMALGAMATION_RADIUS, DEBRIS_IMPACT_RADIUS, DEBRIS_SHADOW_RADIUS, DECOY_SIZE,
-    MERCURY_POOL_RADIUS, SLAM_RADIUS, SLAM_RADIUS_P2, SURGE_TRAIL_LIFE, SURGE_TRAIL_WIDTH,
-    SURGE_TRAIL_WIDTH_P2, WAVE_LENGTH, WAVE_WIDTH, WISP_SPRITE_SIZE,
+    MERCURY_POOL_RADIUS, MERCURY_POOL_RADIUS_P2, SLAM_RADIUS, SLAM_RADIUS_P2, SURGE_TRAIL_LIFE,
+    SURGE_TRAIL_WIDTH, SURGE_TRAIL_WIDTH_P2, WAVE_LENGTH, WAVE_WIDTH, WISP_SPRITE_SIZE,
 };
 use bevy::prelude::*;
 
@@ -123,7 +123,13 @@ impl EffectKind {
             EffectKind::DebrisShadow => Vec2::splat(DEBRIS_SHADOW_RADIUS * 2.0),
             EffectKind::DebrisImpact => Vec2::splat(DEBRIS_IMPACT_RADIUS * 2.0),
             EffectKind::QuicksilverWave => Vec2::new(WAVE_WIDTH, WAVE_LENGTH),
-            EffectKind::MercuryPool => Vec2::splat(MERCURY_POOL_RADIUS * 2.0),
+            EffectKind::MercuryPool => Vec2::splat(
+                if enraged {
+                    MERCURY_POOL_RADIUS_P2
+                } else {
+                    MERCURY_POOL_RADIUS
+                } * 2.0,
+            ),
             EffectKind::MadnessSpray => Vec2::splat(WISP_SPRITE_SIZE),
             EffectKind::Wisp => Vec2::splat(WISP_SPRITE_SIZE),
             EffectKind::AmalgamationBlast => Vec2::splat(AMALGAMATION_RADIUS * 2.0),
@@ -290,6 +296,7 @@ mod tests {
             EffectKind::TailingsSurge,
             EffectKind::ExcavatorSlam,
             EffectKind::DebrisShadow,
+            EffectKind::MercuryPool,
         ] {
             let p1 = kind.world_size(1);
             let p2 = kind.world_size(2);

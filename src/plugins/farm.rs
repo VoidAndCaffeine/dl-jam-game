@@ -2,7 +2,9 @@ use crate::components::collider::Collider;
 use crate::components::crop_sprite::{CROP_FRAME_COUNT, CROP_SPRITE_SIZE, CropSprite};
 use crate::components::player_sprite::{FRAME_COLUMNS, FRAME_SIZE};
 use crate::components::pot::{Pot, PotState};
-use crate::events::{CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent};
+use crate::events::{
+    CropHarvested, CropPlanted, CropWatered, DayAdvanced, InteractionEvent, PlaySfx, Sfx,
+};
 use crate::materials::sprite_outline::{SpriteOutlineMaterial, SpriteOutlineParams, atlas_rect};
 use crate::plugins::interaction::{FarmPot, Interactable};
 use crate::resources::crop_select::CropSelectMenu;
@@ -39,6 +41,7 @@ impl Plugin for FarmPlugin {
             .add_message::<CropWatered>()
             .add_message::<CropHarvested>()
             .add_message::<DayAdvanced>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::Playing), grab_mound_handles)
             .add_systems(OnExit(GameState::Playing), despawn_pots)
             .add_systems(
@@ -368,6 +371,7 @@ fn pot_interaction_handler(
     mut crop_select: ResMut<CropSelectMenu>,
     mut watered_events: MessageWriter<CropWatered>,
     mut harvested_events: MessageWriter<CropHarvested>,
+    mut sfx: MessageWriter<PlaySfx>,
     phase: Phase,
 ) {
     // Drain every event even outside farming so clicks made during a boss fight
@@ -388,6 +392,7 @@ fn pot_interaction_handler(
             PotState::Planted => {
                 if pot.water() {
                     watered_events.write(CropWatered);
+                    sfx.write(PlaySfx(Sfx::CropWaterStart));
                 }
             }
             PotState::Watered => {
@@ -405,9 +410,11 @@ fn pot_interaction_handler(
 fn harvest_into_inventory(
     mut events: MessageReader<CropHarvested>,
     mut inventory: ResMut<Inventory>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
     for event in events.read() {
         inventory.add_crop(event.0, 1);
+        sfx.write(PlaySfx(Sfx::CropHarvest));
     }
 }
 
@@ -416,19 +423,26 @@ fn begin_next_day(
     mut day_counter: ResMut<DayCounter>,
     mut day_cycle: ResMut<DayCycle>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
+    mut sfx: MessageWriter<PlaySfx>,
     phase: Phase,
 ) {
     if !phase.is_farming() || !day_cycle.pending_advance {
         return;
     }
     day_cycle.pending_advance = false;
-    advance_day(&mut pots, &mut day_counter, &mut day_advanced_events);
+    advance_day(
+        &mut pots,
+        &mut day_counter,
+        &mut day_advanced_events,
+        &mut sfx,
+    );
 }
 
 fn debug_advance_day(
     mut pots: Query<&mut Pot>,
     mut day_counter: ResMut<DayCounter>,
     mut day_advanced_events: MessageWriter<DayAdvanced>,
+    mut sfx: MessageWriter<PlaySfx>,
     keys: Res<ButtonInput<KeyCode>>,
     phase: Phase,
 ) {
@@ -436,7 +450,12 @@ fn debug_advance_day(
         return;
     }
     if cfg!(debug_assertions) && keys.just_pressed(KeyCode::F9) {
-        advance_day(&mut pots, &mut day_counter, &mut day_advanced_events);
+        advance_day(
+            &mut pots,
+            &mut day_counter,
+            &mut day_advanced_events,
+            &mut sfx,
+        );
     }
 }
 
@@ -444,6 +463,7 @@ fn advance_day(
     pots: &mut Query<&mut Pot>,
     day_counter: &mut DayCounter,
     day_advanced_events: &mut MessageWriter<DayAdvanced>,
+    sfx: &mut MessageWriter<PlaySfx>,
 ) {
     for mut pot in pots.iter_mut() {
         pot.advance_day();
@@ -457,6 +477,7 @@ fn advance_day(
     day_counter.advance();
     log::info!("day advanced to {}", day_counter.0);
     day_advanced_events.write(DayAdvanced { day: day_counter.0 });
+    sfx.write(PlaySfx(Sfx::DayAdvance));
 }
 
 #[allow(clippy::type_complexity)]
@@ -670,6 +691,7 @@ mod tests {
             .add_message::<InteractionEvent>()
             .add_message::<CropWatered>()
             .add_message::<CropHarvested>()
+            .add_message::<PlaySfx>()
             .add_systems(Update, pot_interaction_handler);
         app.world_mut()
             .resource_mut::<NextState<GameState>>()

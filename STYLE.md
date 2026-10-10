@@ -278,7 +278,7 @@ Both halves fight simultaneously in the same arena, sharing a single 900 HP pool
 ## Plant Generation Prompts (Reference)
 
 ### Shared Style Constraints (all prompts)
-- **Transparent PNG background** (alpha channel)
+- **Plain white background** (not transparent) — clean isometric view, no cast shadows
 - Isometric perspective (2:1 dimetric)
 - Simple mound of dirt: primarily muted clay brown (`#a8836e`) and dusty ochre (`#c4a36f`) with deep mine shadow (`#001428`) undertones
 - Small contamination patches only: sparse mercury teal (`#7dc8c8`), tailings orange-yellow, faint red/blue/green mineral specks — subtle, not dominant
@@ -286,6 +286,10 @@ Both halves fight simultaneously in the same arena, sharing a single 900 HP pool
 - Only saturated color: scarf red `#7a1f1f` as microscopic folk-ward accents only
 - Fully opaque, no transparency/ghosting
 - Utilitarian, worn, lived-in feel
+- **Soil mound continuity**: each stage references prior stage for mound shape/perspective
+- **Folk wards**: minimal, specific items (copper wire, red thread, rowan twig, cold-iron nails, hagstone) — never "dense" or "maximum density"
+- **No harvesting gear/tools**: no gloves, tins, hammers, tongs, crucibles
+- **Less technical language**: avoid over-specifying measurements, hex codes for every element, "particles catching light", "dense mycelium" — makes output too realistic/rendered
 
 ---
 
@@ -314,14 +318,14 @@ Isometric concept art on plain white background: Mature Quicksilver Reed ready f
 Isometric concept art on plain white background: Cinder Cap mushroom seedling (fly agaric button stage) pushing through a simple mound of primarily dirt-brown soil. Soil mound base: muted clay brown (#a8836e) and dusty ochre (#c4a36f) with deep mine shadow (#001428) undertones. Small contamination patches only: sparse flecks of mercury teal (#7dc8c8), tailings orange-yellow, faint red/blue/green mineral specks -- subtle, not dominant. Cap is a pure white puffball-like sphere ~1 inch diameter, smooth and featureless, resembling a young puffball or button mushroom before veil breaks. No colored warts or scales yet. Thick stem in tailings ochre (#c4a36f), swollen at base, partially buried. Gills not yet visible (universal veil intact). Soil mound crusted with grey-green tailings mineral residue. A faint heat shimmer (barely visible desaturated burnt orange #a64b1a) rises from cap -- hinting at flammable spores. Single copper wire folk ward twisted into mound. No saturated colors. Clean isometric view.
 ```
 
-#### Stage 2: Growing (Day 1–2) — Image-to-Image (from seedling_v2) ⏳
+#### Stage 2: Growing (Day 1–2) — Image-to-Image (from seedling) ✓
 ```
 Isometric concept art on plain white background: Adolescent Cinder Cap expanding from the same soil mound. Cap ~3 inches diameter, classic fly agaric shape -- desaturated brick (#a8836e) with scattered ochre wart-scales (#c4a36f). Gills beginning to show at margin, pale with faint sickly teal luminescence (#7dc8c8) deep in folds (mercury-tainted spores). Stem 4 inches tall, thick, fragile skirt (annulus) dusted in ochre spores. Basal bulb pronounced, mycelial threads (mercury silver #9cf6f6) visible spreading across mound surface. Heat shimmer more visible (desaturated burnt orange #a64b1a distortion). Copper and cold-iron folk wards at mound edge. Soil mound heat-cracked. Clean isometric view. [Use prior seedling image as reference for mound shape and perspective]
 ```
 
-#### Stage 3: Grown (Harvestable) — Image-to-Image (from growing) ⏳
+#### Stage 3: Grown (Harvestable) — Image-to-Image (from growing) ✓
 ```
-Isometric concept art on plain white background: Fully mature Cinder Cap, cap fully expanded ~5 inches with upturned margin revealing crowded gills. Cap: desaturated fly agaric brick (#a8836e) with prominent ochre wart-scales (#c4a36f). Gills deep, pale, actively releasing fine spore haze -- sickly teal (#7dc8c8) and ochre (#c4a36f) particles catching light. Stem sturdy, 6 inches, basal bulb pronounced, ring remnant hanging. Mycelium dense at mound surface as mercury-silver threads (#9cf6f6). Soil mound heavily heat-cracked, folk wards dense (copper wire, red thread #7a1f1f, rowan twig). Leather gloves and sealed tin beside mound -- harvesting gear for flammable spores. Utilitarian, hazardous but routine. Clean isometric view. [Use prior growing image as reference for mound shape and perspective]
+Isometric concept art on plain white background: Fully mature Cinder Cap mushroom, cap expanded wide ~5 inches with upturned edges showing gills underneath. Cap color: desaturated brick red with scattered ochre wart-scales. Gills pale, releasing a faint sickly teal spore dust. Stem thick and sturdy, 6 inches tall, with a hanging ring remnant. Mercury-silver mycelium threads visible on the mound surface. Soil mound heavily heat-cracked, folk wards (copper wire, red thread, rowan twig). Clean isometric view. [Use prior growing image as reference for soil mound shape and perspective]
 ```
 
 ---
@@ -335,17 +339,40 @@ Isometric concept art on plain white background: Fully mature Cinder Cap, cap fu
 Isometric concept art on plain white background: Tailings Potato seedling -- single sturdy shoot emerging from a simple mound of primarily dirt-brown soil. Soil mound base: muted clay brown (#a8836e) and dusty ochre (#c4a36f) with deep mine shadow (#001428) undertones. Small contamination patches only: sparse flecks of mercury teal (#7dc8c8), tailings orange-yellow, faint red/blue/green mineral specks -- subtle, not dominant. Stem thick, muted clay green (#a8836e) with mercury-silver stippling (#9cf6f6) at nodes. Two compound leaves unfurling, leaflets broad, undersides tailings ochre (#c4a36f). A small sealed assay vial (inert grey sludge) stuck in mound beside shoot -- marker. Cold-iron nail driven into mound edge as folk ward. No saturated colors. Clean isometric view.
 ```
 
-#### Stage 2: Growing Small (Day 1) — Image-to-Image (from seedling) ⏳
+#### Stage 2: Growing Small (Day 1) — Image-to-Image (from seedling) ✓
 ```
-Isometric concept art on plain white background: Young Tailings Potato plant ~8 inches tall, 4–5 main stems from central crown on the same soil mound. Stems thick, succulent, muted clay (#a8836e) with mercury-silver stippling (#9cf6f6). Compound leaves broad, ochre undersides (#c4a36f), veins faintly mercury-teal (#7dc8c8). Mound surface cracking, revealing tuber swellings at stem bases -- dark, dense, heavy-metal-laden. Folk wards added: red thread (#7a1f1f) and hagstone chip at mound rim. Soil mound crust thickening. Clean isometric view. [Use prior seedling image as reference for mound shape and perspective]
-```
-
-#### Stage 3: Growing Large (Day 2–3) — Image-to-Image (from growing small) ⏳
-```
-Isometric concept art on plain white background: Robust Tailings Potato plant ~14 inches tall, dense foliage canopy from same mound. Stems thickened, mercury-silver stippling (#9cf6f6) pronounced. Leaves large, leathery, muted clay (#a8836e) with ochre veins (#c4a36f). Mound heavily distended -- large tuber shoulders breaking soil surface, dark and dense, mercury-silver veining (#9cf6f6) visible on exposed tuber skin. Folk wards dense: cold-iron nails, copper wire, red thread (#7a1f1f), blackthorn twigs at mound rim. A small refining hammer and tongs rest beside mound -- hinting at armor-smithing end use. Clean isometric view. [Use prior growing-small image as reference for mound shape and perspective]
+Isometric concept art on plain white background: Young Tailings Potato plant ~8 inches tall, 4-5 main stems from central crown on the same soil mound. Stems thick, muted clay (#a8836e) with mercury-silver stippling (#9cf6f6). Compound leaves broad, ochre undersides (#c4a36f), veins faintly mercury-teal (#7dc8c8). Mound surface revealing tuber swellings at stem bases -- dark, dense, heavy-metal-laden. Folk wards added: red thread (#7a1f1f) and hagstone chip at mound rim. Soil mound crust thickening. Clean isometric view. [Use prior seedling image as reference for mound shape and perspective]
 ```
 
-#### Stage 4: Grown (Harvestable) — Image-to-Image (from growing large) ⏳
+#### Stage 3: Growing Large (Day 2–3) — Image-to-Image (from growing small) ✓
 ```
-Isometric concept art on plain white background: Fully mature Tailings Potato, foliage beginning to yellow (harvest signal), same mound. Stems woody at base, mercury-silver stippling (#9cf6f6) heavy. Mound split open by massive tuber cluster -- 3–4 huge tubers fused at crown, each fist-sized, dark skin with brilliant mercury-silver veining (#9cf6f6) like circuitry. Tubers dense, heavy-metal-laden, faintly warm to touch (implied). Folk wards maximum density: cold iron, copper, silver, hagstone, blackthorn, red thread (#7a1f1f), rowan at mound rim. Refining tools beside mound: hammer, tongs, crucible. Utilitarian, industrial, routine hazard. Clean isometric view. [Use prior growing-large image as reference for mound shape and perspective]
+Isometric concept art on plain white background: Robust Tailings Potato plant ~14 inches tall, dense foliage canopy from same mound. Stems thickened, mercury-silver stippling (#9cf6f6) pronounced. Leaves large, leathery, muted clay (#a8836e) with ochre veins (#c4a36f). Mound heavily distended -- large tuber shoulders breaking soil surface, dark and dense, mercury-silver veining (#9cf6f6) visible on exposed tuber skin. Folk wards: cold-iron nails, copper wire, red thread (#7a1f1f) at mound rim. Clean isometric view. [Use prior growing-small image as reference for mound shape and perspective]
+```
+
+#### Stage 4: Grown (Harvestable) — Image-to-Image (from growing small) ✓
+```
+Isometric concept art on plain white background: Fully mature Tailings Potato, foliage beginning to yellow (harvest signal), same mound. Mercury-silver stippling (#9cf6f6) heavy. Mound split open by massive tuber cluster -- 3-4 huge tubers fused at crown, each fist-sized, dark skin with brilliant mercury-silver veining (#9cf6f6) like circuitry. Tubers dense, heavy-metal-laden, faintly warm to touch (implied). Folk wards: cold iron, copper, silver, hagstone, red thread (#7a1f1f), rowan at mound rim. Clean isometric view. [Use prior growing-small image as reference for mound shape and perspective]
+```
+
+---
+
+## Plant Generation — Style Learnings (2026-10-09)
+
+### What Worked
+- **Plain white background** (not transparent) — gives clean isometric look
+- **Reference image chaining** — each stage uses prior stage as `input_asset_id` for mound continuity
+- **Specific folk ward items** — "copper wire, red thread, rowan twig" works; "dense folk wards" creates clutter
+- **Simplified language** — "cap expanded wide ~5 inches with upturned edges showing gills underneath" beats "cap fully expanded ~5 inches with upturned margin revealing crowded gills... actively releasing fine spore haze -- particles catching light"
+- **No harvesting gear** — gloves, tins, hammers, tongs, crucibles make it feel like a product shot, not concept art
+
+### What Didn't Work
+- **"Dense/maximum density" folk wards** — creates visual noise, breaks the clean aesthetic
+- **Blackthorn twigs** — too specific, adds unwanted detail
+- **Over-technical descriptions** — "basal bulb pronounced", "ring remnant hanging", "mycelium dense at mound surface as mercury-silver threads", exact hex codes for every element — pushes toward photorealistic rendering
+- **"Succulent", "woody", "leathery" material descriptors** — makes it look like a 3D render
+- **Transparent background request** — DreamLayer ignores it, gives white anyway
+
+### Final Prompt Template
+```
+Isometric concept art on plain white background: [Subject description with key measurements]. [Color palette with 1-2 hex codes max]. [Key visual details: folk wards, soil mound state, contamination]. Clean isometric view. [Use prior [stage] image as reference for soil mound shape and perspective]
 ```

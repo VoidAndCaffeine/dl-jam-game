@@ -83,8 +83,9 @@ pub struct BossAttackStarted {
 }
 
 /// A sound effect the game wants to play. Kept as an id so the audio layer can
-/// resolve it to a file (or stay silent) independently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// resolve it to a file (or stay silent) independently. The mapping from cue to
+/// files, volumes and playback behaviour lives in [`crate::plugins::audio`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Sfx {
     // Boss A: The Excavator
     SurgeWindup,
@@ -95,7 +96,8 @@ pub enum Sfx {
     AcidForm,
     DebrisWarning,
     DebrisImpact,
-    ExcavatorPhase2,
+    ExcavatorEngine1,
+    ExcavatorEngine2,
     // Boss B: The Quicksilver
     Blink,
     DecoySpawn,
@@ -104,80 +106,51 @@ pub enum Sfx {
     SprayWindup,
     SprayRelease,
     MadnessApply,
-    QuicksilverPhase2,
     // Dual
     AmalgamWarning,
     AmalgamChannel,
     AmalgamExplode,
-    // Shared
+    // Shared combat
     BossHit,
     PlayerHit,
     BossDefeated,
-    MaterialDrop,
+    PlayerDeath,
+    BossADeath,
+    BossBDeath,
+    // Player attacks
+    PlayerSwingLight,
+    PlayerSwingHeavy,
+    // Farming
+    CropPlant,
+    CropWaterStart,
+    #[allow(dead_code)]
+    CropWaterEnd,
+    CropHarvest,
+    // Crafting
+    GearCraft,
+    GearEquip,
+    // Menu / UI
+    MenuNavigate,
+    MenuOpen,
+    MenuConfirm,
+    MenuClose,
+    // World
+    DayAdvance,
 }
 
-impl Sfx {
-    pub const ALL: [Sfx; 24] = [
-        Sfx::SurgeWindup,
-        Sfx::SurgeCharge,
-        Sfx::TailingsSizzle,
-        Sfx::SlamWindup,
-        Sfx::SlamImpact,
-        Sfx::AcidForm,
-        Sfx::DebrisWarning,
-        Sfx::DebrisImpact,
-        Sfx::ExcavatorPhase2,
-        Sfx::Blink,
-        Sfx::DecoySpawn,
-        Sfx::DecoyPop,
-        Sfx::WaveLaunch,
-        Sfx::SprayWindup,
-        Sfx::SprayRelease,
-        Sfx::MadnessApply,
-        Sfx::QuicksilverPhase2,
-        Sfx::AmalgamWarning,
-        Sfx::AmalgamChannel,
-        Sfx::AmalgamExplode,
-        Sfx::BossHit,
-        Sfx::PlayerHit,
-        Sfx::BossDefeated,
-        Sfx::MaterialDrop,
-    ];
-
-    /// The asset filename this cue resolves to, once the audio lands.
-    pub fn file(self) -> &'static str {
-        match self {
-            Sfx::SurgeWindup => "boss_a_surge_windup.ogg",
-            Sfx::SurgeCharge => "boss_a_surge_charge.ogg",
-            Sfx::TailingsSizzle => "boss_a_tailings_sizzle.ogg",
-            Sfx::SlamWindup => "boss_a_slam_windup.ogg",
-            Sfx::SlamImpact => "boss_a_slam_impact.ogg",
-            Sfx::AcidForm => "boss_a_acid_form.ogg",
-            Sfx::DebrisWarning => "boss_a_debris_warning.ogg",
-            Sfx::DebrisImpact => "boss_a_debris_impact.ogg",
-            Sfx::ExcavatorPhase2 => "boss_a_phase2.ogg",
-            Sfx::Blink => "boss_b_blink.ogg",
-            Sfx::DecoySpawn => "boss_b_decoy_spawn.ogg",
-            Sfx::DecoyPop => "boss_b_decoy_pop.ogg",
-            Sfx::WaveLaunch => "boss_b_wave_launch.ogg",
-            Sfx::SprayWindup => "boss_b_spray_windup.ogg",
-            Sfx::SprayRelease => "boss_b_spray_release.ogg",
-            Sfx::MadnessApply => "boss_b_madness_apply.ogg",
-            Sfx::QuicksilverPhase2 => "boss_b_phase2.ogg",
-            Sfx::AmalgamWarning => "dual_amalgam_warning.ogg",
-            Sfx::AmalgamChannel => "dual_amalgam_channel.ogg",
-            Sfx::AmalgamExplode => "dual_amalgam_explode.ogg",
-            Sfx::BossHit => "boss_hit.ogg",
-            Sfx::PlayerHit => "player_hit_boss.ogg",
-            Sfx::BossDefeated => "boss_defeated.ogg",
-            Sfx::MaterialDrop => "material_drop.ogg",
-        }
-    }
-}
-
-/// Request to play a sound effect.
+/// Request to play a one-shot sound effect. Sequences, repeats and random picks
+/// are resolved inside the audio layer from the [`Sfx`] id.
 #[derive(Message, Debug, Clone, Copy)]
 pub struct PlaySfx(pub Sfx);
+
+/// Request to play a sound effect as a loop for `duration` seconds, then stop.
+/// Used for the caustic trail, the quicksilver wave's bubbles, the quicksilver
+/// spray and the amalgamation channel.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct PlayLoopSfx {
+    pub sfx: Sfx,
+    pub duration: f32,
+}
 
 #[cfg(test)]
 mod tests {

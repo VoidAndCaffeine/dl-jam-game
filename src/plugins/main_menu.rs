@@ -4,6 +4,7 @@
 //! `Difficulty` and `Load Game` slots are reserved and hidden (they keep their
 //! layout room so revealing them later needs no relayout).
 
+use crate::events::{PlaySfx, Sfx};
 use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
@@ -56,6 +57,7 @@ impl Plugin for MainMenuPlugin {
             .init_resource::<MenuArt>()
             .init_resource::<MenuFeatureFlags>()
             .add_message::<NewGameRequested>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
             .add_systems(
@@ -252,9 +254,14 @@ impl ResetWork<'_> {
     }
 }
 
-fn on_new_game_requested(mut requests: MessageReader<NewGameRequested>, mut work: ResetWork) {
+fn on_new_game_requested(
+    mut requests: MessageReader<NewGameRequested>,
+    mut work: ResetWork,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
     for _ in requests.read() {
         work.reset();
+        sfx.write(PlaySfx(Sfx::MenuConfirm));
         work.next_game.set(GameState::Playing);
     }
 }
