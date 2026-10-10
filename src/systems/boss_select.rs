@@ -141,6 +141,23 @@ fn select_boss_on_click(
     }
 }
 
+/// Mirrors the boss row under the mouse into `menu.hovered` so the concept pane
+/// follows the cursor. The keyboard `selected` row keeps the highlight and
+/// hover never opens a confirmation.
+fn track_boss_hover(options: Query<(&BossOption, &Interaction)>, mut menu: ResMut<BossSelectMenu>) {
+    if !menu.open {
+        return;
+    }
+    let hovered = crate::systems::crafting::hovered_row(
+        options
+            .iter()
+            .map(|(option, interaction)| (option.index, interaction)),
+    );
+    if menu.hovered != hovered {
+        menu.hovered = hovered;
+    }
+}
+
 /// The menu is the thing that makes the `BossSelect` phase meaningful. If some
 /// other panel closes it, fall back to farming instead of getting stuck.
 fn recover_closed_boss_select(
@@ -167,6 +184,7 @@ impl Plugin for BossSelectPlugin {
                     recover_closed_boss_select,
                     boss_select_keyboard,
                     select_boss_on_click,
+                    track_boss_hover,
                 )
                     .chain()
                     .in_set(BossSelectSet::Menu),
@@ -408,6 +426,48 @@ mod tests {
 
         assert!(menu(&app).confirmation_open);
         assert_eq!(menu(&app).pending_boss, Some(BossId::BossB));
+    }
+
+    #[test]
+    fn hovering_a_boss_row_previews_it_without_confirming() {
+        let mut app = setup_app();
+        arena_gate_interaction(&mut app);
+
+        app.world_mut().spawn((
+            BossOption {
+                boss_id: BossId::BossB,
+                index: 1,
+            },
+            Interaction::Hovered,
+        ));
+        app.update();
+
+        assert_eq!(menu(&app).hovered, Some(1));
+        assert_eq!(menu(&app).selected, 0, "the highlight does not move");
+        assert!(!menu(&app).confirmation_open, "hover never confirms");
+    }
+
+    #[test]
+    fn leaving_a_boss_row_clears_the_preview() {
+        let mut app = setup_app();
+        arena_gate_interaction(&mut app);
+
+        let option = app
+            .world_mut()
+            .spawn((
+                BossOption {
+                    boss_id: BossId::BossB,
+                    index: 1,
+                },
+                Interaction::Hovered,
+            ))
+            .id();
+        app.update();
+        assert_eq!(menu(&app).hovered, Some(1));
+
+        *app.world_mut().get_mut::<Interaction>(option).unwrap() = Interaction::None;
+        app.update();
+        assert_eq!(menu(&app).hovered, None);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
 use crate::systems::crafting::{
     CraftingMenuSet, close_menu_on_input, close_menu_outside_farming, craft_row_on_click,
-    craft_selected_row, move_menu_selection, open_menu_on_station_interaction,
+    craft_selected_row, move_menu_selection, open_menu_on_station_interaction, track_menu_hover,
 };
 use bevy::prelude::*;
 
@@ -29,6 +29,7 @@ impl Plugin for GearPlugin {
                     move_menu_selection,
                     craft_selected_row,
                     craft_row_on_click,
+                    track_menu_hover,
                 )
                     .chain()
                     .in_set(CraftingMenuSet::Menu),

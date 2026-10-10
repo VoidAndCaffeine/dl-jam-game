@@ -142,6 +142,17 @@ impl LoadTarget {
         }
         paths
     }
+
+    /// `required_paths` plus the UI art the boot load has to wait for.
+    ///
+    /// Only the boot load uses this: the title screen's art would otherwise
+    /// stream in after the loading bar is gone, so the menu would flash a bare
+    /// backdrop first.
+    pub fn boot_paths(self, armor: Option<GearSet>, unlocks: &CropUnlocks) -> Vec<String> {
+        let mut paths = self.required_paths(armor, unlocks);
+        paths.push(crate::plugins::main_menu::TITLE_BACKGROUND.to_string());
+        paths
+    }
 }
 
 /// The sheet path of every effect in `kinds`.
@@ -510,6 +521,26 @@ mod tests {
             unique.dedup();
             assert_eq!(unique.len(), paths.len(), "{target:?} has duplicate paths");
         }
+    }
+
+    #[test]
+    fn the_boot_load_also_waits_for_the_title_art() {
+        let target = LoadTarget::Farm;
+        let base = target.required_paths(Some(GearSet::Master), &all_unlocked());
+        let boot = target.boot_paths(Some(GearSet::Master), &all_unlocked());
+
+        assert_eq!(boot.len(), base.len() + 1, "one extra path at boot");
+        assert!(
+            boot.iter()
+                .any(|path| path == crate::plugins::main_menu::TITLE_BACKGROUND),
+            "the title art is preloaded"
+        );
+        assert!(
+            !base
+                .iter()
+                .any(|path| path == crate::plugins::main_menu::TITLE_BACKGROUND),
+            "scenes in play do not carry the title art"
+        );
     }
 
     #[test]

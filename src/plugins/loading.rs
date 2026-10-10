@@ -84,7 +84,7 @@ fn begin_boot_load(
         let unlocks = unlocks.as_deref().cloned().unwrap_or_default();
         manifest.begin(
             target,
-            target.required_paths(armor_set(&gear), &unlocks),
+            target.boot_paths(armor_set(&gear), &unlocks),
             server,
         );
     }

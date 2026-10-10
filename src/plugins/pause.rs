@@ -213,6 +213,10 @@ fn spawn_pause(commands: &mut Commands, art: &mut MenuArt, server: Option<&Asset
                     Name::new("Pause Panel"),
                     Node {
                         width: Val::Px(480.0),
+                        max_width: Val::Percent(92.0),
+                        max_height: Val::Percent(88.0),
+                        min_height: Val::Px(0.0),
+                        overflow: Overflow::clip(),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
                         row_gap: Val::Px(10.0),

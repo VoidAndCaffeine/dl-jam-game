@@ -30,6 +30,13 @@ pub const ROW_BORDER_SELECTED: Color = Color::srgb(1.0, 0.85, 0.20);
 
 pub const PANEL_WIDTH: f32 = 1040.0;
 pub const ROW_HEIGHT: f32 = 44.0;
+
+/// The window height the UI is authored for. At this height every `Val::Px` and
+/// `FontSize::Px` shows at its literal value; other heights scale the whole UI
+/// (see [`responsive_ui_scale`]) so menus keep their proportions when the
+/// window changes resolution. 1080p is what the panel and row sizes above were
+/// designed for.
+pub const UI_REFERENCE_HEIGHT: f32 = 1080.0;
 /// Inset, in pixels, for the 9-slice frame's corners. Match this when authoring
 /// the shared button PNGs so nothing stretches oddly.
 pub const FRAME_SLICE: f32 = 14.0;
@@ -469,10 +476,18 @@ pub fn screen_root_node() -> Node {
 }
 
 /// The framed panel that sits in the middle of a menu screen.
+///
+/// The panel is a fixed width at the reference resolution but never wider than
+/// the viewport, and it clips its children: however tall a menu's content grows
+/// it stays inside the panel's frame (the panes inside scroll instead). Without
+/// the clip a short window let the inner panes spill past the panel background.
 pub fn panel_node() -> Node {
     Node {
         width: Val::Px(PANEL_WIDTH),
-        max_height: Val::Percent(92.0),
+        max_width: Val::Percent(94.0),
+        max_height: Val::Percent(88.0),
+        min_height: Val::Px(0.0),
+        overflow: Overflow::clip(),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(10.0),
         padding: UiRect::all(Val::Px(20.0)),
@@ -483,12 +498,19 @@ pub fn panel_node() -> Node {
 }
 
 /// A horizontal row of panes.
+///
+/// `min_height: 0` lets this row (and so the panes in it) shrink below their
+/// content, which is what turns a too-tall menu into scrolling panes rather
+/// than a panel that overflows the screen.
 pub fn columns_node() -> Node {
     Node {
         width: Val::Percent(100.0),
         flex_grow: 1.0,
+        flex_shrink: 1.0,
+        min_height: Val::Px(0.0),
         flex_direction: FlexDirection::Row,
         column_gap: Val::Px(18.0),
+        overflow: Overflow::clip(),
         ..default()
     }
 }
@@ -499,6 +521,7 @@ pub fn pane_node(flex_basis: f32) -> Node {
         flex_basis: Val::Percent(flex_basis),
         flex_grow: 0.0,
         flex_shrink: 1.0,
+        min_height: Val::Px(0.0),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(8.0),
         padding: UiRect::all(Val::Px(12.0)),
@@ -524,14 +547,41 @@ pub fn label(text: impl Into<String>, size: f32, color: Color) -> impl Bundle {
 pub fn register(app: &mut App) {
     app.init_resource::<MenuArt>().add_systems(
         Update,
-        (style_menu_buttons, animate_previews).in_set(MenuStyleSet),
+        (style_menu_buttons, animate_previews, responsive_ui_scale).in_set(MenuStyleSet),
     );
+}
+
+/// Keeps the whole UI in proportion with the window height.
+///
+/// `UiScale` multiplies fixed (`Val::Px` / `FontSize::Px`) values only, so this
+/// grows or shrinks every panel, button, row and font together while leaving
+/// viewport units alone. That is what keeps the title art pinned to the screen
+/// (it uses `Val::Vh`) while the buttons over it scale with the resolution.
+/// Running every frame means resizing the window mid-game simply re-scales.
+fn responsive_ui_scale(window: Query<&Window>, scale: Option<ResMut<UiScale>>) {
+    let Some(mut scale) = scale else {
+        // No UI plugin (headless tests): nothing to scale.
+        return;
+    };
+    let Ok(window) = window.single() else {
+        return;
+    };
+    let height = window.height();
+    if height <= 0.0 {
+        return;
+    }
+    // Clamped so an extreme window cannot make the UI unusably small or giant.
+    let target = (height / UI_REFERENCE_HEIGHT).clamp(0.5, 3.0);
+    if (scale.0 - target).abs() > f32::EPSILON {
+        scale.0 = target;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use bevy::state::app::StatesPlugin;
+    use bevy::window::WindowResolution;
 
     fn setup_app() -> App {
         let mut app = App::new();
@@ -673,5 +723,108 @@ mod tests {
         }
         assert_eq!(preview.frame, 0);
         assert_eq!(preview.playing_clip, 0);
+    }
+
+    #[test]
+    fn panels_clip_their_content_and_stay_inside_the_viewport() {
+        let node = panel_node();
+        assert_eq!(node.overflow, Overflow::clip());
+        assert_eq!(node.width, Val::Px(PANEL_WIDTH));
+        assert_eq!(node.max_width, Val::Percent(94.0));
+        assert_eq!(node.max_height, Val::Percent(88.0));
+        assert_eq!(
+            node.min_height,
+            Val::Px(0.0),
+            "the panel can shrink to its max height"
+        );
+        assert_eq!(node.height, Val::Auto, "height is content-driven");
+    }
+
+    #[test]
+    fn the_columns_row_and_panes_can_shrink_so_tall_lists_scroll() {
+        let columns = columns_node();
+        assert_eq!(columns.min_height, Val::Px(0.0));
+        assert_eq!(columns.flex_shrink, 1.0);
+        assert_eq!(columns.flex_grow, 1.0);
+
+        let pane = pane_node(40.0);
+        assert_eq!(pane.min_height, Val::Px(0.0));
+        assert_eq!(pane.flex_shrink, 1.0);
+    }
+
+    #[test]
+    fn the_ui_scales_with_the_window_height() {
+        let mut app = setup_app();
+        app.insert_resource(UiScale::default());
+        let window = app
+            .world_mut()
+            .spawn(Window {
+                resolution: WindowResolution::new(1280, 720),
+                ..default()
+            })
+            .id();
+
+        app.update();
+        assert!(
+            (app.world().resource::<UiScale>().0 - 720.0 / UI_REFERENCE_HEIGHT).abs() < 1e-4,
+            "720p shrinks the UI below its reference size"
+        );
+
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution = WindowResolution::new(1920, 1080);
+        app.update();
+        assert!(
+            (app.world().resource::<UiScale>().0 - 1.0).abs() < 1e-4,
+            "the reference height renders at 1:1"
+        );
+
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution = WindowResolution::new(2560, 1440);
+        app.update();
+        assert!(
+            (app.world().resource::<UiScale>().0 - 1440.0 / UI_REFERENCE_HEIGHT).abs() < 1e-4,
+            "1440p scales the UI up"
+        );
+    }
+
+    #[test]
+    fn the_ui_scale_is_clamped_against_extreme_windows() {
+        let mut app = setup_app();
+        app.insert_resource(UiScale::default());
+        let window = app
+            .world_mut()
+            .spawn(Window {
+                resolution: WindowResolution::new(320, 100),
+                ..default()
+            })
+            .id();
+
+        app.update();
+        assert!(
+            app.world().resource::<UiScale>().0 >= 0.5,
+            "a tiny window never shrinks the UI past the floor"
+        );
+
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution = WindowResolution::new(7680, 4320);
+        app.update();
+        assert!(
+            app.world().resource::<UiScale>().0 <= 3.0,
+            "a huge window never grows the UI past the ceiling"
+        );
+    }
+
+    #[test]
+    fn without_a_window_the_ui_scale_is_left_untouched() {
+        let mut app = setup_app();
+        app.insert_resource(UiScale(1.25));
+        app.update();
+        assert_eq!(app.world().resource::<UiScale>().0, 1.25);
     }
 }

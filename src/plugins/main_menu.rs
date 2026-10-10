@@ -22,15 +22,36 @@ use crate::states::GameState;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-/// The game's title, rendered as text for now. A `MainMenuTitle` image slot is
-/// reserved for a later PNG.
-pub const GAME_TITLE: &str = "Vines of Ore and Mercury";
+/// The title screen art. It has the game's name painted into it, so the screen
+/// shows no title text of its own.
+pub const TITLE_BACKGROUND: &str = "reference_images/title_background.png";
+
+/// The art's width divided by its height (1600x900). The background is sized
+/// from the viewport height using this, so the art always spans the screen top
+/// to bottom: narrower screens crop its sides, wider ones show the backdrop as
+/// pillar boxes.
+const TITLE_ASPECT: f32 = 16.0 / 9.0;
+
+/// How far down the screen (in percent) the top button sits. The art's title
+/// ends just under halfway, so the menu starts well below it.
+const MENU_TOP: f32 = 66.0;
+
+/// Width of the button column, in pixels. The buttons fill it.
+const MENU_WIDTH: f32 = 360.0;
+
+/// Behind the art. Shows as the pillar boxes on screens wider than 16:9.
+const BACKDROP: Color = Color::srgb(0.05, 0.04, 0.08);
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct MainMenuRoot;
 
+/// The full-screen art behind the buttons.
 #[derive(Component, Reflect, Debug, Default)]
-pub struct MainMenuTitle;
+pub struct MainMenuBackground;
+
+/// The centred column of buttons, positioned `MENU_TOP` down the screen.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct MainMenuColumn;
 
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainMenuAction {
@@ -79,41 +100,62 @@ fn spawn_main_menu(
         .spawn((
             Name::new("Main Menu Root"),
             MainMenuRoot,
-            theme::screen_root_node(),
-            BackgroundColor(Color::srgb(0.05, 0.04, 0.08)),
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                // Taller-than-16:9 screens crop the art's sides here.
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(BACKDROP),
             GlobalZIndex(400),
         ))
         .with_children(|screen| {
+            // Sized from the viewport height so the art fills the screen top to
+            // bottom, then pulled left by half its own width from the screen
+            // centre to centre it. The root's clip hides the overhang on narrow
+            // screens; on wider ones the backdrop shows either side.
+            screen.spawn((
+                Name::new("Title Background"),
+                MainMenuBackground,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(50.0),
+                    top: Val::Px(0.0),
+                    width: Val::Vh(100.0 * TITLE_ASPECT),
+                    height: Val::Vh(100.0),
+                    margin: UiRect::left(Val::Vh(-50.0 * TITLE_ASPECT)),
+                    ..default()
+                },
+                ImageNode {
+                    image: art.texture(TITLE_BACKGROUND, server.as_deref()),
+                    image_mode: NodeImageMode::Stretch,
+                    ..default()
+                },
+            ));
+
+            // The buttons sit directly on the art, a centred column starting
+            // `MENU_TOP` down the screen.
             screen
                 .spawn((
-                    Name::new("Title Panel"),
+                    Name::new("Menu Column"),
+                    MainMenuColumn,
                     Node {
-                        width: Val::Px(620.0),
+                        position_type: PositionType::Absolute,
+                        top: Val::Percent(MENU_TOP),
+                        left: Val::Percent(50.0),
+                        width: Val::Px(MENU_WIDTH),
+                        margin: UiRect::left(Val::Px(-MENU_WIDTH / 2.0)),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
                         row_gap: Val::Px(14.0),
-                        padding: UiRect::all(Val::Px(26.0)),
-                        border: UiRect::all(Val::Px(2.0)),
-                        border_radius: BorderRadius::all(Val::Px(10.0)),
                         ..default()
                     },
-                    BackgroundColor(theme::PANEL_BG),
-                    BorderColor::all(theme::PANEL_BORDER),
                 ))
-                .with_children(|panel| {
-                    // Title text now; swap in a `MainMenuTitle` image later.
-                    panel.spawn((
-                        Name::new("Title"),
-                        MainMenuTitle,
-                        theme::label(GAME_TITLE, 40.0, theme::TEXT_PRIMARY),
-                        Node {
-                            margin: UiRect::bottom(Val::Px(12.0)),
-                            ..default()
-                        },
-                    ));
-
+                .with_children(|column| {
                     spawn_button(
-                        panel,
+                        column,
                         &mut art,
                         server.as_deref(),
                         MainMenuAction::NewGame,
@@ -122,7 +164,7 @@ fn spawn_main_menu(
                     );
                     // Reserved slots: hidden until the features land.
                     spawn_button(
-                        panel,
+                        column,
                         &mut art,
                         server.as_deref(),
                         MainMenuAction::Difficulty,
@@ -130,7 +172,7 @@ fn spawn_main_menu(
                         "Difficulty",
                     );
                     spawn_button(
-                        panel,
+                        column,
                         &mut art,
                         server.as_deref(),
                         MainMenuAction::LoadGame,
@@ -138,8 +180,12 @@ fn spawn_main_menu(
                         "Load Game",
                     );
 
-                    panel.spawn((
+                    column.spawn((
                         Name::new("Hint"),
+                        Node {
+                            margin: UiRect::top(Val::Px(8.0)),
+                            ..default()
+                        },
                         theme::label(
                             "Arrows select   |   Enter / Space start",
                             13.0,
@@ -307,6 +353,13 @@ mod tests {
             .collect()
     }
 
+    fn backgrounds(app: &mut App) -> usize {
+        app.world_mut()
+            .query_filtered::<Entity, With<MainMenuBackground>>()
+            .iter(app.world())
+            .count()
+    }
+
     fn buttons(app: &mut App) -> Vec<(usize, bool)> {
         let mut rows: Vec<(usize, bool)> = app
             .world_mut()
@@ -332,24 +385,62 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_spawns_with_a_title_and_a_new_game_button() {
+    fn the_menu_shows_the_art_with_a_new_game_button_on_top() {
         let mut app = setup_app();
         enter_menu(&mut app);
 
         assert_eq!(roots(&mut app).len(), 1);
-        let title = app
-            .world_mut()
-            .query_filtered::<&Text, With<MainMenuTitle>>()
-            .iter(app.world())
-            .next()
-            .map(|text| text.0.clone())
-            .expect("title text");
-        assert_eq!(title, GAME_TITLE);
+        assert_eq!(backgrounds(&mut app), 1, "the title art backs the menu");
 
         let rows = buttons(&mut app);
         assert_eq!(rows.len(), 3, "new game plus two reserved slots");
         assert!(rows[0].1, "new game is enabled");
         assert!(!rows[1].1 && !rows[2].1, "reserved slots are disabled");
+    }
+
+    #[test]
+    fn the_art_preserves_its_aspect_and_fills_the_height() {
+        let mut app = setup_app();
+        enter_menu(&mut app);
+
+        let node = app
+            .world_mut()
+            .query_filtered::<&Node, With<MainMenuBackground>>()
+            .iter(app.world())
+            .next()
+            .expect("title background node");
+
+        assert_eq!(node.height, Val::Vh(100.0), "the art fills the height");
+        assert_eq!(node.width, Val::Vh(100.0 * TITLE_ASPECT));
+        assert_eq!(
+            node.left,
+            Val::Percent(50.0),
+            "the art is anchored at the screen centre"
+        );
+        assert_eq!(
+            node.margin.left,
+            Val::Vh(-50.0 * TITLE_ASPECT),
+            "then pulled left by half its width, centring it"
+        );
+        assert!(TITLE_BACKGROUND.starts_with("reference_images/"));
+    }
+
+    #[test]
+    fn the_button_column_starts_two_thirds_down_and_is_centred() {
+        let mut app = setup_app();
+        enter_menu(&mut app);
+
+        let node = app
+            .world_mut()
+            .query_filtered::<&Node, With<MainMenuColumn>>()
+            .iter(app.world())
+            .next()
+            .expect("menu column node");
+
+        assert_eq!(node.top, Val::Percent(MENU_TOP));
+        assert_eq!(MENU_TOP, 66.0);
+        assert_eq!(node.left, Val::Percent(50.0));
+        assert_eq!(node.margin.left, Val::Px(-MENU_WIDTH / 2.0), "centred");
     }
 
     #[test]

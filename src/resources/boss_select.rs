@@ -8,6 +8,10 @@ pub struct BossSelectMenu {
     pub open: bool,
     /// Index into [`BossId::ALL`].
     pub selected: usize,
+    /// The option row under the mouse, if any. The concept-art pane follows this
+    /// while `selected` keeps the keyboard highlight, so hovering previews a boss
+    /// without opening its confirmation. `None` means "show `selected`".
+    pub hovered: Option<usize>,
     pub confirmation_open: bool,
     pub pending_boss: Option<BossId>,
 }
@@ -16,6 +20,7 @@ impl BossSelectMenu {
     pub fn open_menu(&mut self) {
         self.open = true;
         self.selected = 0;
+        self.hovered = None;
         self.confirmation_open = false;
         self.pending_boss = None;
     }
@@ -23,8 +28,15 @@ impl BossSelectMenu {
     pub fn close_menu(&mut self) {
         self.open = false;
         self.selected = 0;
+        self.hovered = None;
         self.confirmation_open = false;
         self.pending_boss = None;
+    }
+
+    /// The option the concept pane should show: the hovered one if the mouse is
+    /// over a row, otherwise the keyboard selection.
+    pub fn preview_index(&self) -> usize {
+        self.hovered.unwrap_or(self.selected)
     }
 
     pub fn open_confirmation(&mut self, boss: BossId) {
@@ -73,5 +85,21 @@ mod tests {
         menu.close_confirmation();
         assert!(!menu.confirmation_open);
         assert_eq!(menu.pending_boss, None);
+    }
+
+    #[test]
+    fn hovered_clears_on_open_and_close_and_feeds_the_preview() {
+        let mut menu = BossSelectMenu::default();
+        assert_eq!(menu.hovered, None);
+
+        menu.open_menu();
+        menu.hovered = Some(2);
+        menu.close_menu();
+        assert_eq!(menu.hovered, None);
+
+        menu.selected = 1;
+        assert_eq!(menu.preview_index(), 1, "no hover falls back to selection");
+        menu.hovered = Some(2);
+        assert_eq!(menu.preview_index(), 2, "the hovered option wins");
     }
 }

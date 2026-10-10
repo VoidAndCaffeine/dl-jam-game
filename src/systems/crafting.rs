@@ -266,6 +266,33 @@ pub fn craft_row_on_click(
     }
 }
 
+/// The index of the row the cursor is over, if any. A held mouse (`Pressed`)
+/// counts so a click keeps the preview on the row it acted on; `None` means the
+/// cursor is over nothing (or has left the window). Shared by every menu's hover
+/// tracker.
+pub fn hovered_row<'a>(rows: impl Iterator<Item = (usize, &'a Interaction)>) -> Option<usize> {
+    rows.filter_map(|(index, interaction)| {
+        matches!(interaction, Interaction::Hovered | Interaction::Pressed).then_some(index)
+    })
+    .next()
+}
+
+/// Mirrors the recipe row under the mouse into `menu.hovered` so the preview
+/// panes follow the cursor. The keyboard `selected` row is left alone: hovering
+/// previews a piece, it never crafts it.
+pub fn track_menu_hover(rows: Query<(&RecipeRow, &Interaction)>, mut menu: ResMut<CraftingMenu>) {
+    if !menu.open {
+        return;
+    }
+    let hovered = hovered_row(
+        rows.iter()
+            .map(|(row, interaction)| (row.index, interaction)),
+    );
+    if menu.hovered != hovered {
+        menu.hovered = hovered;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +363,7 @@ mod tests {
                     move_menu_selection,
                     craft_selected_row,
                     craft_row_on_click,
+                    track_menu_hover,
                 )
                     .chain()
                     .in_set(CraftingMenuSet::Menu),
@@ -870,5 +898,107 @@ mod tests {
         app.update();
 
         assert!(gear(&app).owned.is_empty());
+    }
+
+    #[test]
+    fn hovered_row_takes_the_first_hovered_or_pressed_row() {
+        let none = Interaction::None;
+        let hovered = Interaction::Hovered;
+        let pressed = Interaction::Pressed;
+
+        assert_eq!(
+            hovered_row(std::iter::empty::<(usize, &Interaction)>()),
+            None
+        );
+        assert_eq!(hovered_row([(0, &none)].into_iter()), None);
+        assert_eq!(
+            hovered_row([(0, &none), (1, &hovered)].into_iter()),
+            Some(1)
+        );
+        assert_eq!(
+            hovered_row([(3, &pressed), (5, &hovered)].into_iter()),
+            Some(3),
+            "a held click counts as hovered"
+        );
+    }
+
+    #[test]
+    fn hovering_a_row_mirrors_into_the_menu_without_crafting() {
+        let mut app = setup_app();
+        grant_starter_crops(&mut app, 2);
+        open_menu(&mut app);
+
+        let row = app
+            .world_mut()
+            .spawn((RecipeRow { index: 4 }, Interaction::None))
+            .id();
+        app.update();
+        *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::Hovered;
+        app.update();
+
+        assert_eq!(menu(&app).hovered, Some(4));
+        assert_eq!(menu(&app).selected, 0, "the highlight does not move");
+        assert!(gear(&app).owned.is_empty(), "hovering never crafts");
+        assert_eq!(inventory(&app).crop_count(CropType::Starter), 2);
+    }
+
+    #[test]
+    fn leaving_a_row_clears_the_hover() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+
+        let row = app
+            .world_mut()
+            .spawn((RecipeRow { index: 2 }, Interaction::Hovered))
+            .id();
+        app.update();
+        assert_eq!(menu(&app).hovered, Some(2));
+
+        *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::None;
+        app.update();
+
+        assert_eq!(menu(&app).hovered, None);
+    }
+
+    #[test]
+    fn closing_the_menu_clears_the_hover() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+
+        app.world_mut()
+            .spawn((RecipeRow { index: 1 }, Interaction::Hovered));
+        app.update();
+        assert_eq!(menu(&app).hovered, Some(1));
+
+        press(&mut app, KeyCode::Escape);
+        assert!(!menu(&app).open);
+        assert_eq!(menu(&app).hovered, None);
+    }
+
+    #[test]
+    fn hovering_an_owned_row_previews_equip_without_equipping() {
+        let mut app = setup_app();
+        grant_starter_crops(&mut app, 2);
+        open_menu(&mut app);
+        press(&mut app, KeyCode::Enter);
+        assert!(gear(&app).equipped(GearSlot::Weapon).is_some());
+
+        // Move the keyboard highlight off the owned row, then hover it.
+        select(&mut app, 0);
+        app.world_mut().spawn((
+            RecipeRow {
+                index: OWNED_ROW_OFFSET,
+            },
+            Interaction::Hovered,
+        ));
+        app.update();
+
+        assert_eq!(menu(&app).hovered, Some(OWNED_ROW_OFFSET));
+        assert_eq!(menu(&app).selected, 0);
+        assert_eq!(
+            equipped(&app).len(),
+            1,
+            "hovering an owned row does not equip it again"
+        );
     }
 }

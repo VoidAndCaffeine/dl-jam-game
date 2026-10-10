@@ -148,6 +148,23 @@ fn close_crop_select_outside_farming(mut menu: ResMut<CropSelectMenu>, phase: Ph
     }
 }
 
+/// Mirrors the crop row under the mouse into `menu.hovered` so the sapling
+/// preview follows the cursor. The keyboard `selected` row keeps the highlight
+/// and hover never plants.
+fn track_crop_hover(options: Query<(&CropOption, &Interaction)>, mut menu: ResMut<CropSelectMenu>) {
+    if !menu.open {
+        return;
+    }
+    let hovered = crate::systems::crafting::hovered_row(
+        options
+            .iter()
+            .map(|(option, interaction)| (option.index, interaction)),
+    );
+    if menu.hovered != hovered {
+        menu.hovered = hovered;
+    }
+}
+
 pub struct CropSelectPlugin;
 
 impl Plugin for CropSelectPlugin {
@@ -161,6 +178,7 @@ impl Plugin for CropSelectPlugin {
                     close_crop_select_outside_farming,
                     crop_select_keyboard,
                     select_crop_on_click,
+                    track_crop_hover,
                 )
                     .chain()
                     .in_set(CropSelectSet::Menu),
@@ -402,6 +420,51 @@ mod tests {
         assert_eq!(pot(&app, pot_entity).state, PotState::Empty);
         assert!(planted(&app).is_empty());
         assert!(menu(&app).open);
+    }
+
+    #[test]
+    fn hovering_a_crop_row_previews_it_without_planting() {
+        let mut app = setup_app();
+        let pot_entity = spawn_pot(&mut app, 0);
+        open(&mut app, 0);
+
+        app.world_mut().spawn((
+            CropOption {
+                crop: CropType::CropA,
+                index: 1,
+            },
+            Interaction::Hovered,
+        ));
+        app.update();
+
+        assert_eq!(menu(&app).hovered, Some(1));
+        assert_eq!(menu(&app).selected, 0, "the highlight does not move");
+        assert_eq!(pot(&app, pot_entity).state, PotState::Empty);
+        assert!(planted(&app).is_empty(), "hover never plants");
+    }
+
+    #[test]
+    fn leaving_a_crop_row_clears_the_preview() {
+        let mut app = setup_app();
+        spawn_pot(&mut app, 0);
+        open(&mut app, 0);
+
+        let row = app
+            .world_mut()
+            .spawn((
+                CropOption {
+                    crop: CropType::CropA,
+                    index: 1,
+                },
+                Interaction::Hovered,
+            ))
+            .id();
+        app.update();
+        assert_eq!(menu(&app).hovered, Some(1));
+
+        *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::None;
+        app.update();
+        assert_eq!(menu(&app).hovered, None);
     }
 
     #[test]

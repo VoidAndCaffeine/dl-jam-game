@@ -263,7 +263,7 @@ fn crop_skin(crop: CropType) -> &'static str {
 }
 
 fn selected_piece(menu: &CraftingMenu, gear: &PlayerGear) -> Option<GearPiece> {
-    match row_action(menu.selected, &gear.owned)? {
+    match row_action(menu.preview_row(), &gear.owned)? {
         RowAction::Craft(piece) | RowAction::Equip(piece) => Some(piece),
     }
 }
@@ -599,6 +599,8 @@ fn preview_pane_node(flex_basis: f32) -> Node {
         flex_basis: Val::Percent(flex_basis),
         flex_grow: 0.0,
         flex_shrink: 1.0,
+        min_height: Val::Px(0.0),
+        min_width: Val::Px(0.0),
         flex_direction: FlexDirection::Column,
         align_items: AlignItems::Center,
         justify_content: JustifyContent::Center,
@@ -606,6 +608,7 @@ fn preview_pane_node(flex_basis: f32) -> Node {
         padding: UiRect::all(Val::Px(12.0)),
         border: UiRect::all(Val::Px(1.0)),
         border_radius: BorderRadius::all(Val::Px(6.0)),
+        overflow: Overflow::clip(),
         ..default()
     }
 }
@@ -616,6 +619,8 @@ fn list_pane_node(flex_basis: f32) -> Node {
         flex_basis: Val::Percent(flex_basis),
         flex_grow: 0.0,
         flex_shrink: 1.0,
+        min_height: Val::Px(0.0),
+        min_width: Val::Px(0.0),
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(6.0),
         padding: UiRect::all(Val::Px(10.0)),
@@ -1203,6 +1208,10 @@ fn spawn_boss_confirm(commands: &mut Commands, menu: &BossSelectMenu) {
                     Name::new("Boss Confirm Panel"),
                     Node {
                         width: Val::Px(560.0),
+                        max_width: Val::Percent(92.0),
+                        max_height: Val::Percent(88.0),
+                        min_height: Val::Px(0.0),
+                        overflow: Overflow::clip(),
                         flex_direction: FlexDirection::Column,
                         row_gap: Val::Px(12.0),
                         padding: UiRect::all(Val::Px(20.0)),
@@ -1302,7 +1311,7 @@ fn update_boss_concept(
     if !menu.open {
         return;
     }
-    let Some(selected) = BossId::ALL.get(menu.selected).copied() else {
+    let Some(selected) = BossId::ALL.get(menu.preview_index()).copied() else {
         return;
     };
     let dual = selected == BossId::Dual;
@@ -1540,7 +1549,7 @@ fn update_plant_preview(
     if !menu.open {
         return;
     }
-    let Some(crop) = CropType::ALL.get(menu.selected).copied() else {
+    let Some(crop) = CropType::ALL.get(menu.preview_index()).copied() else {
         return;
     };
     let (Some(server), Some(mut layouts), Some(mut cache)) = (server, layouts, cache) else {
@@ -2047,6 +2056,51 @@ mod tests {
         assert_eq!(
             app.world().get::<BackgroundColor>(row).unwrap().0,
             ROW_BG_HOVER
+        );
+    }
+
+    #[test]
+    fn the_preview_follows_the_hovered_row_without_crafting() {
+        let gear = PlayerGear::default();
+        let mut menu = CraftingMenu {
+            selected: 0,
+            ..default()
+        };
+        assert_eq!(
+            selected_piece(&menu, &gear),
+            Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
+        );
+
+        menu.hovered = Some(2);
+        assert_eq!(
+            selected_piece(&menu, &gear),
+            Some(GearPiece::new(GearSet::BossA, GearSlot::Weapon)),
+            "the hovered row's piece is previewed"
+        );
+        assert_eq!(menu.selected, 0, "the selection is untouched");
+    }
+
+    #[test]
+    fn the_forge_description_pane_follows_the_hovered_row() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        open_menu(&mut app);
+
+        // Keyboard selection stays on row 0; the mouse is over row 2.
+        app.world_mut().resource_mut::<CraftingMenu>().hovered = Some(2);
+        app.update();
+
+        let text = app
+            .world_mut()
+            .query_filtered::<&Text, With<GearDescription>>()
+            .iter(app.world())
+            .next()
+            .map(|text| text.0.clone())
+            .expect("description text");
+        assert!(text.contains("Spark Spearblade"), "got {text:?}");
+        assert!(
+            app.world().resource::<PlayerGear>().owned.is_empty(),
+            "previewing never crafts"
         );
     }
 

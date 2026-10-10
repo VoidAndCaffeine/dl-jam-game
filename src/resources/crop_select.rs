@@ -8,6 +8,10 @@ pub struct CropSelectMenu {
     pub open: bool,
     /// Index into [`crate::components::pot::CropType::ALL`].
     pub selected: usize,
+    /// The crop row under the mouse, if any. The sapling preview follows this
+    /// while `selected` keeps the keyboard highlight, so hovering previews a crop
+    /// without planting it. `None` means "preview `selected`".
+    pub hovered: Option<usize>,
     /// `Pot::index` the picker was opened for.
     pub pending_pot: usize,
 }
@@ -16,13 +20,21 @@ impl CropSelectMenu {
     pub fn open_menu(&mut self, pending_pot: usize) {
         self.open = true;
         self.selected = 0;
+        self.hovered = None;
         self.pending_pot = pending_pot;
     }
 
     pub fn close_menu(&mut self) {
         self.open = false;
         self.selected = 0;
+        self.hovered = None;
         self.pending_pot = 0;
+    }
+
+    /// The crop the preview should show: the hovered one if the mouse is over a
+    /// row, otherwise the keyboard selection.
+    pub fn preview_index(&self) -> usize {
+        self.hovered.unwrap_or(self.selected)
     }
 }
 
@@ -73,5 +85,21 @@ mod tests {
         assert!(menu.open);
         assert_eq!(menu.pending_pot, 7);
         assert_eq!(menu.selected, 0);
+    }
+
+    #[test]
+    fn hovered_clears_on_open_and_close_and_feeds_the_preview() {
+        let mut menu = CropSelectMenu::default();
+        assert_eq!(menu.hovered, None);
+
+        menu.open_menu(0);
+        menu.hovered = Some(2);
+        menu.close_menu();
+        assert_eq!(menu.hovered, None);
+
+        menu.selected = 1;
+        assert_eq!(menu.preview_index(), 1, "no hover falls back to selection");
+        menu.hovered = Some(2);
+        assert_eq!(menu.preview_index(), 2, "the hovered crop wins");
     }
 }
