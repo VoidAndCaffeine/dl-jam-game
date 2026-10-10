@@ -1,0 +1,54 @@
+# Trunk configuration for dl-jam WASM build
+# https://trunkrs.dev/config
+
+[build]
+# Cargo profile to use (matches index.html data-cargo-profile)
+profile = "wasm-release"
+
+# Use index.html as the HTML template (default behavior when no target specified)
+
+# Enable gzip compression for all copied assets
+# Generates .gz files alongside originals for web servers that support gzip_static
+gzip = true
+
+# Enable brotli compression (better ratio than gzip, supported by all modern browsers)
+# Generates .br files alongside originals
+brotli = true
+
+# Output directory (default: dist)
+# dist = "dist"
+
+# Release optimization: wasm-opt level "z" (size-focused)
+# Matches index.html data-wasm-opt="z"
+wasm-opt = "z"
+
+# Panic strategy for release: "abort" = smaller binary, no unwind info
+# panic-strategy = "abort"
+
+[watch]
+# Don't rebuild on these changes during `trunk serve`
+
+[serve]
+# Port for `trunk serve`
+port = 8080
+
+# Open browser automatically
+open = true
+
+# Headers for local development (helps with audio context, COOP/COEP for SharedArrayBuffer)
+# Format: "Header-Name" = "value"
+headers = { "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp", "Cache-Control" = "public, max-age=31536000, immutable" }
+
+# Proxy API calls if needed (not used here)
+# proxy = { "/api" = "http://localhost:3000" }
+
+[copy-dir]
+# Copy assets directory to dist/assets (matches index.html data-trunk rel="copy-dir")
+"assets" = { }
+
+# Copy any other static files if needed
+# "static" = { }
+
+[metadata]
+# Custom metadata passed to templates (accessible via {{ trunk_metadata_key }})
+# Not used in index.html but available if you switch to a .html template
