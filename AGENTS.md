@@ -181,7 +181,7 @@ it silently unlocks the next (`-->` in the design notes).
 
 | Tier | Goals |
 |------|-------|
-| First Sprout | Plant a Quicksilver Reed |
+| First Sprout | Plant a Quicksilver Reed · Water a Crop |
 | Tools of the Trade | Harvest a Quicksilver Reed · Craft a Full Gear Set (any set) · Beat The Excavator |
 | Beyond the Farm | Harvest a Cinder Cap · Beat Mercurial |
 | DreamLayer Mastery | Craft the Full DreamLayer Set (Dreaming Spearblade + Layered Aegis) · Beat the Dual Bossfight |
@@ -197,6 +197,8 @@ it silently unlocks the next (`-->` in the design notes).
   one) with `[x]`/`[ ]` markers; later tiers are hidden so nothing is spoiled.
 - `GoalsProgress` resets on `New Game` and is `Serialize/Deserialize + Reflect`,
   ready for save/load.
+- `Pot::plant` leaves the pot **dry** (`PotState::Planted`); watering is a
+  separate action, which is what makes the tier-one goals two steps.
 - `resources::goals::side_objectives` is an unused skeleton for future
   non-gating objectives.
 

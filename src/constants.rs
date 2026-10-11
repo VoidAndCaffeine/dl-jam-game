@@ -47,7 +47,7 @@ pub const ATTACK_DURATION: f32 = 0.2;
 // --- Bosses ---
 
 pub const BOSS_A_HEALTH: f32 = 810.0;
-pub const BOSS_B_HEALTH: f32 = 500.0;
+pub const BOSS_B_HEALTH: f32 = 625.0;
 /// The dual boss fights from a single shared pool.
 pub const DUAL_BOSS_HEALTH: f32 = 2000.0;
 
@@ -222,7 +222,7 @@ pub const DEBRIS_ACTIVE: f32 = boss_frame(4);
 pub const DEBRIS_RECOVERY: f32 = boss_frame(14);
 pub const DEBRIS_SHADOW_RADIUS: f32 = 24.0;
 pub const DEBRIS_IMPACT_RADIUS: f32 = 30.0;
-pub const DEBRIS_DAMAGE: f32 = 25.0;
+pub const DEBRIS_DAMAGE: f32 = 17.0;
 pub const DEBRIS_SPREAD: f32 = 220.0;
 /// How long the dust cloud lingers after a chunk lands. The landing damage is
 /// one-shot, so this is visual only.

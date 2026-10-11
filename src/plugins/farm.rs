@@ -926,7 +926,7 @@ mod tests {
             .world()
             .get::<Pot>(restored_index)
             .expect("pot is respawned");
-        assert_eq!(restored.state, PotState::Watered);
+        assert_eq!(restored.state, PotState::Planted);
         assert_eq!(restored.crop_type, CropType::CropA);
         assert_eq!(restored.days_remaining, CropType::CropA.growth_days());
     }
@@ -1259,16 +1259,17 @@ mod tests {
         let mut app = setup_farm_app();
         enter_playing(&mut app);
         let pot = pot_entity(&mut app, 0);
-        app.world_mut()
-            .get_mut::<Pot>(pot)
-            .unwrap()
-            .plant(CropType::CropA);
+        {
+            let mut planted = app.world_mut().get_mut::<Pot>(pot).unwrap();
+            planted.plant(CropType::CropA);
+            planted.water();
+        }
         app.update();
 
         let child = crop_child(&mut app, pot).unwrap();
         assert!(
             app.world().get::<CropSprite>(child).unwrap().watered,
-            "planting waters the crop, so it starts soaked"
+            "a watered crop is marked soaked"
         );
 
         // Next day it is planted but no longer watered until the player acts.

@@ -8,8 +8,8 @@ use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 use bevy::state::state::State;
 
-pub const OWNED_ROW_OFFSET: usize = RECIPE_COUNT;
-
+/// What a menu row does. The forge only ever offers `Craft`; `Equip` is the
+/// inventory panel's action for an owned piece.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAction {
     Craft(GearPiece),
@@ -55,18 +55,12 @@ pub struct RecipeRow {
     pub index: usize,
 }
 
-pub fn row_count(owned: &[GearPiece]) -> usize {
-    OWNED_ROW_OFFSET + owned.len()
-}
-
-pub fn row_action(row: usize, owned: &[GearPiece]) -> Option<RowAction> {
-    if row < OWNED_ROW_OFFSET {
-        let recipe = RECIPES.get(row)?;
-        return Some(RowAction::Craft(recipe.piece));
-    }
-    owned
-        .get(row - OWNED_ROW_OFFSET)
-        .map(|piece| RowAction::Equip(*piece))
+/// The forge has one row per recipe; owned pieces are handled in the inventory,
+/// so a crafted piece never appends a row here.
+pub fn row_action(row: usize) -> Option<RowAction> {
+    RECIPES
+        .get(row)
+        .map(|recipe| RowAction::Craft(recipe.piece))
 }
 
 pub fn perform(
@@ -208,13 +202,12 @@ pub fn close_menu_outside_farming(mut menu: ResMut<CraftingMenu>, phase: Phase) 
 pub fn move_menu_selection(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<CraftingMenu>,
-    gear: Res<PlayerGear>,
     phase: Phase,
 ) {
     if !phase.is_farming() || !menu.open {
         return;
     }
-    let last_row = row_count(&gear.owned).saturating_sub(1);
+    let last_row = RECIPE_COUNT.saturating_sub(1);
     let next = if keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS) {
         Some(menu.selected + 1)
     } else if keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW) {
@@ -235,7 +228,7 @@ pub fn craft_selected_row(keys: Res<ButtonInput<KeyCode>>, mut work: CraftingWor
     if !keys.just_pressed(KeyCode::Enter) && !keys.just_pressed(KeyCode::KeyE) {
         return;
     }
-    let Some(action) = row_action(work.menu.selected, &work.gear.owned) else {
+    let Some(action) = row_action(work.menu.selected) else {
         return;
     };
     let outcome = work.apply(action);
@@ -258,7 +251,7 @@ pub fn craft_row_on_click(
             continue;
         }
         work.menu.selected = row.index;
-        let Some(action) = row_action(row.index, &work.gear.owned) else {
+        let Some(action) = row_action(row.index) else {
             continue;
         };
         let outcome = work.apply(action);
@@ -446,30 +439,15 @@ mod tests {
 
     #[test]
     fn recipe_rows_map_to_craft_actions() {
-        let owned: Vec<GearPiece> = Vec::new();
         for (index, recipe) in RECIPES.iter().enumerate() {
-            assert_eq!(
-                row_action(index, &owned),
-                Some(RowAction::Craft(recipe.piece))
-            );
+            assert_eq!(row_action(index), Some(RowAction::Craft(recipe.piece)));
         }
     }
 
     #[test]
-    fn owned_rows_map_to_equip_actions() {
-        let owned = vec![starter_weapon()];
-        assert_eq!(row_count(&owned), RECIPE_COUNT + 1);
-        assert_eq!(
-            row_action(OWNED_ROW_OFFSET, &owned),
-            Some(RowAction::Equip(owned[0]))
-        );
-        assert_eq!(row_action(OWNED_ROW_OFFSET + 1, &owned), None);
-    }
-
-    #[test]
     fn row_action_out_of_range_is_none() {
-        assert_eq!(row_action(RECIPE_COUNT, &[]), None);
-        assert_eq!(row_action(99, &[]), None);
+        assert_eq!(row_action(RECIPE_COUNT), None);
+        assert_eq!(row_action(99), None);
     }
 
     #[test]
@@ -711,7 +689,7 @@ mod tests {
     }
 
     #[test]
-    fn selection_covers_owned_rows_after_crafting() {
+    fn selection_stays_within_recipes_after_crafting() {
         let mut app = setup_app();
         grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
@@ -721,9 +699,11 @@ mod tests {
         for _ in 0..RECIPE_COUNT {
             press(&mut app, KeyCode::ArrowDown);
         }
-        assert_eq!(menu(&app).selected, RECIPE_COUNT);
-        press(&mut app, KeyCode::ArrowDown);
-        assert_eq!(menu(&app).selected, RECIPE_COUNT);
+        assert_eq!(
+            menu(&app).selected,
+            RECIPE_COUNT - 1,
+            "crafting adds no owned rows to reach"
+        );
     }
 
     #[test]
@@ -761,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_equips_an_owned_piece_row() {
+    fn crafting_a_piece_auto_equips_it() {
         let mut app = setup_app();
         grant_starter_crops(&mut app, 5);
         open_menu(&mut app);
@@ -770,37 +750,9 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert_eq!(menu(&app).notice, "Crafted Cloth Tunic");
 
-        app.world_mut()
-            .resource_mut::<PlayerGear>()
-            .own(master_weapon());
-        select(&mut app, OWNED_ROW_OFFSET + 2);
-        press(&mut app, KeyCode::Enter);
-
-        assert_eq!(
-            menu(&app).notice,
-            "Equipped Dreaming Spearblade (Master Set)"
-        );
         let gear = gear(&app);
-        assert_eq!(gear.weapon, Some(master_weapon()));
+        assert_eq!(gear.weapon, Some(starter_weapon()));
         assert_eq!(gear.armor, Some(starter_armor()));
-    }
-
-    #[test]
-    fn enter_on_an_already_equipped_piece_reports_it() {
-        let mut app = setup_app();
-        grant_starter_crops(&mut app, 5);
-        open_menu(&mut app);
-        press(&mut app, KeyCode::Enter);
-        select(&mut app, 1);
-        press(&mut app, KeyCode::Enter);
-
-        select(&mut app, OWNED_ROW_OFFSET);
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(menu(&app).notice, "Starter Spearblade is already equipped");
-
-        select(&mut app, OWNED_ROW_OFFSET + 1);
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(menu(&app).notice, "Cloth Tunic is already equipped");
     }
 
     #[test]
@@ -855,33 +807,6 @@ mod tests {
         assert_eq!(gear(&app).owned.len(), 1);
         assert_eq!(menu(&app).selected, 0);
         assert_eq!(menu(&app).notice, "Crafted Starter Spearblade");
-    }
-
-    #[test]
-    fn clicking_an_owned_row_equips_that_piece() {
-        let mut app = setup_app();
-        grant_starter_crops(&mut app, 2);
-        open_menu(&mut app);
-        press(&mut app, KeyCode::Enter);
-
-        let row = app
-            .world_mut()
-            .spawn((
-                RecipeRow {
-                    index: OWNED_ROW_OFFSET,
-                },
-                Interaction::None,
-            ))
-            .id();
-        app.update();
-        *app.world_mut().get_mut::<Interaction>(row).unwrap() = Interaction::Pressed;
-        app.update();
-
-        assert_eq!(menu(&app).notice, "Starter Spearblade is already equipped");
-        assert_eq!(
-            gear(&app).equipped(GearSlot::Weapon),
-            Some(starter_weapon())
-        );
     }
 
     #[test]
@@ -973,32 +898,5 @@ mod tests {
         press(&mut app, KeyCode::Escape);
         assert!(!menu(&app).open);
         assert_eq!(menu(&app).hovered, None);
-    }
-
-    #[test]
-    fn hovering_an_owned_row_previews_equip_without_equipping() {
-        let mut app = setup_app();
-        grant_starter_crops(&mut app, 2);
-        open_menu(&mut app);
-        press(&mut app, KeyCode::Enter);
-        assert!(gear(&app).equipped(GearSlot::Weapon).is_some());
-
-        // Move the keyboard highlight off the owned row, then hover it.
-        select(&mut app, 0);
-        app.world_mut().spawn((
-            RecipeRow {
-                index: OWNED_ROW_OFFSET,
-            },
-            Interaction::Hovered,
-        ));
-        app.update();
-
-        assert_eq!(menu(&app).hovered, Some(OWNED_ROW_OFFSET));
-        assert_eq!(menu(&app).selected, 0);
-        assert_eq!(
-            equipped(&app).len(),
-            1,
-            "hovering an owned row does not equip it again"
-        );
     }
 }

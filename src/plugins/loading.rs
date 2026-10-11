@@ -197,7 +197,7 @@ fn spawn_loading_screen(
         ))
         .with_children(|screen| {
             screen.spawn((
-                Text::new(format!("Loading {title}…")),
+                Text::new(format!("Loading {title}...")),
                 TextFont {
                     font_size: FontSize::Px(26.0),
                     ..default()

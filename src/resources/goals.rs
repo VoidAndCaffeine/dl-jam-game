@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 pub enum GoalId {
     // Tier 1
     PlantStarter,
+    WaterCrop,
     // Tier 2
     HarvestStarter,
     CraftFullSet,
@@ -29,8 +30,9 @@ pub enum GoalId {
 }
 
 impl GoalId {
-    pub const ALL: [GoalId; 8] = [
+    pub const ALL: [GoalId; 9] = [
         GoalId::PlantStarter,
+        GoalId::WaterCrop,
         GoalId::HarvestStarter,
         GoalId::CraftFullSet,
         GoalId::BeatExcavator,
@@ -57,10 +59,16 @@ pub struct GoalTierDef {
 pub const GOAL_TIERS: &[GoalTierDef] = &[
     GoalTierDef {
         title: "First Sprout",
-        goals: &[GoalDef {
-            id: GoalId::PlantStarter,
-            description: "Plant a Quicksilver Reed",
-        }],
+        goals: &[
+            GoalDef {
+                id: GoalId::PlantStarter,
+                description: "Plant a Quicksilver Reed",
+            },
+            GoalDef {
+                id: GoalId::WaterCrop,
+                description: "Water a Crop",
+            },
+        ],
     },
     GoalTierDef {
         title: "Tools of the Trade",
@@ -263,14 +271,19 @@ mod tests {
         let goals = GoalsProgress::default();
         assert_eq!(goals.active_tier(), 0);
         assert!(goals.completed.is_empty());
-        assert_eq!(goals.active_goals(), vec![GoalId::PlantStarter]);
+        assert_eq!(
+            goals.active_goals(),
+            vec![GoalId::PlantStarter, GoalId::WaterCrop]
+        );
     }
 
     #[test]
-    fn completing_the_only_goal_of_tier_one_unlocks_tier_two() {
+    fn completing_tier_one_unlocks_tier_two() {
         let mut goals = GoalsProgress::default();
         assert!(goals.complete(GoalId::PlantStarter));
         assert!(!goals.complete(GoalId::PlantStarter), "idempotent");
+        assert_eq!(goals.active_tier(), 0, "watering is still outstanding");
+        goals.complete(GoalId::WaterCrop);
         goals.advance();
 
         assert_eq!(goals.active_tier(), 1);
@@ -349,6 +362,7 @@ mod tests {
         goals.complete(GoalId::PlantStarter);
         for id in [
             GoalId::HarvestStarter,
+            GoalId::WaterCrop,
             GoalId::CraftFullSet,
             GoalId::BeatExcavator,
         ] {

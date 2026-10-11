@@ -39,7 +39,6 @@ use bevy::ui::FocusPolicy;
 // --- Palette (aliased from the shared theme) ---------------------------------
 
 const RECIPE_NAME_WIDTH: f32 = 200.0;
-const OWNED_NAME_WIDTH: f32 = 200.0;
 const ITEM_NAME_WIDTH: f32 = 210.0;
 
 const PANEL_BG: Color = theme::PANEL_BG;
@@ -262,17 +261,16 @@ fn crop_skin(crop: CropType) -> &'static str {
     }
 }
 
-fn selected_piece(menu: &CraftingMenu, gear: &PlayerGear) -> Option<GearPiece> {
-    match row_action(menu.preview_row(), &gear.owned)? {
+fn selected_piece(menu: &CraftingMenu) -> Option<GearPiece> {
+    match row_action(menu.preview_row())? {
         RowAction::Craft(piece) | RowAction::Equip(piece) => Some(piece),
     }
 }
 
-fn row_title(index: usize, gear: &PlayerGear) -> String {
-    match row_action(index, &gear.owned) {
+fn row_title(index: usize) -> String {
+    match row_action(index) {
         Some(RowAction::Craft(piece)) => piece.name().to_string(),
-        Some(RowAction::Equip(piece)) => piece.name().to_string(),
-        None => String::new(),
+        _ => String::new(),
     }
 }
 
@@ -293,20 +291,10 @@ fn recipe_status(piece: GearPiece, inventory: &Inventory, gear: &PlayerGear) -> 
     }
 }
 
-fn owned_status(piece: GearPiece, gear: &PlayerGear) -> (String, Color) {
-    let slot = piece.slot.label();
-    if gear.is_equipped(&piece) {
-        (format!("{slot}  -  Equipped"), TEXT_CRAFTABLE)
-    } else {
-        (format!("{slot}  -  Equip"), TEXT_PRIMARY)
-    }
-}
-
 fn row_status(index: usize, inventory: &Inventory, gear: &PlayerGear) -> (String, Color) {
-    match row_action(index, &gear.owned) {
+    match row_action(index) {
         Some(RowAction::Craft(piece)) => recipe_status(piece, inventory, gear),
-        Some(RowAction::Equip(piece)) => owned_status(piece, gear),
-        None => (String::new(), TEXT_DIM),
+        _ => (String::new(), TEXT_DIM),
     }
 }
 
@@ -534,20 +522,9 @@ fn spawn_crafting_menu(
                                             recipes,
                                             index,
                                             default_visuals(art, server),
-                                            row_title(index, gear),
+                                            row_title(index),
                                             row_status(index, inventory, gear),
                                             RECIPE_NAME_WIDTH,
-                                        );
-                                    }
-                                    for (offset, _piece) in gear.owned.iter().enumerate() {
-                                        let index = RECIPE_COUNT + offset;
-                                        spawn_gear_row(
-                                            recipes,
-                                            index,
-                                            default_visuals(art, server),
-                                            row_title(index, gear),
-                                            row_status(index, inventory, gear),
-                                            OWNED_NAME_WIDTH,
                                         );
                                     }
                                 });
@@ -653,9 +630,10 @@ fn sync_crafting_menu(
     mut art: ResMut<MenuArt>,
     server: Option<Res<AssetServer>>,
     roots: Query<Entity, With<CraftingMenuRoot>>,
-    rows: Query<Entity, With<RecipeRow>>,
 ) {
     let existing: Vec<Entity> = roots.iter().collect();
+    // The forge is a fixed set of recipe rows, so it never needs a rebuild: it
+    // spawns on open, refreshes its text each frame, and despawns on close.
     let action = if !menu.open {
         if existing.is_empty() {
             MenuSync::Nothing
@@ -664,8 +642,6 @@ fn sync_crafting_menu(
         }
     } else if existing.is_empty() {
         MenuSync::Spawn
-    } else if rows.iter().count() != crate::systems::crafting::row_count(&gear.owned) {
-        MenuSync::Rebuild
     } else {
         MenuSync::Nothing
     };
@@ -728,7 +704,7 @@ fn refresh_crafting_menu(
                 color.0 = notice_color(&menu.notice);
             }
             MenuText::RowName(index) => {
-                *text = Text::new(row_title(*index, &gear));
+                *text = Text::new(row_title(*index));
             }
             MenuText::RowStatus(index) => {
                 let (value, value_color) = row_status(*index, &inventory, &gear);
@@ -741,7 +717,7 @@ fn refresh_crafting_menu(
         selected.0 = row.index == menu.selected;
     }
 
-    let (description_text, material_text) = match selected_piece(&menu, &gear) {
+    let (description_text, material_text) = match selected_piece(&menu) {
         Some(piece) => {
             let recipe = recipe_for_piece(piece);
             let materials = recipe
@@ -769,7 +745,6 @@ fn refresh_crafting_menu(
 /// weapon alternates its light and heavy swings.
 fn update_gear_preview(
     menu: Res<CraftingMenu>,
-    gear: Res<PlayerGear>,
     mut previews: Query<&mut AnimatedPreview, With<GearPreview>>,
     cache: Option<ResMut<PlayerSpriteAssets>>,
     layouts: Option<ResMut<Assets<TextureAtlasLayout>>>,
@@ -784,7 +759,7 @@ fn update_gear_preview(
     }
     let layout = cache.layout().cloned();
 
-    let Some(piece) = selected_piece(&menu, &gear) else {
+    let Some(piece) = selected_piece(&menu) else {
         return;
     };
     let look = PlayerLook::from_gear(piece.set);
@@ -1831,20 +1806,22 @@ mod tests {
     }
 
     #[test]
-    fn owned_pieces_append_rows_after_the_recipes() {
+    fn owned_pieces_do_not_append_rows_to_the_forge() {
         let mut app = setup_app();
         enter_playing(&mut app);
         *app.world_mut().resource_mut::<PlayerGear>() = gear_with_starter_set();
         open_menu(&mut app);
 
         let rows = row_entities(&mut app);
-        assert_eq!(rows.len(), RECIPE_COUNT + 2);
-        assert_eq!(rows[RECIPE_COUNT].0, RECIPE_COUNT);
-        assert_eq!(rows[RECIPE_COUNT + 1].0, RECIPE_COUNT + 1);
+        assert_eq!(
+            rows.len(),
+            RECIPE_COUNT,
+            "owned gear lives in the inventory, not the forge"
+        );
     }
 
     #[test]
-    fn gaining_pieces_while_open_grows_the_menu() {
+    fn gaining_pieces_while_open_does_not_grow_the_menu() {
         let mut app = setup_app();
         enter_playing(&mut app);
         open_menu(&mut app);
@@ -1854,13 +1831,7 @@ mod tests {
         app.world_mut().resource_mut::<PlayerGear>().own(piece);
         app.update();
 
-        let rows = row_entities(&mut app);
-        assert_eq!(rows.len(), RECIPE_COUNT + 1);
-        assert_eq!(rows.last().unwrap().0, RECIPE_COUNT);
-        assert_eq!(
-            row_text(&mut app, RECIPE_COUNT),
-            vec!["Starter Spearblade".to_string()]
-        );
+        assert_eq!(row_entities(&mut app).len(), RECIPE_COUNT);
     }
 
     #[test]
@@ -1991,23 +1962,6 @@ mod tests {
     }
 
     #[test]
-    fn owned_rows_show_slot_and_equip_state() {
-        let mut app = setup_app();
-        enter_playing(&mut app);
-        let mut gear = gear_with_starter_set();
-        gear.equip(&GearPiece::new(GearSet::Starter, GearSlot::Weapon));
-        *app.world_mut().resource_mut::<PlayerGear>() = gear;
-        open_menu(&mut app);
-
-        assert!(status_text(&mut app, RECIPE_COUNT)[0].contains("Weapon  -  Equipped"));
-        assert!(status_text(&mut app, RECIPE_COUNT + 1)[0].contains("Armor  -  Equip"));
-        assert_eq!(
-            row_text(&mut app, RECIPE_COUNT),
-            vec!["Starter Spearblade".to_string()]
-        );
-    }
-
-    #[test]
     fn notice_line_shows_the_last_action() {
         let mut app = setup_app();
         enter_playing(&mut app);
@@ -2061,19 +2015,18 @@ mod tests {
 
     #[test]
     fn the_preview_follows_the_hovered_row_without_crafting() {
-        let gear = PlayerGear::default();
         let mut menu = CraftingMenu {
             selected: 0,
             ..default()
         };
         assert_eq!(
-            selected_piece(&menu, &gear),
+            selected_piece(&menu),
             Some(GearPiece::new(GearSet::Starter, GearSlot::Weapon))
         );
 
         menu.hovered = Some(2);
         assert_eq!(
-            selected_piece(&menu, &gear),
+            selected_piece(&menu),
             Some(GearPiece::new(GearSet::BossA, GearSlot::Weapon)),
             "the hovered row's piece is previewed"
         );
@@ -2199,18 +2152,9 @@ mod tests {
     }
 
     #[test]
-    fn owned_status_line_marks_the_equipped_piece() {
-        let piece = GearPiece::new(GearSet::Starter, GearSlot::Armor);
-        let mut gear = gear_with_starter_set();
-        assert_eq!(owned_status(piece, &gear).0, "Armor  -  Equip");
-        gear.equip(&piece);
-        assert_eq!(owned_status(piece, &gear).0, "Armor  -  Equipped");
-    }
-
-    #[test]
     fn row_title_falls_back_to_empty_for_unknown_rows() {
-        assert_eq!(row_title(0, &PlayerGear::default()), "Starter Spearblade");
-        assert_eq!(row_title(RECIPE_COUNT, &PlayerGear::default()), "");
+        assert_eq!(row_title(0), "Starter Spearblade");
+        assert_eq!(row_title(RECIPE_COUNT), "");
     }
 
     #[test]

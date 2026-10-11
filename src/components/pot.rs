@@ -62,13 +62,13 @@ impl Pot {
         }
     }
 
-    /// Plants a crop already watered, so the day it is planted counts as its
-    /// first watered day. It still needs watering again on later days.
+    /// Plants a crop. It starts **dry**: it must be watered before it will grow,
+    /// so planting and watering are separate actions.
     pub fn plant(&mut self, crop_type: CropType) {
-        self.state = PotState::Watered;
+        self.state = PotState::Planted;
         self.crop_type = crop_type;
         self.days_remaining = crop_type.growth_days();
-        self.watered_today = true;
+        self.watered_today = false;
     }
 
     pub fn water(&mut self) -> bool {
@@ -131,10 +131,10 @@ mod tests {
     fn pot_plant_sets_correct_values() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::Starter);
-        assert_eq!(pot.state, PotState::Watered);
+        assert_eq!(pot.state, PotState::Planted, "planting leaves the pot dry");
         assert_eq!(pot.days_remaining, 1);
         assert_eq!(pot.crop_type, CropType::Starter);
-        assert!(pot.watered_today);
+        assert!(!pot.watered_today);
     }
 
     #[test]
@@ -155,9 +155,10 @@ mod tests {
     fn pot_water_works_once_per_day() {
         let mut pot = Pot::new(0);
         pot.plant(CropType::CropA); // 2-day crop for this test
-        assert!(!pot.water(), "planting already watered the crop");
+        assert!(pot.water(), "a freshly planted pot still needs water");
         assert_eq!(pot.state, PotState::Watered);
         assert!(pot.watered_today);
+        assert!(!pot.water(), "only one watering per day");
 
         pot.advance_day();
         assert_eq!(pot.state, PotState::Planted);
@@ -205,10 +206,7 @@ mod tests {
         pot.plant(CropType::Starter);
         assert_eq!(pot.harvest(), None);
         pot.water();
-        // After planting and watering (1 day crop), it's not ready until advance_day
-        // But wait - with 1 day growth, planting already waters, so after planting
-        // it's at 1 day remaining, then advance_day makes it 0 (ready)
-        // Let's use a 2-day crop for this test
+        // A planted-and-watered crop is not ready until the day advances.
         let mut pot2 = Pot::new(1);
         pot2.plant(CropType::CropA);
         pot2.water();
@@ -234,12 +232,17 @@ mod tests {
     fn pot_colors_match_states() {
         let mut pot = Pot::new(0);
         assert_eq!(pot.color(), Color::srgb(1.0, 0.2, 0.2));
-        pot.plant(CropType::CropA); // Use 2-day crop for multi-day progression
-        assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
-        pot.advance_day();
-        assert_eq!(pot.color(), Color::srgb(0.2, 1.0, 0.2));
+        pot.plant(CropType::CropA); // 2-day crop for multi-day progression
+        assert_eq!(
+            pot.color(),
+            Color::srgb(0.2, 1.0, 0.2),
+            "planted, still dry"
+        );
         pot.water();
         assert_eq!(pot.color(), Color::srgb(0.2, 0.4, 1.0));
+        pot.advance_day();
+        assert_eq!(pot.color(), Color::srgb(0.2, 1.0, 0.2), "needs water again");
+        pot.water();
         pot.advance_day();
         assert_eq!(pot.color(), Color::srgb(0.8, 0.2, 0.8));
     }

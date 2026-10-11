@@ -296,8 +296,8 @@ mod tests {
 
         assert_eq!(
             menu_rows(&mut app),
-            RECIPE_COUNT + 2,
-            "both owned pieces get rows"
+            RECIPE_COUNT,
+            "crafting does not add owned rows to the forge"
         );
 
         tap_key(&mut app, KeyCode::Escape);
@@ -549,7 +549,7 @@ mod tests {
         tap_key(&mut app, KeyCode::Enter);
 
         let planted = app.world().get::<Pot>(pot).expect("pot still exists");
-        assert_eq!(planted.state, PotState::Watered);
+        assert_eq!(planted.state, PotState::Planted);
         assert_eq!(planted.crop_type, CropType::CropA);
         assert!(!app.world().resource::<CropSelectMenu>().open);
         assert!(crop_roots(&mut app).is_empty());

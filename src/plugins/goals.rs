@@ -9,7 +9,7 @@
 //! every tier the player has reached (see [`crate::plugins::pause`]).
 
 use crate::components::gear::GearSet;
-use crate::events::{BossDefeated, CropHarvested, CropPlanted, GearCrafted};
+use crate::events::{BossDefeated, CropHarvested, CropPlanted, CropWatered, GearCrafted};
 use crate::resources::goals::{
     GoalId, GoalsProgress, description_for, goal_for_boss, goal_for_harvest, goal_for_plant,
 };
@@ -51,6 +51,7 @@ impl Plugin for GoalsPlugin {
             // owning them here keeps the plugin usable on its own in tests.
             .add_message::<CropPlanted>()
             .add_message::<CropHarvested>()
+            .add_message::<CropWatered>()
             .add_message::<GearCrafted>()
             .add_message::<BossDefeated>()
             .add_systems(OnEnter(GameState::Playing), spawn_goals_hud)
@@ -196,6 +197,7 @@ fn track_goals(
     gear: Res<PlayerGear>,
     mut planted: MessageReader<CropPlanted>,
     mut harvested: MessageReader<CropHarvested>,
+    mut watered: MessageReader<CropWatered>,
     mut crafted: MessageReader<GearCrafted>,
     mut defeated: MessageReader<BossDefeated>,
 ) {
@@ -208,6 +210,9 @@ fn track_goals(
         if let Some(goal) = goal_for_harvest(event.0) {
             goals.complete(goal);
         }
+    }
+    for _ in watered.read() {
+        goals.complete(GoalId::WaterCrop);
     }
     for event in crafted.read() {
         let piece = event.0;
@@ -423,7 +428,7 @@ mod tests {
                 .next()
                 .is_some()
         );
-        assert_eq!(row_count(&mut app), 1, "tier one shows its single goal");
+        assert_eq!(row_count(&mut app), 2, "tier one shows its two goals");
 
         app.world_mut()
             .resource_mut::<NextState<GameState>>()
@@ -442,15 +447,24 @@ mod tests {
     }
 
     #[test]
-    fn planting_the_starter_crop_finishes_the_first_tier() {
+    fn planting_and_watering_finish_the_first_tier() {
         let mut app = setup_app();
         enter_playing(&mut app);
 
         app.world_mut()
             .write_message(CropPlanted(CropType::Starter));
         app.update();
-
         assert!(goals(&app).is_completed(GoalId::PlantStarter));
+        assert_eq!(
+            goals(&app).active_tier(),
+            0,
+            "watering is still outstanding"
+        );
+
+        app.world_mut().write_message(CropWatered);
+        app.update();
+
+        assert!(goals(&app).is_completed(GoalId::WaterCrop));
         assert_eq!(goals(&app).active_tier(), 1, "tier two is released");
         assert_eq!(
             goals(&app).active_goals(),
@@ -463,12 +477,24 @@ mod tests {
     }
 
     #[test]
+    fn watering_a_crop_completes_the_water_goal() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+
+        app.world_mut().write_message(CropWatered);
+        app.update();
+
+        assert!(goals(&app).is_completed(GoalId::WaterCrop));
+    }
+
+    #[test]
     fn harvesting_and_crafting_and_bossing_release_the_third_tier() {
         let mut app = setup_app();
         enter_playing(&mut app);
-        // Jump to tier two.
+        // Jump to tier two: plant, then water.
         app.world_mut()
             .write_message(CropPlanted(CropType::Starter));
+        app.world_mut().write_message(CropWatered);
         app.update();
         assert_eq!(goals(&app).active_tier(), 1);
 
@@ -484,6 +510,7 @@ mod tests {
         app.update();
 
         assert!(goals(&app).is_completed(GoalId::HarvestStarter));
+        assert!(goals(&app).is_completed(GoalId::WaterCrop));
         assert!(goals(&app).is_completed(GoalId::CraftFullSet));
         assert!(goals(&app).is_completed(GoalId::BeatExcavator));
         assert_eq!(goals(&app).active_tier(), 2);
@@ -523,29 +550,28 @@ mod tests {
     fn a_completed_goal_row_animates_out_and_the_list_reflows() {
         let mut app = setup_app();
         enter_playing(&mut app);
-        assert_eq!(row_count(&mut app), 1);
+        assert_eq!(row_count(&mut app), 2, "tier one shows its two goals");
 
         app.world_mut()
             .write_message(CropPlanted(CropType::Starter));
         app.update();
 
         // The same frame the goal lands, its row begins the exit animation.
-        let anim = app
+        let striking = app
             .world_mut()
             .query_filtered::<&GoalRowAnim, With<GoalRow>>()
             .iter(app.world())
-            .next()
-            .copied()
-            .expect("row exists");
-        assert!(matches!(anim, GoalRowAnim::Striking { .. }), "got {anim:?}");
+            .any(|anim| matches!(anim, GoalRowAnim::Striking { .. }));
+        assert!(striking, "the planted goal's row strikes through");
 
         // Run the clock past strike + fade + collapse (50ms per frame).
         for _ in 0..40 {
             advance(&mut app);
         }
 
-        // The struck row is gone and tier two's three goals now occupy the list.
-        assert_eq!(row_count(&mut app), 3);
+        // The struck row is gone; the outstanding "Water a Crop" row remains.
+        assert_eq!(row_count(&mut app), 1);
+        assert_eq!(goals(&app).active_goals(), vec![GoalId::WaterCrop]);
     }
 
     #[test]

@@ -228,7 +228,10 @@ fn farm_day(app: &mut App, crop: CropType) {
         let mut query = app.world_mut().query::<&mut Pot>();
         for mut pot in query.iter_mut(app.world_mut()) {
             match pot.state {
-                PotState::Empty => pot.plant(crop),
+                PotState::Empty => {
+                    pot.plant(crop);
+                    pot.water();
+                }
                 PotState::Planted => {
                     pot.water();
                 }
