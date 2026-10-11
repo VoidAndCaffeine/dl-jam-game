@@ -27,7 +27,12 @@ pub struct CropPlanted(pub crate::components::pot::CropType);
 pub struct CropWatered;
 
 #[derive(Message, Debug, Clone)]
-pub struct CropHarvested(pub crate::components::pot::CropType);
+pub struct CropHarvested {
+    pub crop: crate::components::pot::CropType,
+    /// Where the crop came out of the ground, so the harvest burst can rise from
+    /// the pot rather than from the farmer.
+    pub position: Vec2,
+}
 
 #[derive(Message, Debug, Clone, Copy)]
 pub struct GearCrafted(pub crate::components::gear::GearPiece);

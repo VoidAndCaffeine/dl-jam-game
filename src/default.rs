@@ -416,8 +416,10 @@ mod tests {
     fn the_inventory_shows_harvested_crops() {
         let mut app = setup_game_app();
         enter_playing(&mut app);
-        app.world_mut()
-            .write_message(crate::events::CropHarvested(CropType::Starter));
+        app.world_mut().write_message(crate::events::CropHarvested {
+            crop: CropType::Starter,
+            position: Vec2::ZERO,
+        });
         app.update();
         app.update();
         tap_key(&mut app, KeyCode::KeyI);

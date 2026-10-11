@@ -371,7 +371,7 @@ fn despawn_pots(
 
 fn pot_interaction_handler(
     mut events: MessageReader<InteractionEvent>,
-    mut pots: Query<&mut Pot>,
+    mut pots: Query<(&mut Pot, Option<&Transform>)>,
     mut crop_select: ResMut<CropSelectMenu>,
     mut watered_events: MessageWriter<CropWatered>,
     mut harvested_events: MessageWriter<CropHarvested>,
@@ -384,9 +384,12 @@ fn pot_interaction_handler(
         if !phase.is_farming() {
             continue;
         }
-        let Ok(mut pot) = pots.get_mut(event.entity) else {
+        let Ok((mut pot, transform)) = pots.get_mut(event.entity) else {
             continue;
         };
+        let position = transform
+            .map(|transform| transform.translation.truncate())
+            .unwrap_or(Vec2::ZERO);
 
         match pot.state {
             PotState::Empty => {
@@ -404,7 +407,7 @@ fn pot_interaction_handler(
             }
             PotState::Ready => {
                 if let Some(crop) = pot.harvest() {
-                    harvested_events.write(CropHarvested(crop));
+                    harvested_events.write(CropHarvested { crop, position });
                 }
             }
         }
@@ -417,7 +420,7 @@ fn harvest_into_inventory(
     mut sfx: MessageWriter<PlaySfx>,
 ) {
     for event in events.read() {
-        inventory.add_crop(event.0, 1);
+        inventory.add_crop(event.crop, 1);
         sfx.write(PlaySfx(Sfx::CropHarvest));
     }
 }
@@ -1007,7 +1010,10 @@ mod tests {
             .expect("pot entity")
             .harvest()
             .expect("ripe pot yields a crop");
-        app.world_mut().write_message(CropHarvested(crop));
+        app.world_mut().write_message(CropHarvested {
+            crop,
+            position: Vec2::ZERO,
+        });
         app.update();
 
         request_level(&mut app, LevelId::ArenaB);
@@ -1035,7 +1041,10 @@ mod tests {
             .harvest()
             .expect("ripe pot yields a crop");
 
-        app.world_mut().write_message(CropHarvested(crop));
+        app.world_mut().write_message(CropHarvested {
+            crop,
+            position: Vec2::ZERO,
+        });
         app.update();
 
         let inventory = app.world().resource::<Inventory>();
@@ -1049,12 +1058,16 @@ mod tests {
         enter_playing(&mut app);
 
         for _ in 0..3 {
-            app.world_mut()
-                .write_message(CropHarvested(CropType::Starter));
+            app.world_mut().write_message(CropHarvested {
+                crop: CropType::Starter,
+                position: Vec2::ZERO,
+            });
         }
         for _ in 0..2 {
-            app.world_mut()
-                .write_message(CropHarvested(CropType::CropA));
+            app.world_mut().write_message(CropHarvested {
+                crop: CropType::CropA,
+                position: Vec2::ZERO,
+            });
         }
         app.update();
 

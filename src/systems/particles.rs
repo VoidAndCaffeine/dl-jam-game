@@ -158,29 +158,25 @@ fn spawn_hit_particles(
     }
 }
 
-/// A puff of leaves over the farmer on a harvest.
+/// A puff of leaves rising from the pot a crop came out of.
 fn spawn_harvest_particles(
     mut commands: Commands,
     mut rng: ResMut<ParticleRng>,
     mut harvested: MessageReader<CropHarvested>,
-    players: Query<&Transform, With<Player>>,
 ) {
-    let origin = players.single().ok().map(|t| t.translation.truncate());
-    for _ in harvested.read() {
-        if let Some(origin) = origin {
-            spawn_burst(
-                &mut commands,
-                &mut rng,
-                origin,
-                Burst {
-                    count: 10,
-                    speed: (55.0, 130.0),
-                    life: (0.4, 0.65),
-                    gravity: 260.0,
-                    colors: &HARVEST_COLORS,
-                },
-            );
-        }
+    for event in harvested.read() {
+        spawn_burst(
+            &mut commands,
+            &mut rng,
+            event.position,
+            Burst {
+                count: 10,
+                speed: (55.0, 130.0),
+                life: (0.4, 0.65),
+                gravity: 260.0,
+                colors: &HARVEST_COLORS,
+            },
+        );
     }
 }
 
@@ -300,12 +296,13 @@ mod tests {
     }
 
     #[test]
-    fn a_harvest_bursts_over_the_farmer() {
+    fn a_harvest_bursts_from_the_pot() {
         let mut app = setup_app();
-        app.world_mut()
-            .spawn((Player, Transform::from_xyz(40.0, 8.0, 1.0)));
-        app.world_mut()
-            .write_message(CropHarvested(crate::components::pot::CropType::Starter));
+        // No player at all: the burst comes from the event's pot position.
+        app.world_mut().write_message(CropHarvested {
+            crop: crate::components::pot::CropType::Starter,
+            position: Vec2::new(40.0, 8.0),
+        });
         app.update();
 
         let spawned = particles(&mut app);

@@ -207,7 +207,7 @@ fn track_goals(
         }
     }
     for event in harvested.read() {
-        if let Some(goal) = goal_for_harvest(event.0) {
+        if let Some(goal) = goal_for_harvest(event.crop) {
             goals.complete(goal);
         }
     }
@@ -498,8 +498,10 @@ mod tests {
         app.update();
         assert_eq!(goals(&app).active_tier(), 1);
 
-        app.world_mut()
-            .write_message(CropHarvested(CropType::Starter));
+        app.world_mut().write_message(CropHarvested {
+            crop: CropType::Starter,
+            position: Vec2::ZERO,
+        });
         own_set(&mut app, GearSet::Starter);
         app.world_mut().write_message(GearCrafted(GearPiece::new(
             GearSet::Starter,

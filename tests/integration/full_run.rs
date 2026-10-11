@@ -245,7 +245,10 @@ fn farm_day(app: &mut App, crop: CropType) {
         }
     }
     for grown in harvested {
-        app.world_mut().write_message(CropHarvested(grown));
+        app.world_mut().write_message(CropHarvested {
+            crop: grown,
+            position: Vec2::ZERO,
+        });
     }
     app.update();
 }
