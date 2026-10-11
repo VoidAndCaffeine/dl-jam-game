@@ -8,12 +8,13 @@ use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
 use crate::resources::boss_sprite::BossSpriteAssets;
+use crate::resources::difficulty::Difficulty;
 use crate::resources::effect_sprite::EffectSpriteAssets;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
 use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
-use crate::states::{DayPhase, Phase};
+use crate::states::{DayPhase, GameState, Phase};
 use crate::systems::attack_effect::AttackEffectAssets;
 use crate::systems::boss_ai::boss_ai;
 use crate::systems::boss_animation::{animate_boss_sprite, drive_boss_animation};
@@ -42,6 +43,7 @@ impl Plugin for BossPlugin {
             .init_resource::<BossRng>()
             .init_resource::<BossCoordinator>()
             .init_resource::<SharedBossHealth>()
+            .init_resource::<Difficulty>()
             .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
             .init_resource::<BossSpriteAssets>()
@@ -97,6 +99,14 @@ impl Plugin for BossPlugin {
             .add_systems(
                 OnExit(DayPhase::BossFight),
                 (despawn_boss, cleanup_boss_encounter, end_encounter),
+            )
+            // A permadeath death leaves `Playing` for `Victory` without passing
+            // through `Result`, and `DayPhase`'s exit schedule does not run when
+            // its parent state goes away. Sweep the encounter here too so the
+            // boss never follows the player back to the farm.
+            .add_systems(
+                OnExit(GameState::Playing),
+                (despawn_boss, cleanup_boss_encounter, end_encounter),
             );
 
         // A custom 2D material needs the asset infrastructure that only the
@@ -109,12 +119,20 @@ impl Plugin for BossPlugin {
     }
 }
 
+/// The level, spawn markers and difficulty a boss spawn reads, bundled so the
+/// signature stays readable.
+#[derive(bevy::ecs::system::SystemParam)]
+struct BossSpawnContext<'w> {
+    active: Res<'w, ActiveLevel>,
+    spawn: Res<'w, BossSpawn>,
+    difficulty: Res<'w, Difficulty>,
+}
+
 /// Spawns the arena's boss(es) once the room has loaded, so they land on the
 /// level's `b` marker(s). The dual arena spawns one entity per half.
 fn spawn_boss(
     mut commands: Commands,
-    active: Res<ActiveLevel>,
-    spawn: Res<BossSpawn>,
+    context: BossSpawnContext,
     phase: Phase,
     bosses: Query<(), With<Boss>>,
     mut shared: ResMut<SharedBossHealth>,
@@ -123,14 +141,17 @@ fn spawn_boss(
     if !phase.is_boss_fight() || !bosses.is_empty() {
         return;
     }
-    let Some(id) = boss_for_level(active.id) else {
+    let Some(id) = boss_for_level(context.active.id) else {
         return;
     };
 
+    let health_multiplier = context.difficulty.boss_health_multiplier();
+    let damage_multiplier = context.difficulty.boss_damage_multiplier();
+
     if id == crate::components::boss::BossId::Dual {
-        shared.reset();
+        shared.reset_scaled(health_multiplier);
         coordinator.begin();
-        let mut spots = spawn.all();
+        let mut spots = context.spawn.all();
         if spots.len() < 2 {
             spots.push(spots.first().copied().unwrap_or(Vec2::ZERO) + Vec2::new(96.0, 0.0));
         }
@@ -145,6 +166,8 @@ fn spawn_boss(
                 role.id().color(),
                 position,
                 Some(role),
+                health_multiplier,
+                damage_multiplier,
             );
         }
         return;
@@ -152,10 +175,25 @@ fn spawn_boss(
 
     coordinator.end();
     shared.reset();
-    let position = spawn.all().first().copied().unwrap_or(spawn.position);
-    spawn_one(&mut commands, id, id.size(), id.color(), position, None);
+    let position = context
+        .spawn
+        .all()
+        .first()
+        .copied()
+        .unwrap_or(context.spawn.position);
+    spawn_one(
+        &mut commands,
+        id,
+        id.size(),
+        id.color(),
+        position,
+        None,
+        health_multiplier,
+        damage_multiplier,
+    );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_one(
     commands: &mut Commands,
     id: crate::components::boss::BossId,
@@ -163,12 +201,14 @@ fn spawn_one(
     color: Color,
     position: Vec2,
     role: Option<DualRole>,
+    health_multiplier: f32,
+    damage_multiplier: f32,
 ) {
     let pack = role
         .map(BossPack::from_role)
         .unwrap_or_else(|| BossPack::from_id(id));
     let mut entity = commands.spawn((
-        Boss::new_at(id, position),
+        Boss::new_scaled(id, position, health_multiplier, damage_multiplier),
         BossBrain::with_opening_grace(),
         BossAnimation::new(pack, position),
         Targetable,
@@ -330,6 +370,39 @@ mod tests {
     }
 
     #[test]
+    fn a_boss_spawns_with_difficulty_scaled_health() {
+        let mut app = setup_app();
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Hard;
+        enter_fight(&mut app, crate::levels::LevelId::ArenaA);
+
+        let entity = boss_entity(&mut app);
+        let boss = *app.world().get::<Boss>(entity).unwrap();
+        let expected = BossId::BossA.max_health() * Difficulty::Hard.boss_health_multiplier();
+        assert!(
+            (boss.max_health - expected).abs() < 0.01,
+            "health scales with difficulty"
+        );
+        assert_eq!(boss.health, boss.max_health);
+        assert_eq!(
+            boss.damage_multiplier,
+            Difficulty::Hard.boss_damage_multiplier(),
+            "the attack scale is captured at spawn"
+        );
+    }
+
+    #[test]
+    fn the_dual_pool_scales_with_difficulty_too() {
+        let mut app = setup_app();
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Apocalypse;
+        enter_fight(&mut app, crate::levels::LevelId::ArenaDual);
+
+        let shared = app.world().resource::<SharedBossHealth>();
+        let expected =
+            crate::constants::DUAL_BOSS_HEALTH * Difficulty::Apocalypse.boss_health_multiplier();
+        assert!((shared.max - expected).abs() < 0.01);
+    }
+
+    #[test]
     fn a_boss_holds_off_until_the_opening_grace_elapses() {
         let mut app = setup_app();
         enter_fight(&mut app, crate::levels::LevelId::ArenaA);
@@ -415,6 +488,31 @@ mod tests {
                 .iter(app.world())
                 .next()
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn leaving_play_from_a_fight_removes_the_boss() {
+        let mut app = setup_app();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaA);
+        let entity = boss_entity(&mut app);
+        assert!(app.world().get::<Boss>(entity).is_some());
+
+        // Permadeath death jumps straight to `Victory`, skipping `Result`.
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        for _ in 0..2 {
+            app.update();
+        }
+
+        assert!(
+            app.world_mut()
+                .query_filtered::<Entity, With<Boss>>()
+                .iter(app.world())
+                .next()
+                .is_none(),
+            "the boss is swept when play ends, however it ends"
         );
     }
 }

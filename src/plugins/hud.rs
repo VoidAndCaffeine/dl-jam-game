@@ -1,5 +1,6 @@
 use crate::components::boss::{Boss, BossSpawnMarker};
 use crate::components::player::{Health, Player};
+use crate::resources::difficulty::Difficulty;
 use crate::resources::farm::DayCounter;
 use crate::resources::player_status::PlayerStatus;
 use crate::states::{GameState, Phase};
@@ -45,12 +46,14 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(GameState::Playing), spawn_hud)
             .add_systems(OnExit(GameState::Playing), despawn_hud)
+            .init_resource::<Difficulty>()
             .add_systems(
                 Update,
                 (
                     update_player_health,
                     update_boss_health,
                     update_day_text,
+                    update_difficulty_text,
                     update_hints,
                     pulse_hints,
                 )
@@ -70,6 +73,10 @@ pub struct BossHealthGroup;
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct DayText;
+
+/// The difficulty under the day counter, top-right.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct DifficultyText;
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct HintsText;
@@ -236,18 +243,31 @@ fn spawn_hud(mut commands: Commands) {
                 spawn_health_bar(group, BossHealthBar);
             });
 
-            // Day counter - top-right.
+            // Day counter and difficulty - top-right, stacked.
             hud.spawn((
-                Name::new("Day"),
-                DayText,
-                label("DAY 1", 20.0, TEXT_PRIMARY),
+                Name::new("Status"),
                 Node {
                     position_type: PositionType::Absolute,
                     right: Val::Px(HUD_PADDING),
                     top: Val::Px(HUD_PADDING),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::FlexEnd,
+                    row_gap: Val::Px(2.0),
                     ..default()
                 },
-            ));
+            ))
+            .with_children(|status| {
+                status.spawn((
+                    Name::new("Day"),
+                    DayText,
+                    label("DAY 1", 20.0, TEXT_PRIMARY),
+                ));
+                status.spawn((
+                    Name::new("Difficulty"),
+                    DifficultyText,
+                    label(Difficulty::default().label(), 14.0, TEXT_DIM),
+                ));
+            });
 
             // Contextual hints - bottom-center.
             hud.spawn((
@@ -341,6 +361,18 @@ fn update_day_text(day: Res<DayCounter>, mut texts: Query<&mut Text, With<DayTex
     for mut text in texts.iter_mut() {
         if text.0 != value {
             text.0 = value.clone();
+        }
+    }
+}
+
+fn update_difficulty_text(
+    difficulty: Res<Difficulty>,
+    mut texts: Query<&mut Text, With<DifficultyText>>,
+) {
+    let value = difficulty.label();
+    for mut text in texts.iter_mut() {
+        if text.0 != value {
+            text.0 = value.to_string();
         }
     }
 }
@@ -536,6 +568,15 @@ mod tests {
             .expect("day text exists")
     }
 
+    fn difficulty_text(app: &mut App) -> String {
+        app.world_mut()
+            .query_filtered::<&Text, With<DifficultyText>>()
+            .iter(app.world())
+            .next()
+            .map(|text| text.0.clone())
+            .expect("difficulty text exists")
+    }
+
     fn hints_text(app: &mut App) -> String {
         app.world_mut()
             .query_filtered::<&Text, With<HintsText>>()
@@ -679,6 +720,18 @@ mod tests {
         tick(&mut app);
 
         assert_eq!(day_text(&mut app), "DAY 4");
+    }
+
+    #[test]
+    fn difficulty_text_tracks_the_difficulty() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        assert_eq!(difficulty_text(&mut app), "Normal");
+
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Permadeath;
+        tick(&mut app);
+
+        assert_eq!(difficulty_text(&mut app), "Permadeath");
     }
 
     #[test]

@@ -104,6 +104,10 @@ pub struct Boss {
     pub wander_angle: f32,
     /// Where the boss was spawned; the placeholder wander orbits this point.
     pub home: [f32; 2],
+    /// Difficulty's damage scale, captured when the boss spawned so a mid-fight
+    /// difficulty change waits for the next fight. Every attack it throws
+    /// carries this.
+    pub damage_multiplier: f32,
 }
 
 impl Boss {
@@ -112,15 +116,26 @@ impl Boss {
     }
 
     pub fn new_at(id: BossId, home: Vec2) -> Self {
-        let health = id.max_health();
+        Self::new_scaled(id, home, 1.0, 1.0)
+    }
+
+    /// Builds a boss with difficulty-scaled health and attack damage.
+    pub fn new_scaled(
+        id: BossId,
+        home: Vec2,
+        health_multiplier: f32,
+        damage_multiplier: f32,
+    ) -> Self {
+        let max_health = id.max_health() * health_multiplier;
         Self {
             id,
-            health,
-            max_health: health,
+            health: max_health,
+            max_health,
             phase: 1,
             stun_remaining: 0.0,
             wander_angle: 0.0,
             home: [home.x, home.y],
+            damage_multiplier,
         }
     }
 
@@ -407,6 +422,10 @@ pub struct BossAttack {
     pub armed: bool,
     /// Set the first frame the attack activates, so one-shot effects fire once.
     pub impacted: bool,
+    /// The spawning boss's difficulty damage scale. Applied when the attack
+    /// deals damage; derived hazards inherit it so a whole pattern scales
+    /// together.
+    pub multiplier: f32,
 }
 
 impl BossAttack {
@@ -429,7 +448,14 @@ impl BossAttack {
             aim_offset: 0.0,
             armed: true,
             impacted: false,
+            multiplier: 1.0,
         }
+    }
+
+    /// Sets the difficulty damage scale this attack deals.
+    pub fn with_multiplier(mut self, multiplier: f32) -> Self {
+        self.multiplier = multiplier;
+        self
     }
 
     pub fn owned_by(mut self, owner: Entity) -> Self {
@@ -602,6 +628,22 @@ mod tests {
     #[test]
     fn boss_default_id_is_boss_a() {
         assert_eq!(BossId::default(), BossId::BossA);
+    }
+
+    #[test]
+    fn a_scaled_boss_takes_its_health_and_damage_scale() {
+        let boss = Boss::new_scaled(BossId::BossA, Vec2::new(5.0, 6.0), 2.0, 1.5);
+        assert_eq!(boss.max_health, BOSS_A_HEALTH * 2.0);
+        assert_eq!(boss.health, boss.max_health);
+        assert_eq!(boss.damage_multiplier, 1.5);
+        assert_eq!(boss.home, [5.0, 6.0]);
+    }
+
+    #[test]
+    fn an_unscaled_boss_keeps_the_baseline_multipliers() {
+        let boss = Boss::new(BossId::BossB);
+        assert_eq!(boss.max_health, BOSS_B_HEALTH);
+        assert_eq!(boss.damage_multiplier, 1.0);
     }
 
     #[test]

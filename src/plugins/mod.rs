@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod boss;
 pub mod day_cycle;
+pub mod difficulty;
 pub mod farm;
 pub mod gear;
 pub mod hud;
@@ -16,6 +17,7 @@ pub mod ui_theme;
 pub use audio::AudioPlugin;
 pub use boss::BossPlugin;
 pub use day_cycle::DayCyclePlugin;
+pub use difficulty::{DifficultyPlugin, DifficultySet};
 pub use farm::FarmPlugin;
 pub use gear::GearPlugin;
 pub use hud::HudPlugin;

@@ -27,6 +27,10 @@ pub const ROW_BG_SELECTED: Color = Color::srgba(0.30, 0.28, 0.14, 0.98);
 pub const ROW_BG_DISABLED: Color = Color::srgba(0.10, 0.10, 0.13, 0.9);
 pub const ROW_BORDER: Color = Color::srgba(0.30, 0.30, 0.38, 1.0);
 pub const ROW_BORDER_SELECTED: Color = Color::srgb(1.0, 0.85, 0.20);
+/// Border painted while a locked button flashes to refuse a click.
+pub const ROW_BORDER_LOCKED: Color = Color::srgb(1.0, 0.25, 0.25);
+/// How long the refusal flash stays lit.
+pub const FLASH_SECONDS: f32 = 0.45;
 
 pub const PANEL_WIDTH: f32 = 1040.0;
 pub const ROW_HEIGHT: f32 = 44.0;
@@ -61,6 +65,21 @@ pub struct MenuButton {
 /// Set by a menu's refresh system to mark the currently highlighted button.
 #[derive(Component, Reflect, Debug, Clone, Copy, Default)]
 pub struct MenuButtonSelected(pub bool);
+
+/// A short red border flash a button shows when it refuses a press (a locked
+/// `Difficulty` slot, for instance). Attach it to any [`MenuButton`] and call
+/// [`MenuButtonFlash::trigger`]; the timer runs on real time so it still ticks
+/// while virtual time is paused behind an overlay.
+#[derive(Component, Reflect, Debug, Clone, Copy, Default)]
+pub struct MenuButtonFlash {
+    pub remaining: f32,
+}
+
+impl MenuButtonFlash {
+    pub fn trigger(&mut self) {
+        self.remaining = FLASH_SECONDS;
+    }
+}
 
 /// The texture handles for a button's three visual states.
 #[derive(Component, Debug, Clone, Default)]
@@ -318,21 +337,24 @@ fn sliced_frame() -> NodeImageMode {
 }
 
 /// Paints every menu button from its interaction, selection and enabled state.
+#[allow(clippy::type_complexity)]
 fn style_menu_buttons(
     mut buttons: Query<(
         &Interaction,
         &MenuButton,
         &MenuButtonSelected,
         &MenuButtonVisuals,
+        Option<&MenuButtonFlash>,
         &mut ImageNode,
         &mut BackgroundColor,
         &mut BorderColor,
     )>,
 ) {
-    for (interaction, button, selected, visuals, mut image, mut bg, mut border) in
+    for (interaction, button, selected, visuals, flash, mut image, mut bg, mut border) in
         buttons.iter_mut()
     {
-        if !button.enabled {
+        let flashing = flash.is_some_and(|flash| flash.remaining > 0.0);
+        if !button.enabled && !flashing {
             swap_image(&mut image, &visuals.normal);
             bg.0 = ROW_BG_DISABLED;
             border.set_all(ROW_BORDER);
@@ -340,20 +362,41 @@ fn style_menu_buttons(
         }
         let hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
         // Selection owns the border and frame; hover lightens the fill
-        // underneath, so a selected row still reads as hovered.
-        bg.0 = if hovered { ROW_BG_HOVER } else { ROW_BG };
-        border.set_all(if selected.0 {
+        // underneath, so a selected row still reads as hovered. A refused
+        // press overrides the border with the locked red.
+        bg.0 = if hovered {
+            ROW_BG_HOVER
+        } else if button.enabled {
+            ROW_BG
+        } else {
+            ROW_BG_DISABLED
+        };
+        border.set_all(if flashing {
+            ROW_BORDER_LOCKED
+        } else if selected.0 {
             ROW_BORDER_SELECTED
         } else {
             ROW_BORDER
         });
-        if selected.0 {
+        if selected.0 && button.enabled {
             swap_image(&mut image, &visuals.selected);
         } else if hovered {
             swap_image(&mut image, &visuals.hovered);
         } else {
             swap_image(&mut image, &visuals.normal);
         }
+    }
+}
+
+/// Runs down every refusal flash. Uses real time so it keeps ticking while an
+/// overlay has virtual time paused.
+fn tick_menu_button_flash(time: Res<Time<Real>>, mut flashes: Query<&mut MenuButtonFlash>) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    for mut flash in flashes.iter_mut() {
+        flash.remaining = (flash.remaining - dt).max(0.0);
     }
 }
 
@@ -547,8 +590,28 @@ pub fn label(text: impl Into<String>, size: f32, color: Color) -> impl Bundle {
 pub fn register(app: &mut App) {
     app.init_resource::<MenuArt>().add_systems(
         Update,
-        (style_menu_buttons, animate_previews, responsive_ui_scale).in_set(MenuStyleSet),
+        (
+            style_menu_buttons,
+            animate_previews,
+            tick_menu_button_flash,
+            responsive_ui_scale,
+        )
+            .in_set(MenuStyleSet),
     );
+}
+
+/// Moves a highlight one step through `enabled` (a sorted list of the menu's
+/// selectable indices), clamping at both ends instead of wrapping. `current`
+/// that is not itself enabled snaps back to the first entry.
+pub fn step_enabled(enabled: &[usize], current: usize, direction: i32) -> usize {
+    let Some(position) = enabled.iter().position(|index| *index == current) else {
+        return enabled.first().copied().unwrap_or(current);
+    };
+    let target = position as i32 + direction;
+    if target < 0 || target >= enabled.len() as i32 {
+        return current;
+    }
+    enabled[target as usize]
 }
 
 /// Keeps the whole UI in proportion with the window height.
@@ -678,6 +741,69 @@ mod tests {
         assert_eq!(
             app.world().get::<BackgroundColor>(entity).unwrap().0,
             ROW_BG_DISABLED
+        );
+    }
+
+    #[test]
+    fn a_refused_press_flashes_the_locked_border_then_fades() {
+        let mut app = setup_app();
+        let visuals = app.world_mut().resource_mut::<MenuArt>().shared(None);
+        let entity = app
+            .world_mut()
+            .spawn((
+                MenuButton {
+                    index: 0,
+                    enabled: false,
+                },
+                MenuButtonSelected(false),
+                visuals,
+                Interaction::default(),
+                BackgroundColor(ROW_BG),
+                BorderColor::all(ROW_BORDER),
+                ImageNode::default(),
+                MenuButtonFlash {
+                    remaining: FLASH_SECONDS,
+                },
+            ))
+            .id();
+
+        app.update();
+        assert_eq!(
+            app.world().get::<BorderColor>(entity).unwrap().top,
+            ROW_BORDER_LOCKED,
+            "a live flash overrides the border"
+        );
+
+        // Drain the flash and the disabled button is plain again.
+        app.world_mut()
+            .get_mut::<MenuButtonFlash>(entity)
+            .unwrap()
+            .remaining = 0.0;
+        app.update();
+        assert_eq!(
+            app.world().get::<BorderColor>(entity).unwrap().top,
+            ROW_BORDER,
+            "once it fades the disabled button is plain again"
+        );
+    }
+
+    #[test]
+    fn triggering_a_flash_lights_it_for_the_shared_duration() {
+        let mut flash = MenuButtonFlash::default();
+        flash.trigger();
+        assert_eq!(flash.remaining, FLASH_SECONDS);
+    }
+
+    #[test]
+    fn step_enabled_walks_the_selectable_rows_without_wrapping() {
+        assert_eq!(step_enabled(&[0, 1, 3], 0, 1), 1);
+        assert_eq!(step_enabled(&[0, 1, 3], 1, 1), 3, "skips the disabled row");
+        assert_eq!(step_enabled(&[0, 1, 3], 3, 1), 3, "clamps at the end");
+        assert_eq!(step_enabled(&[0, 1, 3], 0, -1), 0, "clamps at the start");
+        assert_eq!(
+            step_enabled(&[0, 2], 1, 1),
+            0,
+            "a disabled current snaps to the first enabled row"
         );
     }
 

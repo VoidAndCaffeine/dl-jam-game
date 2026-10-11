@@ -139,14 +139,14 @@ pub fn clip_windows(pattern: PatternType) -> ClipWindows {
 
 /// Turns a committed pattern event into the telegraphs and projectiles it
 /// throws. Attacks carry their own windup, so nothing here deals damage yet.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn spawn_pattern_attacks(
     mut commands: Commands,
     mut events: MessageReader<BossAttackStarted>,
     mut rng: ResMut<BossRng>,
     grid: Res<SolidGrid>,
     player: Query<(&Transform, &Movement), With<Player>>,
-    boss_transforms: Query<&Transform, (With<Boss>, Without<Player>)>,
+    boss_transforms: Query<(&Transform, &Boss), (With<Boss>, Without<Player>)>,
     mut sfx: MessageWriter<PlaySfx>,
     mut loop_sfx: MessageWriter<PlayLoopSfx>,
 ) {
@@ -157,9 +157,11 @@ pub fn spawn_pattern_attacks(
         .unwrap_or(Vec2::ZERO);
 
     for event in events.read() {
-        let Ok(boss_transform) = boss_transforms.get(event.entity) else {
+        let Ok((boss_transform, boss)) = boss_transforms.get(event.entity) else {
             continue;
         };
+        // The boss's difficulty damage scale, captured when it spawned.
+        let multiplier = boss.damage_multiplier;
         let boss_pos = boss_transform.translation.truncate();
         let aim = player_pos
             .map(|player| (player - boss_pos).normalize_or(Vec2::X))
@@ -198,7 +200,8 @@ pub fn spawn_pattern_attacks(
                     .with_radius(radius)
                     .with_damage(SLAM_DAMAGE)
                     .with_lifetime(SLAM_WINDUP + SLAM_ACTIVE)
-                    .with_windup(SLAM_WINDUP);
+                    .with_windup(SLAM_WINDUP)
+                    .with_multiplier(multiplier);
                 spawn_attack(&mut commands, slam, 0.0);
                 sfx.write(PlaySfx(Sfx::SlamWindup));
             }
@@ -226,7 +229,8 @@ pub fn spawn_pattern_attacks(
                         .with_radius(DEBRIS_IMPACT_RADIUS * HITBOX_SHRINK)
                         .with_damage(DEBRIS_DAMAGE)
                         .with_lifetime(fall)
-                        .with_windup(fall);
+                        .with_windup(fall)
+                        .with_multiplier(multiplier);
                     spawn_attack(
                         &mut commands,
                         BossAttack {
@@ -258,7 +262,8 @@ pub fn spawn_pattern_attacks(
                         .with_radius(WAVE_WIDTH * 0.5)
                         .with_damage(WAVE_DAMAGE)
                         .with_lifetime(WAVE_WINDUP + WAVE_LIFE)
-                        .with_windup(WAVE_WINDUP);
+                        .with_windup(WAVE_WINDUP)
+                        .with_multiplier(multiplier);
                     spawn_attack(
                         &mut commands,
                         BossAttack {
@@ -308,7 +313,8 @@ pub fn spawn_pattern_attacks(
                         .with_damage(SPRAY_DAMAGE)
                         .with_lifetime(if homing { WISP_LIFE } else { SPRAY_LIFE })
                         .with_windup(SPRAY_WINDUP)
-                        .with_aim_offset(offset);
+                        .with_aim_offset(offset)
+                        .with_multiplier(multiplier);
                     droplet.direction = direction;
                     droplet.speed = if homing { WISP_SPEED } else { SPRAY_SPEED };
                     spawn_attack(&mut commands, droplet, angle);
@@ -326,7 +332,8 @@ pub fn spawn_pattern_attacks(
                     .with_radius(AMALGAMATION_RADIUS * HITBOX_SHRINK)
                     .with_damage(AMALGAMATION_DAMAGE)
                     .with_lifetime(AMALGAMATION_CHANNEL + 0.4)
-                    .with_windup(AMALGAMATION_CHANNEL);
+                    .with_windup(AMALGAMATION_CHANNEL)
+                    .with_multiplier(multiplier);
                 spawn_attack(&mut commands, amalgam, 0.0);
                 sfx.write(PlaySfx(Sfx::AmalgamWarning));
                 // The halves blink together as the channel begins.

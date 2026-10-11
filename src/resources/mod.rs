@@ -9,6 +9,8 @@ pub mod crop_select;
 pub mod crop_sprite;
 pub mod day_cycle;
 pub mod debug_overlay;
+pub mod difficulty;
+pub mod difficulty_menu;
 pub mod drop_rng;
 pub mod effect_sprite;
 pub mod farm;

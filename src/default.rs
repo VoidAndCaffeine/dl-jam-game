@@ -1,12 +1,14 @@
 use bevy::prelude::*;
 
 use crate::plugins::{
-    AudioPlugin, BossPlugin, DayCyclePlugin, FarmPlugin, GearPlugin, HudPlugin, InteractionPlugin,
-    LevelPlugin, LoadingPlugin, MainMenuPlugin, PausePlugin, PropPlugin, UIPlugin,
+    AudioPlugin, BossPlugin, DayCyclePlugin, DifficultyPlugin, FarmPlugin, GearPlugin, HudPlugin,
+    InteractionPlugin, LevelPlugin, LoadingPlugin, MainMenuPlugin, PausePlugin, PropPlugin,
+    UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::debug_overlay::DebugOverlay;
+use crate::resources::difficulty::Difficulty;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelSet;
@@ -33,6 +35,7 @@ impl Plugin for GamePlugin {
             .init_resource::<CameraFollowConfig>()
             .init_resource::<CraftingMenu>()
             .init_resource::<DebugOverlay>()
+            .init_resource::<Difficulty>()
             .init_resource::<Inventory>()
             .init_resource::<InventoryPanel>()
             .init_resource::<PlayerGear>()
@@ -40,6 +43,7 @@ impl Plugin for GamePlugin {
             .add_plugins(InteractionPlugin)
             .add_plugins(LoadingPlugin)
             .add_plugins(MainMenuPlugin)
+            .add_plugins(DifficultyPlugin)
             .add_plugins(PausePlugin)
             .add_plugins(LevelPlugin)
             .add_plugins(PropPlugin)
@@ -91,12 +95,15 @@ mod tests {
     use crate::components::pot::{CropType, Pot, PotState};
     use crate::events::{InteractionEvent, InteractionType};
     use crate::plugins::interaction::CraftingStation;
+    use crate::plugins::pause::{PauseAction, PauseButton};
     use crate::plugins::ui::{CraftingMenuRoot, CropSelectRoot, InventoryRoot};
     use crate::resources::crafting_menu::CraftingMenu;
     use crate::resources::crop_select::CropSelectMenu;
+    use crate::resources::difficulty_menu::DifficultySelectMenu;
     use crate::resources::farm::CropUnlocks;
     use crate::resources::inventory::Inventory;
     use crate::resources::inventory_panel::InventoryPanel;
+    use crate::resources::pause::PauseMenu;
     use crate::resources::run_data::PlayerGear;
     use crate::systems::crafting::RecipeRow;
     use crate::systems::inventory::InventorySlot;
@@ -222,6 +229,34 @@ mod tests {
         );
         assert!(!menu(&app).open);
         assert!(menu_roots(&mut app).is_empty());
+    }
+
+    #[test]
+    fn the_pause_difficulty_button_opens_the_picker_end_to_end() {
+        let mut app = setup_game_app();
+        enter_playing(&mut app);
+
+        app.world_mut().resource_mut::<PauseMenu>().open_menu();
+        for _ in 0..2 {
+            app.update();
+        }
+
+        // The real button the pause overlay spawned.
+        let button = app
+            .world_mut()
+            .query_filtered::<(Entity, &PauseButton), With<crate::plugins::ui_theme::MenuButton>>()
+            .iter(app.world())
+            .find(|(_, button)| button.action == PauseAction::Difficulty)
+            .map(|(entity, _)| entity)
+            .expect("the pause overlay spawns a difficulty button");
+
+        *app.world_mut().get_mut::<Interaction>(button).unwrap() = Interaction::Pressed;
+        app.update();
+
+        assert!(
+            app.world().resource::<DifficultySelectMenu>().open,
+            "clicking the pause difficulty button opens the picker"
+        );
     }
 
     #[test]

@@ -41,6 +41,13 @@ impl SharedBossHealth {
     pub fn reset(&mut self) {
         *self = Self::fresh();
     }
+
+    /// Resets to the dual pool scaled by the difficulty's health multiplier.
+    pub fn reset_scaled(&mut self, multiplier: f32) {
+        let max = DUAL_BOSS_HEALTH * multiplier;
+        self.current = max;
+        self.max = max;
+    }
 }
 
 /// Tracks the dual fight's coordinated combo and Amalgamation cadence.
@@ -121,6 +128,15 @@ mod tests {
         health.damage(1000.0);
         health.reset();
         assert_eq!(health.current, DUAL_BOSS_HEALTH);
+    }
+
+    #[test]
+    fn shared_health_scales_with_difficulty() {
+        let mut health = SharedBossHealth::fresh();
+        health.reset_scaled(1.5);
+        assert_eq!(health.max, DUAL_BOSS_HEALTH * 1.5);
+        assert_eq!(health.current, health.max);
+        assert_eq!(health.fraction(), 1.0);
     }
 
     #[test]

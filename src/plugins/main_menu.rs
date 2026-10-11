@@ -5,12 +5,15 @@
 //! layout room so revealing them later needs no relayout).
 
 use crate::events::{PlaySfx, Sfx};
+use crate::plugins::difficulty::DifficultySet;
 use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::day_cycle::DayCycle;
+use crate::resources::difficulty::Difficulty;
+use crate::resources::difficulty_menu::{DifficultyMenuMode, DifficultySelectMenu};
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
@@ -56,7 +59,6 @@ pub struct MainMenuColumn;
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainMenuAction {
     NewGame,
-    Difficulty,
     LoadGame,
 }
 
@@ -67,8 +69,7 @@ pub struct MainMenuButton {
 }
 
 const BUTTON_NEW_GAME: usize = 0;
-const BUTTON_DIFFICULTY: usize = 1;
-const BUTTON_LOAD_GAME: usize = 2;
+const BUTTON_LOAD_GAME: usize = 1;
 
 pub struct MainMenuPlugin;
 
@@ -77,6 +78,8 @@ impl Plugin for MainMenuPlugin {
         app.init_resource::<MainMenu>()
             .init_resource::<MenuArt>()
             .init_resource::<MenuFeatureFlags>()
+            .init_resource::<Difficulty>()
+            .init_resource::<DifficultySelectMenu>()
             .add_message::<NewGameRequested>()
             .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
@@ -85,7 +88,8 @@ impl Plugin for MainMenuPlugin {
                 Update,
                 (main_menu_keyboard, main_menu_click, refresh_main_menu)
                     .chain()
-                    .run_if(in_state(GameState::MainMenu)),
+                    .run_if(in_state(GameState::MainMenu))
+                    .before(DifficultySet),
             )
             .add_systems(Update, on_new_game_requested);
     }
@@ -162,15 +166,8 @@ fn spawn_main_menu(
                         BUTTON_NEW_GAME,
                         "New Game",
                     );
-                    // Reserved slots: hidden until the features land.
-                    spawn_button(
-                        column,
-                        &mut art,
-                        server.as_deref(),
-                        MainMenuAction::Difficulty,
-                        BUTTON_DIFFICULTY,
-                        "Difficulty",
-                    );
+                    // Reserved slot, hidden until Load Game lands. Choosing a
+                    // difficulty lives in the New Game prompt, not here.
                     spawn_button(
                         column,
                         &mut art,
@@ -206,11 +203,11 @@ fn spawn_button(
 ) {
     let skin = match action {
         MainMenuAction::NewGame => "new_game",
-        MainMenuAction::Difficulty => "difficulty",
         MainMenuAction::LoadGame => "load_game",
     };
     let mut spec = ButtonSpec::new(index, label).label_size(22.0).skin(skin);
-    if action != MainMenuAction::NewGame {
+    // Load Game stays reserved.
+    if action == MainMenuAction::LoadGame {
         spec = spec.hidden();
     }
     let visuals = art.resolve(&spec, server);
@@ -231,34 +228,98 @@ fn despawn_main_menu(mut commands: Commands, roots: Query<Entity, With<MainMenuR
 
 fn main_menu_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
-    mut requests: MessageWriter<NewGameRequested>,
+    mut menu: ResMut<MainMenu>,
+    mut difficulty_menu: ResMut<DifficultySelectMenu>,
+    difficulty: Res<Difficulty>,
+    buttons: Query<(&MainMenuButton, &theme::MenuButton)>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
+    if difficulty_menu.open {
+        return;
+    }
+    let enabled: Vec<usize> = enabled_indices(buttons.iter());
+
+    let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
+    let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
+    if up {
+        menu.selected = theme::step_enabled(&enabled, menu.selected, -1);
+    } else if down {
+        menu.selected = theme::step_enabled(&enabled, menu.selected, 1);
+    }
+
     let confirm = keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Space)
         || keys.just_pressed(KeyCode::KeyE);
-    if confirm {
-        requests.write(NewGameRequested);
+    if confirm && let Some(action) = action_for_selection(menu.selected, buttons.iter()) {
+        activate(action, *difficulty, &mut difficulty_menu, &mut sfx);
     }
 }
 
 fn main_menu_click(
     buttons: Query<(Entity, &MainMenuButton), Changed<Interaction>>,
+    all_buttons: Query<&theme::MenuButton>,
     interactions: Query<&Interaction>,
-    mut requests: MessageWriter<NewGameRequested>,
+    mut difficulty_menu: ResMut<DifficultySelectMenu>,
+    difficulty: Res<Difficulty>,
+    mut sfx: MessageWriter<PlaySfx>,
 ) {
+    if difficulty_menu.open {
+        return;
+    }
     for (entity, button) in buttons.iter() {
-        if button.action != MainMenuAction::NewGame {
+        if all_buttons.get(entity).is_ok_and(|core| !core.enabled) {
             continue;
         }
         if interactions.get(entity) == Ok(&Interaction::Pressed) {
-            requests.write(NewGameRequested);
+            activate(button.action, *difficulty, &mut difficulty_menu, &mut sfx);
         }
     }
 }
 
-fn refresh_main_menu(mut buttons: Query<(&MainMenuButton, &mut MenuButtonSelected)>) {
-    for (button, mut selected) in buttons.iter_mut() {
-        selected.0 = button.action == MainMenuAction::NewGame;
+/// Opens the picker for the action, if it is one that opens it.
+fn activate(
+    action: MainMenuAction,
+    difficulty: Difficulty,
+    menu: &mut DifficultySelectMenu,
+    sfx: &mut MessageWriter<PlaySfx>,
+) {
+    let mode = match action {
+        MainMenuAction::NewGame => DifficultyMenuMode::NewGame,
+        MainMenuAction::LoadGame => return,
+    };
+    menu.open_menu(mode, difficulty);
+    sfx.write(PlaySfx(Sfx::MenuOpen));
+}
+
+/// The sorted indices of the buttons a player can navigate to.
+fn enabled_indices<'a>(
+    buttons: impl Iterator<Item = (&'a MainMenuButton, &'a theme::MenuButton)>,
+) -> Vec<usize> {
+    let mut enabled: Vec<usize> = buttons
+        .filter(|(_, core)| core.enabled)
+        .map(|(button, _)| button.index)
+        .collect();
+    enabled.sort_unstable();
+    enabled
+}
+
+/// The action of the button at `selected`, if it is enabled.
+fn action_for_selection<'a>(
+    selected: usize,
+    buttons: impl Iterator<Item = (&'a MainMenuButton, &'a theme::MenuButton)>,
+) -> Option<MainMenuAction> {
+    buttons
+        .filter(|(_, core)| core.enabled)
+        .find(|(button, _)| button.index == selected)
+        .map(|(button, _)| button.action)
+}
+
+fn refresh_main_menu(
+    menu: Res<MainMenu>,
+    mut buttons: Query<(&MainMenuButton, &theme::MenuButton, &mut MenuButtonSelected)>,
+) {
+    for (button, core, mut selected) in buttons.iter_mut() {
+        selected.0 = core.enabled && button.index == menu.selected;
     }
 }
 
@@ -320,7 +381,12 @@ mod tests {
     fn setup_app() -> App {
         let mut app = App::new();
         app.init_resource::<ButtonInput<KeyCode>>()
-            .add_plugins((MinimalPlugins, StatesPlugin, MainMenuPlugin))
+            .add_plugins((
+                MinimalPlugins,
+                StatesPlugin,
+                MainMenuPlugin,
+                crate::plugins::difficulty::DifficultyPlugin,
+            ))
             .init_state::<GameState>()
             .init_resource::<Inventory>()
             .init_resource::<PlayerGear>()
@@ -393,9 +459,9 @@ mod tests {
         assert_eq!(backgrounds(&mut app), 1, "the title art backs the menu");
 
         let rows = buttons(&mut app);
-        assert_eq!(rows.len(), 3, "new game plus two reserved slots");
+        assert_eq!(rows.len(), 2, "new game plus one reserved slot");
         assert!(rows[0].1, "new game is enabled");
-        assert!(!rows[1].1 && !rows[2].1, "reserved slots are disabled");
+        assert!(!rows[1].1, "the load-game slot is still reserved");
     }
 
     #[test]
@@ -444,6 +510,24 @@ mod tests {
     }
 
     #[test]
+    fn the_new_game_picker_starts_on_the_current_default_difficulty() {
+        let mut app = setup_app();
+        enter_menu(&mut app);
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Hard;
+
+        tap(&mut app, KeyCode::Enter);
+
+        let menu = app.world().resource::<DifficultySelectMenu>();
+        assert!(menu.open);
+        assert_eq!(menu.mode, DifficultyMenuMode::NewGame);
+        assert_eq!(
+            menu.selected,
+            Difficulty::Hard.index(),
+            "the picker opens on the last-chosen difficulty"
+        );
+    }
+
+    #[test]
     fn confirming_new_game_requests_a_fresh_run_and_enters_playing() {
         let mut app = setup_app();
         enter_menu(&mut app);
@@ -451,7 +535,21 @@ mod tests {
             .resource_mut::<Inventory>()
             .add_crop(crate::components::pot::CropType::Starter, 5);
 
+        // New Game now asks for a difficulty first, then starts the run.
         tap(&mut app, KeyCode::Enter);
+        assert!(
+            app.world().resource::<DifficultySelectMenu>().open,
+            "new game opens the difficulty picker"
+        );
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::MainMenu,
+            "the run has not started yet"
+        );
+
+        tap(&mut app, KeyCode::Enter);
+        // The run begins the frame after the request is handled.
+        app.update();
 
         assert_eq!(
             app.world().resource::<State<GameState>>().get(),

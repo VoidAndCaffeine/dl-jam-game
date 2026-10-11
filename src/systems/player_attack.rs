@@ -129,7 +129,8 @@ pub fn player_attack(
             // damage. The decoy carries the phase it was spawned in, so an
             // enraged fight leaves a bigger, nastier pool.
             let pool_phase = decoy_attack.map_or(1, |attack| attack.phase);
-            let mut pool = mercury_pool(target_pos, pool_phase);
+            let pool_scale = decoy_attack.map_or(1.0, |attack| attack.multiplier);
+            let mut pool = mercury_pool(target_pos, pool_phase, pool_scale);
             if let Some(owner) = decoy_attack.and_then(|attack| attack.owner) {
                 pool = pool.owned_by(owner);
             }

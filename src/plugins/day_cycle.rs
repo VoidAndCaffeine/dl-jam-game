@@ -5,6 +5,7 @@ use crate::levels::LevelId;
 use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::day_cycle::{DayCycle, Outcome};
+use crate::resources::difficulty::Difficulty;
 use crate::resources::drop_rng::DropRng;
 use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
@@ -21,6 +22,8 @@ impl Plugin for DayCyclePlugin {
         app.init_resource::<DayCycle>()
             .init_resource::<BossProgress>()
             .init_resource::<DropRng>()
+            .init_resource::<Difficulty>()
+            .init_resource::<VictoryMode>()
             .init_resource::<crate::plugins::ui_theme::MenuArt>()
             .init_resource::<VictorySelection>()
             .add_message::<BossDefeated>()
@@ -61,27 +64,44 @@ fn seed_drop_rng(mut rng: ResMut<DropRng>, time: Res<Time>) {
     *rng = DropRng::seeded(time.elapsed().as_nanos() as u64);
 }
 
+/// The reward resources a boss defeat touches, bundled so the signature stays
+/// within the argument limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct DefeatRewards<'w> {
+    progress: ResMut<'w, BossProgress>,
+    unlocks: ResMut<'w, CropUnlocks>,
+    inventory: ResMut<'w, Inventory>,
+    drop_rng: ResMut<'w, DropRng>,
+}
+
 /// Grants the boss's rewards, marks progress, then shows the result.
 fn on_boss_defeated(
     mut events: MessageReader<BossDefeated>,
-    mut progress: ResMut<BossProgress>,
-    mut unlocks: ResMut<CropUnlocks>,
-    mut inventory: ResMut<Inventory>,
+    mut rewards: DefeatRewards,
     mut day_cycle: ResMut<DayCycle>,
-    mut drop_rng: ResMut<DropRng>,
+    difficulty: Res<Difficulty>,
+    mut victory_mode: ResMut<VictoryMode>,
     mut next_phase: ResMut<NextState<DayPhase>>,
 ) {
     for event in events.read() {
         let id = event.0;
-        progress.record(id);
+        rewards.progress.record(id);
         match id {
-            BossId::BossA => unlocks.unlock_crop_a(),
-            BossId::BossB => unlocks.unlock_crop_b(),
-            BossId::Dual => day_cycle.run_complete = true,
+            BossId::BossA => rewards.unlocks.unlock_crop_a(),
+            BossId::BossB => rewards.unlocks.unlock_crop_b(),
+            BossId::Dual => {
+                day_cycle.run_complete = true;
+                // A run finished on Permadeath earns a special send-off.
+                *victory_mode = if *difficulty == Difficulty::Permadeath {
+                    VictoryMode::PermadeathVictory
+                } else {
+                    VictoryMode::Victory
+                };
+            }
         }
         for (material, range) in id.material_drops() {
-            let amount = drop_rng.roll(range.clone());
-            inventory.add_material(*material, amount);
+            let amount = rewards.drop_rng.roll(range.clone());
+            rewards.inventory.add_material(*material, amount);
         }
         day_cycle.finish(Outcome::Victory);
         next_phase.set(DayPhase::Result);
@@ -90,13 +110,24 @@ fn on_boss_defeated(
 
 fn on_player_died(
     mut events: MessageReader<PlayerDied>,
+    difficulty: Res<Difficulty>,
+    mut victory_mode: ResMut<VictoryMode>,
     mut day_cycle: ResMut<DayCycle>,
     mut next_phase: ResMut<NextState<DayPhase>>,
+    mut next_game: ResMut<NextState<GameState>>,
 ) {
     for _ in events.read() {
         day_cycle.finish(Outcome::Defeat);
         day_cycle.run_complete = false;
-        next_phase.set(DayPhase::Result);
+        if *difficulty == Difficulty::Permadeath {
+            // Permadeath skips the defeat result and ends the run outright; the
+            // run-over screen offers to step down to Apocalypse.
+            *victory_mode = VictoryMode::PermadeathDefeat;
+            next_game.set(GameState::Victory);
+        } else {
+            *victory_mode = VictoryMode::Victory;
+            next_phase.set(DayPhase::Result);
+        }
     }
 }
 
@@ -200,6 +231,48 @@ fn despawn_result_screen(mut commands: Commands, screens: Query<Entity, With<Res
 
 // --- Victory screen ----------------------------------------------------------
 
+/// Which send-off the end-of-run screen gives. Set before entering
+/// [`GameState::Victory`].
+#[derive(Resource, Reflect, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VictoryMode {
+    /// The dual boss fell on an ordinary difficulty.
+    #[default]
+    Victory,
+    /// The dual boss fell on Permadeath.
+    PermadeathVictory,
+    /// The player died on Permadeath; the run is over unless they step down.
+    PermadeathDefeat,
+}
+
+impl VictoryMode {
+    pub fn title(self) -> &'static str {
+        match self {
+            VictoryMode::Victory => "VICTORY",
+            VictoryMode::PermadeathVictory => "PERMADEATH VICTORY",
+            VictoryMode::PermadeathDefeat => "RUN ENDED",
+        }
+    }
+
+    pub fn subtitle(self) -> &'static str {
+        match self {
+            VictoryMode::Victory => "The dual horror is undone. The vines keep growing.",
+            VictoryMode::PermadeathVictory => {
+                "Nothing survived you. A run for the legends, without a single second chance."
+            }
+            VictoryMode::PermadeathDefeat => {
+                "Permadeath claimed this run. Step down to Apocalypse to keep the farm."
+            }
+        }
+    }
+
+    pub fn title_color(self) -> Color {
+        match self {
+            VictoryMode::Victory | VictoryMode::PermadeathVictory => theme::TEXT_CRAFTABLE,
+            VictoryMode::PermadeathDefeat => theme::TEXT_BLOCKED,
+        }
+    }
+}
+
 /// The selection on the run-complete screen. `Continue Playing` is first and
 /// selected on entry.
 #[derive(Resource, Reflect, Default, Debug, Clone)]
@@ -213,6 +286,9 @@ pub struct VictoryScreenRoot;
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VictoryAction {
     ContinuePlaying,
+    /// Offered on the Permadeath run-over screen: keeps the run but drops the
+    /// difficulty to Apocalypse.
+    ContinueInApocalypse,
     ReturnToMainMenu,
 }
 
@@ -227,9 +303,18 @@ const VICTORY_MENU: usize = 1;
 
 fn spawn_victory_screen(
     mut commands: Commands,
+    mode: Res<VictoryMode>,
     mut art: ResMut<MenuArt>,
     server: Option<Res<AssetServer>>,
 ) {
+    let mode = *mode;
+    let (primary_action, primary_label) = match mode {
+        VictoryMode::PermadeathDefeat => (
+            VictoryAction::ContinueInApocalypse,
+            "Continue in Apocalypse",
+        ),
+        _ => (VictoryAction::ContinuePlaying, "Continue Playing"),
+    };
     commands
         .spawn((
             Name::new("Victory Root"),
@@ -262,24 +347,20 @@ fn spawn_victory_screen(
                 .with_children(|panel| {
                     panel.spawn((
                         Name::new("Title"),
-                        theme::label("VICTORY", 56.0, theme::TEXT_CRAFTABLE),
+                        theme::label(mode.title(), 44.0, mode.title_color()),
                     ));
                     panel.spawn((
                         Name::new("Subtitle"),
-                        theme::label(
-                            "The dual horror is undone. The vines keep growing.",
-                            16.0,
-                            theme::TEXT_DIM,
-                        ),
+                        theme::label(mode.subtitle(), 16.0, theme::TEXT_DIM),
                     ));
 
                     spawn_victory_button(
                         &mut art,
                         server.as_deref(),
                         panel,
-                        VictoryAction::ContinuePlaying,
+                        primary_action,
                         VICTORY_CONTINUE,
-                        "Continue Playing",
+                        primary_label,
                     );
                     spawn_victory_button(
                         &mut art,
@@ -312,6 +393,7 @@ fn spawn_victory_button(
 ) {
     let skin = match action {
         VictoryAction::ContinuePlaying => "continue_playing",
+        VictoryAction::ContinueInApocalypse => "continue_apocalypse",
         VictoryAction::ReturnToMainMenu => "return_to_main_menu",
     };
     let spec = ButtonSpec::new(index, label).label_size(22.0).skin(skin);
@@ -334,6 +416,8 @@ fn despawn_victory_screen(mut commands: Commands, roots: Query<Entity, With<Vict
 fn victory_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut selection: ResMut<VictorySelection>,
+    mode: Res<VictoryMode>,
+    mut difficulty: ResMut<Difficulty>,
     mut next_game: ResMut<NextState<GameState>>,
     mut day_cycle: ResMut<DayCycle>,
 ) {
@@ -352,8 +436,11 @@ fn victory_keyboard(
         return;
     }
     if selection.selected == VICTORY_CONTINUE {
-        day_cycle.run_complete = false;
-        next_game.set(GameState::Playing);
+        let action = match *mode {
+            VictoryMode::PermadeathDefeat => VictoryAction::ContinueInApocalypse,
+            _ => VictoryAction::ContinuePlaying,
+        };
+        apply_victory_action(action, &mut difficulty, &mut next_game, &mut day_cycle);
     } else {
         next_game.set(GameState::MainMenu);
     }
@@ -363,6 +450,7 @@ fn victory_click(
     buttons: Query<(Entity, &VictoryButton), Changed<Interaction>>,
     interactions: Query<&Interaction>,
     mut selection: ResMut<VictorySelection>,
+    mut difficulty: ResMut<Difficulty>,
     mut next_game: ResMut<NextState<GameState>>,
     mut day_cycle: ResMut<DayCycle>,
 ) {
@@ -371,13 +459,34 @@ fn victory_click(
             continue;
         }
         selection.selected = button.index;
-        match button.action {
-            VictoryAction::ContinuePlaying => {
-                day_cycle.run_complete = false;
-                next_game.set(GameState::Playing);
-            }
-            VictoryAction::ReturnToMainMenu => next_game.set(GameState::MainMenu),
+        apply_victory_action(
+            button.action,
+            &mut difficulty,
+            &mut next_game,
+            &mut day_cycle,
+        );
+    }
+}
+
+/// Runs a victory button: the permadeath "continue" steps the difficulty down
+/// to Apocalypse, the rest simply resume or leave.
+fn apply_victory_action(
+    action: VictoryAction,
+    difficulty: &mut Difficulty,
+    next_game: &mut NextState<GameState>,
+    day_cycle: &mut DayCycle,
+) {
+    match action {
+        VictoryAction::ContinuePlaying => {
+            day_cycle.run_complete = false;
+            next_game.set(GameState::Playing);
         }
+        VictoryAction::ContinueInApocalypse => {
+            *difficulty = Difficulty::Apocalypse;
+            day_cycle.run_complete = false;
+            next_game.set(GameState::Playing);
+        }
+        VictoryAction::ReturnToMainMenu => next_game.set(GameState::MainMenu),
     }
 }
 
@@ -652,6 +761,91 @@ mod tests {
         assert_eq!(
             app.world().resource::<State<GameState>>().get(),
             &GameState::Victory
+        );
+    }
+
+    #[test]
+    fn dying_on_permadeath_ends_the_run_on_the_run_over_screen() {
+        let mut app = setup_app();
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Permadeath;
+        set_phase(&mut app, DayPhase::BossFight);
+
+        app.world_mut().write_message(PlayerDied);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world().resource::<VictoryMode>(),
+            VictoryMode::PermadeathDefeat
+        );
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Victory,
+            "permadeath skips the defeat result"
+        );
+    }
+
+    #[test]
+    fn a_normal_death_still_shows_the_defeat_result() {
+        let mut app = setup_app();
+        set_phase(&mut app, DayPhase::BossFight);
+
+        app.world_mut().write_message(PlayerDied);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Playing
+        );
+        assert_eq!(
+            app.world().resource::<State<DayPhase>>().get(),
+            &DayPhase::Result
+        );
+        assert_eq!(*app.world().resource::<VictoryMode>(), VictoryMode::Victory);
+    }
+
+    #[test]
+    fn continuing_after_a_permadeath_death_steps_down_to_apocalypse() {
+        let mut app = setup_app();
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Permadeath;
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().write_message(PlayerDied);
+        app.update();
+        app.update();
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Victory
+        );
+
+        // "Continue in Apocalypse" is the first button, so just confirm.
+        tap(&mut app, KeyCode::Enter);
+        app.update();
+
+        assert_eq!(
+            *app.world().resource::<Difficulty>(),
+            Difficulty::Apocalypse,
+            "the run steps down a difficulty"
+        );
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Playing,
+            "and resumes at the farm"
+        );
+    }
+
+    #[test]
+    fn a_permadeath_dual_victory_gets_its_own_send_off() {
+        let mut app = setup_app();
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Permadeath;
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().write_message(BossDefeated(BossId::Dual));
+        app.update();
+        app.update();
+
+        assert_eq!(
+            *app.world().resource::<VictoryMode>(),
+            VictoryMode::PermadeathVictory
         );
     }
 

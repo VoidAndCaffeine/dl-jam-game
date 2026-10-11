@@ -59,8 +59,9 @@ fn damage_player(
 }
 
 /// Builds a mercury puddle sized for `phase`. Enraged pools are wider, hit
-/// harder and linger longer.
-pub fn mercury_pool(position: Vec2, phase: u8) -> BossAttack {
+/// harder and linger longer. `multiplier` is the spawning boss's difficulty
+/// damage scale, carried through so the puddle matches its parent wave.
+pub fn mercury_pool(position: Vec2, phase: u8, multiplier: f32) -> BossAttack {
     let (radius, damage, life) = if phase >= 2 {
         (
             MERCURY_POOL_RADIUS_P2,
@@ -75,6 +76,7 @@ pub fn mercury_pool(position: Vec2, phase: u8) -> BossAttack {
         .with_radius(radius * HITBOX_SHRINK)
         .with_damage(damage)
         .with_lifetime(life)
+        .with_multiplier(multiplier)
 }
 
 /// Rotates a unit direction by `angle` radians.
@@ -202,7 +204,7 @@ pub fn tick_boss_attacks(
                             &mut movement,
                             attack.position,
                             player_pos,
-                            attack.damage,
+                            attack.damage * attack.multiplier,
                             &mut sfx,
                             &mut died,
                         );
@@ -233,7 +235,7 @@ pub fn tick_boss_attacks(
                         &mut movement,
                         attack.position,
                         player_pos,
-                        attack.damage,
+                        attack.damage * attack.multiplier,
                         &mut sfx,
                         &mut died,
                     );
@@ -256,7 +258,7 @@ pub fn tick_boss_attacks(
                             &mut movement,
                             attack.target,
                             player_pos,
-                            attack.damage,
+                            attack.damage * attack.multiplier,
                             &mut sfx,
                             &mut died,
                         );
@@ -274,7 +276,8 @@ pub fn tick_boss_attacks(
                             .with_radius(SURGE_TRAIL_WIDTH_P2 * 0.5 * HITBOX_SHRINK)
                             .with_damage(attack.damage * 0.3)
                             .with_lifetime(SURGE_TRAIL_LIFE)
-                            .with_phase(attack.phase);
+                            .with_phase(attack.phase)
+                            .with_multiplier(attack.multiplier);
                         spawn_attack(&mut commands, mist, 0.0);
                     }
                     // The landing hit is done; keep the entity alive just long
@@ -312,14 +315,14 @@ pub fn tick_boss_attacks(
                         &mut movement,
                         attack.position,
                         player_pos,
-                        attack.damage,
+                        attack.damage * attack.multiplier,
                         &mut sfx,
                         &mut died,
                     );
                 }
                 if attack.phase >= 2 && attack.aux_timer <= 0.0 {
                     attack.aux_timer = 0.9;
-                    let pool = mercury_pool(attack.position, attack.phase);
+                    let pool = mercury_pool(attack.position, attack.phase, attack.multiplier);
                     spawn_attack(&mut commands, pool, 0.0);
                 }
                 if attack.remaining <= 0.0 {
@@ -353,7 +356,7 @@ pub fn tick_boss_attacks(
                         &mut movement,
                         attack.position,
                         player_pos,
-                        attack.damage,
+                        attack.damage * attack.multiplier,
                         &mut sfx,
                         &mut died,
                     );
@@ -388,7 +391,7 @@ pub fn tick_boss_attacks(
                             &mut movement,
                             attack.position,
                             player_pos,
-                            attack.damage,
+                            attack.damage * attack.multiplier,
                             &mut sfx,
                             &mut died,
                         );
@@ -417,7 +420,8 @@ fn spawn_slam_aftermath(
             .with_radius(ACID_POOL_RADIUS * HITBOX_SHRINK)
             .with_damage(ACID_POOL_DAMAGE)
             .with_lifetime(ACID_POOL_LIFE)
-            .with_phase(attack.phase);
+            .with_phase(attack.phase)
+            .with_multiplier(attack.multiplier);
         spawn_attack(commands, pool, 0.0);
     }
 }
@@ -491,7 +495,8 @@ pub fn tick_surge_chargers(
                     .with_phase(if enraged { 2 } else { 1 })
                     .with_radius(width * 0.5 * HITBOX_SHRINK)
                     .with_damage(SURGE_TRAIL_DAMAGE)
-                    .with_lifetime(SURGE_TRAIL_LIFE);
+                    .with_lifetime(SURGE_TRAIL_LIFE)
+                    .with_multiplier(boss.damage_multiplier);
                 spawn_attack(&mut commands, trail, 0.0);
             }
             continue;
@@ -581,13 +586,19 @@ mod tests {
 
     #[test]
     fn an_enraged_mercury_pool_outgrows_a_phase_one_pool() {
-        let calm = mercury_pool(Vec2::new(3.0, 4.0), 1);
-        let enraged = mercury_pool(Vec2::new(3.0, 4.0), 2);
+        let calm = mercury_pool(Vec2::new(3.0, 4.0), 1, 1.0);
+        let enraged = mercury_pool(Vec2::new(3.0, 4.0), 2, 1.0);
         assert_eq!(calm.kind, AttackKind::MercuryPool);
         assert_eq!(enraged.kind, AttackKind::MercuryPool);
         assert!(enraged.radius > calm.radius, "wider");
         assert!(enraged.damage > calm.damage, "harder");
         assert!(enraged.remaining > calm.remaining, "longer-lived");
+    }
+
+    #[test]
+    fn a_pool_carries_the_boss_damage_scale() {
+        let pool = mercury_pool(Vec2::new(3.0, 4.0), 1, 1.5);
+        assert_eq!(pool.multiplier, 1.5);
     }
 
     #[test]

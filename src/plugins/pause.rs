@@ -6,7 +6,12 @@
 //! the one selected on open; `Return to Main Menu` sits below it and a
 //! `Difficulty` slot is reserved (hidden) for later.
 
-use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
+use crate::plugins::difficulty::DifficultySet;
+use crate::plugins::ui_theme::{
+    self as theme, ButtonSpec, MenuArt, MenuButtonFlash, MenuButtonSelected,
+};
+use crate::resources::difficulty::Difficulty;
+use crate::resources::difficulty_menu::DifficultySelectMenu;
 use crate::resources::main_menu::MenuFeatureFlags;
 use crate::resources::pause::PauseMenu;
 use crate::states::{GameState, Phase};
@@ -43,18 +48,22 @@ impl Plugin for PausePlugin {
         app.init_resource::<PauseMenu>()
             .init_resource::<MenuArt>()
             .init_resource::<MenuFeatureFlags>()
+            .init_resource::<Difficulty>()
+            .init_resource::<DifficultySelectMenu>()
             .add_systems(OnEnter(GameState::Playing), ensure_unpaused)
             .add_systems(OnExit(GameState::Playing), (leave_pause, despawn_pause_ui))
             // `Esc` is read by every panel, so pause claims it first: a panel
             // that is already open keeps the press, and pause only opens when
-            // nothing else does.
+            // nothing else does. The difficulty picker is ordered after pause so
+            // the `Esc`/confirm that opens or closes it never also reaches pause.
             .add_systems(
                 Update,
                 toggle_pause
                     .before(crate::systems::crafting::CraftingMenuSet::Menu)
                     .before(crate::systems::inventory::InventoryPanelSet::Panel)
                     .before(crate::systems::crop_select::CropSelectSet::Menu)
-                    .before(crate::systems::boss_select::BossSelectSet::Menu),
+                    .before(crate::systems::boss_select::BossSelectSet::Menu)
+                    .before(DifficultySet),
             )
             .add_systems(
                 Update,
@@ -65,7 +74,8 @@ impl Plugin for PausePlugin {
                     sync_pause_ui,
                     refresh_pause_ui,
                 )
-                    .chain(),
+                    .chain()
+                    .before(DifficultySet),
             );
     }
 }
@@ -73,6 +83,18 @@ impl Plugin for PausePlugin {
 /// The pause menu only reacts while playing and not mid-load.
 fn pause_allowed(phase: &Phase) -> bool {
     phase.is_playing() && !phase.is_loading()
+}
+
+/// Every other open panel, bundled so `toggle_pause` can check them without a
+/// 7-argument signature. Kept separate from `PauseMenu`, which is borrowed
+/// mutably.
+#[derive(bevy::ecs::system::SystemParam)]
+struct OtherPanels<'w> {
+    menu: Res<'w, crate::resources::crafting_menu::CraftingMenu>,
+    inventory: Res<'w, crate::resources::inventory_panel::InventoryPanel>,
+    crop_select: Res<'w, crate::resources::crop_select::CropSelectMenu>,
+    boss_select: Res<'w, crate::resources::boss_select::BossSelectMenu>,
+    difficulty: Res<'w, DifficultySelectMenu>,
 }
 
 /// `Esc` opens the pause menu when nothing else is open, and closes it when it
@@ -84,18 +106,23 @@ fn pause_allowed(phase: &Phase) -> bool {
 fn toggle_pause(
     keys: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseMenu>,
-    menu: Res<crate::resources::crafting_menu::CraftingMenu>,
-    inventory: Res<crate::resources::inventory_panel::InventoryPanel>,
-    crop_select: Res<crate::resources::crop_select::CropSelectMenu>,
-    boss_select: Res<crate::resources::boss_select::BossSelectMenu>,
+    panels: OtherPanels,
     phase: Phase,
 ) {
     if !pause_allowed(&phase) || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
+    // The difficulty picker owns `Esc` while it is open.
+    if panels.difficulty.open {
+        return;
+    }
     if pause.open {
         pause.close_menu();
-    } else if !(menu.open || inventory.open || crop_select.open || boss_select.open) {
+    } else if !(panels.menu.open
+        || panels.inventory.open
+        || panels.crop_select.open
+        || panels.boss_select.open)
+    {
         pause.open_menu();
     }
 }
@@ -104,17 +131,31 @@ fn toggle_pause(
 fn pause_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseMenu>,
+    difficulty_menu: Res<DifficultySelectMenu>,
     mut next_game: ResMut<NextState<GameState>>,
+    buttons: Query<(&PauseButton, &theme::MenuButton)>,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) {
+    if !pause.open || !pause_allowed(&phase) || difficulty_menu.open {
         return;
     }
 
+    let enabled: Vec<usize> = {
+        let mut list: Vec<usize> = buttons
+            .iter()
+            .filter(|(_, core)| core.enabled)
+            .map(|(button, _)| button.index)
+            .collect();
+        list.sort_unstable();
+        list
+    };
+
     let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
     let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
-    if up || down {
-        pause.selected = step(pause.selected, if down { 1 } else { -1 });
+    if up {
+        pause.selected = theme::step_enabled(&enabled, pause.selected, -1);
+    } else if down {
+        pause.selected = theme::step_enabled(&enabled, pause.selected, 1);
     }
 
     let confirm = keys.just_pressed(KeyCode::Enter)
@@ -129,18 +170,9 @@ fn pause_keyboard(
             pause.close_menu();
             next_game.set(GameState::MainMenu);
         }
+        // The difficulty picker watches for this itself (`open_from_pause`), so
+        // the button opens it even though pause does not act on the confirm.
         _ => {}
-    }
-}
-
-/// Moves the highlight between the two enabled buttons.
-fn step(current: usize, direction: i32) -> usize {
-    let last = BUTTON_MAIN_MENU as i32;
-    let target = current as i32 + direction;
-    if (0..=last).contains(&target) {
-        target as usize
-    } else {
-        current
     }
 }
 
@@ -149,9 +181,10 @@ fn pause_button_on_click(
     interactions: Query<&Interaction>,
     mut pause: ResMut<PauseMenu>,
     mut next_game: ResMut<NextState<GameState>>,
+    difficulty_menu: Res<DifficultySelectMenu>,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) {
+    if !pause.open || !pause_allowed(&phase) || difficulty_menu.open {
         return;
     }
     for (entity, button) in buttons.iter() {
@@ -164,6 +197,7 @@ fn pause_button_on_click(
                 pause.close_menu();
                 next_game.set(GameState::MainMenu);
             }
+            // The difficulty picker handles its own button (`open_from_pause`).
             PauseAction::Difficulty => {}
         }
     }
@@ -184,13 +218,14 @@ fn drive_virtual_time(pause: Res<PauseMenu>, mut time: ResMut<Time<Virtual>>) {
 fn sync_pause_ui(
     mut commands: Commands,
     pause: Res<PauseMenu>,
+    difficulty: Res<Difficulty>,
     mut art: ResMut<MenuArt>,
     server: Option<Res<AssetServer>>,
     roots: Query<Entity, With<PauseRoot>>,
 ) {
     let present = !roots.is_empty();
     if pause.open && !present {
-        spawn_pause(&mut commands, &mut art, server.as_deref());
+        spawn_pause(&mut commands, &mut art, *difficulty, server.as_deref());
     } else if !pause.open && present {
         for entity in roots.iter() {
             commands.entity(entity).despawn();
@@ -198,7 +233,12 @@ fn sync_pause_ui(
     }
 }
 
-fn spawn_pause(commands: &mut Commands, art: &mut MenuArt, server: Option<&AssetServer>) {
+fn spawn_pause(
+    commands: &mut Commands,
+    art: &mut MenuArt,
+    current: Difficulty,
+    server: Option<&AssetServer>,
+) {
     commands
         .spawn((
             Name::new("Pause Root"),
@@ -238,6 +278,7 @@ fn spawn_pause(commands: &mut Commands, art: &mut MenuArt, server: Option<&Asset
                         panel,
                         art,
                         server,
+                        current,
                         PauseAction::Resume,
                         BUTTON_RESUME,
                         "Resume",
@@ -246,15 +287,17 @@ fn spawn_pause(commands: &mut Commands, art: &mut MenuArt, server: Option<&Asset
                         panel,
                         art,
                         server,
+                        current,
                         PauseAction::ReturnToMainMenu,
                         BUTTON_MAIN_MENU,
                         "Return to Main Menu",
                     );
-                    // Reserved slot: hidden until the difficulty feature lands.
+                    // Live now, but locked once the run itself is Permadeath.
                     spawn_button(
                         panel,
                         art,
                         server,
+                        current,
                         PauseAction::Difficulty,
                         BUTTON_DIFFICULTY,
                         "Difficulty",
@@ -277,6 +320,7 @@ fn spawn_button(
     parent: &mut ChildSpawnerCommands,
     art: &mut MenuArt,
     server: Option<&AssetServer>,
+    current: Difficulty,
     action: PauseAction,
     index: usize,
     label: &str,
@@ -287,21 +331,41 @@ fn spawn_button(
         PauseAction::Difficulty => "difficulty",
     };
     let mut spec = ButtonSpec::new(index, label).label_size(20.0).skin(skin);
-    if action == PauseAction::Difficulty {
-        spec = spec.hidden();
+    if action == PauseAction::Difficulty && current == Difficulty::Permadeath {
+        // Permadeath cannot be changed once the run is under way.
+        spec = spec.disabled();
     }
     let visuals = art.resolve(&spec, server);
-    theme::spawn_menu_button(parent, spec, visuals, PauseButton { action, index }, |_| {});
+    let marker = PauseButton { action, index };
+    // The difficulty button always carries the flash component so the picker
+    // can watch its clicks; it only lights red on a Permadeath refusal.
+    if action == PauseAction::Difficulty {
+        theme::spawn_menu_button(
+            parent,
+            spec,
+            visuals,
+            (marker, MenuButtonFlash::default()),
+            |_| {},
+        );
+    } else {
+        theme::spawn_menu_button(parent, spec, visuals, marker, |_| {});
+    }
 }
 
 fn refresh_pause_ui(
     pause: Res<PauseMenu>,
-    mut buttons: Query<(&PauseButton, &mut MenuButtonSelected)>,
+    difficulty: Res<Difficulty>,
+    mut buttons: Query<(
+        &PauseButton,
+        &mut theme::MenuButton,
+        &mut MenuButtonSelected,
+    )>,
 ) {
-    for (button, mut selected) in buttons.iter_mut() {
-        selected.0 = pause.open
-            && button.action != PauseAction::Difficulty
-            && button.index == pause.selected;
+    for (button, mut core, mut selected) in buttons.iter_mut() {
+        let enabled =
+            !(button.action == PauseAction::Difficulty && *difficulty == Difficulty::Permadeath);
+        core.enabled = enabled;
+        selected.0 = pause.open && enabled && button.index == pause.selected;
     }
 }
 
@@ -450,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn navigation_stays_on_the_two_enabled_buttons() {
+    fn navigation_walks_the_enabled_buttons() {
         let mut app = setup_app();
         start_playing(&mut app);
         tap(&mut app, KeyCode::Escape);
@@ -458,7 +522,11 @@ mod tests {
         tap(&mut app, KeyCode::ArrowDown);
         assert_eq!(pause(&app).selected, 1);
         tap(&mut app, KeyCode::ArrowDown);
-        assert_eq!(pause(&app).selected, 1, "the reserved slot is skipped");
+        assert_eq!(pause(&app).selected, 2, "difficulty is reachable now");
+        tap(&mut app, KeyCode::ArrowDown);
+        assert_eq!(pause(&app).selected, 2, "clamps at the last button");
+        tap(&mut app, KeyCode::ArrowUp);
+        assert_eq!(pause(&app).selected, 1);
         tap(&mut app, KeyCode::ArrowUp);
         assert_eq!(pause(&app).selected, 0);
     }
