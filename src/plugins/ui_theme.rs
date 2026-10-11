@@ -265,6 +265,7 @@ pub fn button_core(
         Button,
         Interaction::default(),
         FocusPolicy::Block,
+        UiTransform::IDENTITY,
         Node {
             width: Val::Percent(100.0),
             min_height: Val::Px(ROW_HEIGHT),
@@ -397,6 +398,36 @@ fn tick_menu_button_flash(time: Res<Time<Real>>, mut flashes: Query<&mut MenuBut
     }
     for mut flash in flashes.iter_mut() {
         flash.remaining = (flash.remaining - dt).max(0.0);
+    }
+}
+
+/// How far a held button squashes down, and how fast it eases between sizes.
+const PRESS_SCALE: f32 = 0.96;
+const PRESS_EASE_RATE: f32 = 18.0;
+
+/// Squashes a button slightly while the mouse holds it, so a press reads. Runs
+/// on real time so a press under a paused overlay still animates.
+fn animate_button_press(
+    time: Res<Time<Real>>,
+    mut buttons: Query<(&Interaction, &MenuButton, &mut UiTransform)>,
+) {
+    let dt = time.delta_secs();
+    if dt <= 0.0 {
+        return;
+    }
+    let blend = (1.0 - (-PRESS_EASE_RATE * dt).exp()).clamp(0.0, 1.0);
+    for (interaction, button, mut transform) in buttons.iter_mut() {
+        let target = if button.enabled && matches!(*interaction, Interaction::Pressed) {
+            PRESS_SCALE
+        } else {
+            1.0
+        };
+        let current = transform.scale.x;
+        if (current - target).abs() < 0.001 {
+            transform.scale = Vec2::splat(target);
+        } else {
+            transform.scale = Vec2::splat(current + (target - current) * blend);
+        }
     }
 }
 
@@ -592,6 +623,7 @@ pub fn register(app: &mut App) {
         Update,
         (
             style_menu_buttons,
+            animate_button_press,
             animate_previews,
             tick_menu_button_flash,
             responsive_ui_scale,
@@ -792,6 +824,48 @@ mod tests {
         let mut flash = MenuButtonFlash::default();
         flash.trigger();
         assert_eq!(flash.remaining, FLASH_SECONDS);
+    }
+
+    #[test]
+    fn a_pressed_button_squashes_then_eases_back() {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, StatesPlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                50,
+            )));
+        register(&mut app);
+        // The first frame primes real time with a zero delta; run it before the
+        // button exists so the next frame has a real step to ease with.
+        app.update();
+
+        let entity = app
+            .world_mut()
+            .spawn((
+                MenuButton {
+                    index: 0,
+                    enabled: true,
+                },
+                Interaction::Pressed,
+                UiTransform::IDENTITY,
+            ))
+            .id();
+
+        app.update();
+        let held = app.world().get::<UiTransform>(entity).unwrap().scale.x;
+        assert!(held < 1.0, "a held button squashes down, got {held}");
+
+        *app.world_mut().get_mut::<Interaction>(entity).unwrap() = Interaction::None;
+        for _ in 0..20 {
+            app.update();
+        }
+        let released = app.world().get::<UiTransform>(entity).unwrap().scale.x;
+        assert!(
+            (released - 1.0).abs() < 0.01,
+            "releasing eases the button back, got {released}"
+        );
     }
 
     #[test]

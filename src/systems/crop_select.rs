@@ -3,7 +3,7 @@ use crate::events::{CropPlanted, PlaySfx, Sfx};
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::farm::CropUnlocks;
 use crate::states::Phase;
-use bevy::ecs::message::MessageWriter;
+use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -148,6 +148,30 @@ fn close_crop_select_outside_farming(mut menu: ResMut<CropSelectMenu>, phase: Ph
     }
 }
 
+/// Remembers which crop the picker should default to: the last crop planted, or
+/// a crop that was just unlocked. A fresh unlock takes over as the default until
+/// the player plants something, so a new crop is never hidden behind a stale
+/// selection.
+fn track_crop_defaults(
+    mut planted: MessageReader<CropPlanted>,
+    unlocks: Res<CropUnlocks>,
+    mut menu: ResMut<CropSelectMenu>,
+    mut previous: Local<CropUnlocks>,
+) {
+    // A crop that just became unlocked becomes the default.
+    for crop in CropType::ALL {
+        if unlocks.is_unlocked(crop) && !previous.is_unlocked(crop) {
+            menu.last_planted = Some(crop);
+        }
+    }
+    *previous = unlocks.clone();
+
+    // Planting something takes over as the default.
+    for event in planted.read() {
+        menu.last_planted = Some(event.0);
+    }
+}
+
 /// Mirrors the crop row under the mouse into `menu.hovered` so the sapling
 /// preview follows the cursor. The keyboard `selected` row keeps the highlight
 /// and hover never plants.
@@ -176,6 +200,7 @@ impl Plugin for CropSelectPlugin {
                 Update,
                 (
                     close_crop_select_outside_farming,
+                    track_crop_defaults,
                     crop_select_keyboard,
                     select_crop_on_click,
                     track_crop_hover,
@@ -574,5 +599,39 @@ mod tests {
         app.update();
 
         assert!(!menu(&app).open);
+    }
+
+    #[test]
+    fn the_picker_reopens_on_the_last_planted_crop() {
+        let mut app = setup_app();
+        spawn_pot(&mut app, 0);
+        spawn_pot(&mut app, 1);
+        unlock_a(&mut app);
+        open(&mut app, 0);
+        app.world_mut().resource_mut::<CropSelectMenu>().selected = 1;
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(planted(&app), vec![CropType::CropA]);
+
+        open(&mut app, 1);
+        assert_eq!(
+            menu(&app).selected,
+            1,
+            "the last planted crop is the default"
+        );
+    }
+
+    #[test]
+    fn a_newly_unlocked_crop_becomes_the_default() {
+        let mut app = setup_app();
+        spawn_pot(&mut app, 0);
+        unlock_b(&mut app);
+        app.update();
+
+        open(&mut app, 0);
+        assert_eq!(
+            menu(&app).selected,
+            2,
+            "the freshly unlocked crop is the default"
+        );
     }
 }

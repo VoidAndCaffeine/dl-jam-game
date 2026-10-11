@@ -1,5 +1,7 @@
 //! Every combat tuning value lives here so balancing is a one-file job.
 
+use bevy::prelude::Color;
+
 // --- Player ---
 
 /// Health with no armor equipped.
@@ -44,10 +46,10 @@ pub const ATTACK_DURATION: f32 = 0.2;
 
 // --- Bosses ---
 
-pub const BOSS_A_HEALTH: f32 = 1012.5;
+pub const BOSS_A_HEALTH: f32 = 810.0;
 pub const BOSS_B_HEALTH: f32 = 500.0;
 /// The dual boss fights from a single shared pool.
-pub const DUAL_BOSS_HEALTH: f32 = 1800.0;
+pub const DUAL_BOSS_HEALTH: f32 = 2000.0;
 
 /// Bosses get a hurtbox slightly larger than their sprite so near-misses still
 /// connect during a fast fight.
@@ -309,15 +311,13 @@ pub const DUAL_COMBO_INTERVAL: f32 = 2.5;
 /// moving without ever stacking two damage windows.
 pub const DUAL_COMBO_GAP: f32 = 0.35;
 
-// --- Lock-on ---
+// --- Target indicator ---
 
-/// Reticle ring drawn around the locked target.
-pub const RETICLE_SIZE: f32 = 56.0;
-pub const RETICLE_Z: f32 = 4.0;
-/// Off-screen indicator arrow.
-pub const TARGET_ARROW_SIZE: f32 = 22.0;
-pub const TARGET_ARROW_DISTANCE: f32 = 120.0;
-pub const TARGET_ARROW_Z: f32 = 5.0;
+/// A small circle drawn over the target a swing will auto-face. The mesh is a
+/// unit circle, so this is the circle's radius in world units.
+pub const TARGET_INDICATOR_RADIUS: f32 = 4.0;
+pub const TARGET_INDICATOR_Z: f32 = 4.0;
+pub const TARGET_INDICATOR_COLOR: Color = Color::srgba(1.0, 0.2, 0.2, 0.85);
 
 // --- Contact ---
 
@@ -334,9 +334,11 @@ pub const MIN_DAMAGE: f32 = 1.0;
 
 /// How long an impact spark stays on screen.
 pub const HIT_SPARK_DURATION: f32 = 0.09;
-/// Size of the yellow spark fringe.
-pub const HIT_SPARK_FRINGE_SIZE: f32 = 20.0;
-/// Size of the red spark core.
-pub const HIT_SPARK_CORE_SIZE: f32 = 10.0;
+/// Radius of the yellow spark fringe. The mesh is a unit circle.
+pub const HIT_SPARK_FRINGE_RADIUS: f32 = 10.0;
+/// Radius of the red spark core.
+pub const HIT_SPARK_CORE_RADIUS: f32 = 5.0;
+pub const HIT_SPARK_FRINGE_COLOR: Color = Color::srgba(1.0, 0.88, 0.2, 0.9);
+pub const HIT_SPARK_CORE_COLOR: Color = Color::srgba(1.0, 0.24, 0.2, 0.95);
 /// Sparks draw above every world sprite.
 pub const HIT_SPARK_Z: f32 = 3.0;

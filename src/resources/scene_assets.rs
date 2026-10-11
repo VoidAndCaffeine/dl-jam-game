@@ -20,9 +20,6 @@ use std::collections::HashMap;
 pub enum LoadTarget {
     /// The farm is always the farmer look and has no boss.
     Farm,
-    /// The boss-select menu stays on the farm but preloads both bosses so the
-    /// fight itself starts instantly.
-    BossSelect,
     ArenaA,
     ArenaB,
     ArenaDual,
@@ -41,7 +38,7 @@ impl LoadTarget {
     /// The room this target shows. Boss select is a phase on the farm.
     pub fn level(self) -> LevelId {
         match self {
-            LoadTarget::Farm | LoadTarget::BossSelect => LevelId::Farm,
+            LoadTarget::Farm => LevelId::Farm,
             LoadTarget::ArenaA => LevelId::ArenaA,
             LoadTarget::ArenaB => LevelId::ArenaB,
             LoadTarget::ArenaDual => LevelId::ArenaDual,
@@ -54,7 +51,7 @@ impl LoadTarget {
     /// and watering clips; arenas wear the equipped armor set.
     pub fn player_look(self, armor: Option<GearSet>) -> PlayerLook {
         match self {
-            LoadTarget::Farm | LoadTarget::BossSelect => PlayerLook::Farmer,
+            LoadTarget::Farm => PlayerLook::Farmer,
             _ => armor.map_or(PlayerLook::Farmer, PlayerLook::from_gear),
         }
     }
@@ -63,7 +60,6 @@ impl LoadTarget {
     pub fn label(self) -> &'static str {
         match self {
             LoadTarget::Farm => "the Farm",
-            LoadTarget::BossSelect => "Boss Select",
             LoadTarget::ArenaA => "the Excavator Arena",
             LoadTarget::ArenaB => "the Quicksilver Arena",
             LoadTarget::ArenaDual => "the Dual Arena",
@@ -93,15 +89,6 @@ impl LoadTarget {
                     if unlocks.is_unlocked(crop) {
                         paths.extend(crop.sheet_paths());
                     }
-                }
-            }
-            LoadTarget::BossSelect => {
-                // The menu is text-only, so a single idle frame per boss is
-                // enough to back a future portrait without holding both full
-                // packs (~1 GB decoded) just to open the menu. The chosen
-                // boss's full pack loads on arena entry.
-                for pack in [BossPack::Excavator, BossPack::Mercuril] {
-                    paths.push(BossAnimState::Idle.sheet_path(pack, Facing8::Down));
                 }
             }
             LoadTarget::ArenaA => {
@@ -462,28 +449,6 @@ mod tests {
     }
 
     #[test]
-    fn boss_select_preloads_the_farmer_and_one_idle_frame_per_boss() {
-        let paths = LoadTarget::BossSelect.required_paths(Some(GearSet::Master), &all_unlocked());
-        assert_eq!(paths.len(), 7 * Facing8::ALL.len() + 2);
-        assert!(
-            paths
-                .iter()
-                .any(|path| path.starts_with("sprite_packs/Farmer-spritesheet/"))
-        );
-        assert!(
-            paths.iter().any(|path| path
-                == "sprite_packs/Excavator-spritesheet/iso_idle_down_right/spritesheet.png")
-        );
-        assert!(
-            paths.iter().any(|path| path
-                == "sprite_packs/Mercuril-spritesheet/iso_idle_down_right/spritesheet.png")
-        );
-        // The full packs load on arena entry, not for the menu.
-        assert!(!paths.iter().any(|path| path.contains("Excavator Slam")));
-        assert!(!paths.iter().any(|path| path.contains("Madness")));
-    }
-
-    #[test]
     fn only_the_farmer_gets_the_farm_action_clips() {
         for look in [
             PlayerLook::Starter,
@@ -510,7 +475,6 @@ mod tests {
     fn required_paths_are_unique() {
         for target in [
             LoadTarget::Farm,
-            LoadTarget::BossSelect,
             LoadTarget::ArenaA,
             LoadTarget::ArenaB,
             LoadTarget::ArenaDual,
@@ -546,7 +510,6 @@ mod tests {
     #[test]
     fn every_target_maps_to_a_level() {
         assert_eq!(LoadTarget::Farm.level(), LevelId::Farm);
-        assert_eq!(LoadTarget::BossSelect.level(), LevelId::Farm);
         assert_eq!(LoadTarget::ArenaA.level(), LevelId::ArenaA);
         assert_eq!(LoadTarget::ArenaB.level(), LevelId::ArenaB);
         assert_eq!(LoadTarget::ArenaDual.level(), LevelId::ArenaDual);

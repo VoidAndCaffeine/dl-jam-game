@@ -5,6 +5,7 @@ use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::level::LevelRequest;
 use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, Phase};
+use crate::systems::scene_fade::SceneFade;
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
 
@@ -21,11 +22,12 @@ pub struct BossOption {
     pub index: usize,
 }
 
-/// Opens the selection panel when the farm's arena gate is used.
+/// Opens the selection panel the moment the farm's arena gate is used. No fade
+/// here: the menu is shown first, and only choosing a boss fades out to the
+/// arena.
 fn open_boss_select_on_gate(
     mut events: MessageReader<InteractionEvent>,
     mut menu: ResMut<BossSelectMenu>,
-    mut context: ResMut<LoadingContext>,
     mut next_phase: ResMut<NextState<DayPhase>>,
     phase: Phase,
 ) {
@@ -37,9 +39,7 @@ fn open_boss_select_on_gate(
         }
         if event.interaction_type == InteractionType::BossArena {
             menu.open_menu();
-            context.target = Some(LoadTarget::BossSelect);
-            context.resume_phase = Some(DayPhase::BossSelect);
-            next_phase.set(DayPhase::Loading);
+            next_phase.set(DayPhase::BossSelect);
         }
     }
 }
@@ -64,6 +64,7 @@ fn boss_select_keyboard(
     mut menu: ResMut<BossSelectMenu>,
     progress: Res<BossProgress>,
     mut context: ResMut<LoadingContext>,
+    mut fade: ResMut<SceneFade>,
     mut next_phase: ResMut<NextState<DayPhase>>,
     mut request: ResMut<LevelRequest>,
     mut selected_events: MessageWriter<BossSelected>,
@@ -85,9 +86,7 @@ fn boss_select_keyboard(
             selected_events.write(BossSelected(id));
             sfx.write(PlaySfx(Sfx::MenuConfirm));
             request.0 = Some(id.arena());
-            context.target = Some(LoadTarget::for_boss(id));
-            context.resume_phase = Some(DayPhase::BossFight);
-            next_phase.set(DayPhase::Loading);
+            fade.begin_load(LoadTarget::for_boss(id), DayPhase::BossFight, &mut context);
             menu.close_menu();
         }
         return;
@@ -95,9 +94,7 @@ fn boss_select_keyboard(
 
     if keys.just_pressed(KeyCode::Escape) {
         menu.close_menu();
-        context.target = Some(LoadTarget::Farm);
-        context.resume_phase = Some(DayPhase::Farming);
-        next_phase.set(DayPhase::Loading);
+        next_phase.set(DayPhase::Farming);
         return;
     }
 
@@ -162,9 +159,15 @@ fn track_boss_hover(options: Query<(&BossOption, &Interaction)>, mut menu: ResMu
 /// other panel closes it, fall back to farming instead of getting stuck.
 fn recover_closed_boss_select(
     menu: Res<BossSelectMenu>,
+    fade: Res<SceneFade>,
     mut next_phase: ResMut<NextState<DayPhase>>,
     phase: Phase,
 ) {
+    // A fade in progress means the menu closed on purpose (a boss was confirmed
+    // or the player backed out); leave the transition to the fade.
+    if !fade.is_idle() {
+        return;
+    }
     if phase.is_boss_select() && !menu.open {
         next_phase.set(DayPhase::Farming);
     }
@@ -220,6 +223,7 @@ mod tests {
                 StatesPlugin,
                 BossSelectPlugin,
                 LoadingPlugin,
+                crate::systems::scene_fade::SceneFadePlugin,
             ))
             .init_state::<GameState>()
             .init_state::<DayPhase>()
@@ -296,7 +300,11 @@ mod tests {
 
         assert!(menu(&app).open);
         assert_eq!(phase(&app), DayPhase::BossSelect);
-        assert_eq!(context(&app).target, Some(LoadTarget::BossSelect));
+        assert_eq!(
+            context(&app).target,
+            None,
+            "opening the menu does not load a scene"
+        );
     }
 
     #[test]

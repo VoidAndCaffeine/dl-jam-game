@@ -17,6 +17,7 @@ use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::boss_select::BossSelectPlugin;
 use crate::systems::camera_follow::camera_follow;
+use crate::systems::crop_notice::CropNoticePlugin;
 use crate::systems::crop_select::CropSelectPlugin;
 use crate::systems::debug_overlay::{debug_aabb_overlay, toggle_debug_overlay};
 use crate::systems::level_movement::grid_movement;
@@ -24,6 +25,7 @@ use crate::systems::movement_input::movement_input;
 use crate::systems::player_sprite::{
     animate_player_sprite, collect_player_actions, update_player_look,
 };
+use crate::systems::scene_fade::SceneFadePlugin;
 use crate::systems::spawn_player::{despawn_player, spawn_player};
 
 pub struct GamePlugin;
@@ -42,6 +44,7 @@ impl Plugin for GamePlugin {
             .init_resource::<PlayerSpriteAssets>()
             .add_plugins(InteractionPlugin)
             .add_plugins(LoadingPlugin)
+            .add_plugins(SceneFadePlugin)
             .add_plugins(MainMenuPlugin)
             .add_plugins(DifficultyPlugin)
             .add_plugins(PausePlugin)
@@ -51,6 +54,7 @@ impl Plugin for GamePlugin {
             .add_plugins(GearPlugin)
             .add_plugins(BossSelectPlugin)
             .add_plugins(CropSelectPlugin)
+            .add_plugins(CropNoticePlugin)
             .add_plugins(BossPlugin)
             .add_plugins(DayCyclePlugin)
             .add_plugins(UIPlugin)

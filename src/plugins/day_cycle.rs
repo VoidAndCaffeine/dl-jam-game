@@ -12,6 +12,7 @@ use crate::resources::inventory::Inventory;
 use crate::resources::level::LevelRequest;
 use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, GameState, Phase};
+use crate::systems::scene_fade::SceneFade;
 use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
 
@@ -137,8 +138,7 @@ fn on_player_died(
 struct ContinueWork<'w> {
     context: ResMut<'w, LoadingContext>,
     request: ResMut<'w, LevelRequest>,
-    next_phase: ResMut<'w, NextState<DayPhase>>,
-    next_game: ResMut<'w, NextState<GameState>>,
+    fade: ResMut<'w, SceneFade>,
 }
 
 /// The result screen waits for a key, then starts the next day (or ends the run
@@ -153,20 +153,24 @@ fn result_continue(
     if !phase.is_result() {
         return;
     }
+    // A fade already owns the transition; ignore further key presses so a
+    // double tap cannot advance the day twice.
+    if !work.fade.is_idle() {
+        return;
+    }
     let any_key = keys.get_just_pressed().next().is_some() || mouse.just_pressed(MouseButton::Left);
     if !any_key {
         return;
     }
 
     if day_cycle.run_complete {
-        work.next_game.set(GameState::Victory);
+        work.fade.begin_game(GameState::Victory);
         return;
     }
     day_cycle.request_advance();
     work.request.0 = Some(LevelId::Farm);
-    work.context.target = Some(LoadTarget::Farm);
-    work.context.resume_phase = Some(DayPhase::Farming);
-    work.next_phase.set(DayPhase::Loading);
+    work.fade
+        .begin_load(LoadTarget::Farm, DayPhase::Farming, &mut work.context);
 }
 
 /// Refills the player on the way out of the result screen.
@@ -418,7 +422,7 @@ fn victory_keyboard(
     mut selection: ResMut<VictorySelection>,
     mode: Res<VictoryMode>,
     mut difficulty: ResMut<Difficulty>,
-    mut next_game: ResMut<NextState<GameState>>,
+    mut fade: ResMut<SceneFade>,
     mut day_cycle: ResMut<DayCycle>,
 ) {
     let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
@@ -440,9 +444,9 @@ fn victory_keyboard(
             VictoryMode::PermadeathDefeat => VictoryAction::ContinueInApocalypse,
             _ => VictoryAction::ContinuePlaying,
         };
-        apply_victory_action(action, &mut difficulty, &mut next_game, &mut day_cycle);
+        apply_victory_action(action, &mut difficulty, &mut fade, &mut day_cycle);
     } else {
-        next_game.set(GameState::MainMenu);
+        fade.begin_game(GameState::MainMenu);
     }
 }
 
@@ -451,7 +455,7 @@ fn victory_click(
     interactions: Query<&Interaction>,
     mut selection: ResMut<VictorySelection>,
     mut difficulty: ResMut<Difficulty>,
-    mut next_game: ResMut<NextState<GameState>>,
+    mut fade: ResMut<SceneFade>,
     mut day_cycle: ResMut<DayCycle>,
 ) {
     for (entity, button) in buttons.iter() {
@@ -459,12 +463,7 @@ fn victory_click(
             continue;
         }
         selection.selected = button.index;
-        apply_victory_action(
-            button.action,
-            &mut difficulty,
-            &mut next_game,
-            &mut day_cycle,
-        );
+        apply_victory_action(button.action, &mut difficulty, &mut fade, &mut day_cycle);
     }
 }
 
@@ -473,20 +472,20 @@ fn victory_click(
 fn apply_victory_action(
     action: VictoryAction,
     difficulty: &mut Difficulty,
-    next_game: &mut NextState<GameState>,
+    fade: &mut SceneFade,
     day_cycle: &mut DayCycle,
 ) {
     match action {
         VictoryAction::ContinuePlaying => {
             day_cycle.run_complete = false;
-            next_game.set(GameState::Playing);
+            fade.begin_game(GameState::Playing);
         }
         VictoryAction::ContinueInApocalypse => {
             *difficulty = Difficulty::Apocalypse;
             day_cycle.run_complete = false;
-            next_game.set(GameState::Playing);
+            fade.begin_game(GameState::Playing);
         }
-        VictoryAction::ReturnToMainMenu => next_game.set(GameState::MainMenu),
+        VictoryAction::ReturnToMainMenu => fade.begin_game(GameState::MainMenu),
     }
 }
 
@@ -532,7 +531,13 @@ mod tests {
             .init_resource::<PlayerGear>()
             .init_resource::<PlayerSpriteAssets>()
             .init_resource::<BossSpriteAssets>()
-            .add_plugins((MinimalPlugins, StatesPlugin, DayCyclePlugin, LoadingPlugin))
+            .add_plugins((
+                MinimalPlugins,
+                StatesPlugin,
+                DayCyclePlugin,
+                LoadingPlugin,
+                crate::systems::scene_fade::SceneFadePlugin,
+            ))
             .init_state::<GameState>()
             .init_state::<DayPhase>();
 

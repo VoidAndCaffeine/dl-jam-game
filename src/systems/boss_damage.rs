@@ -7,8 +7,8 @@ use bevy::prelude::*;
 
 /// Applies every queued hit to the boss it targeted.
 ///
-/// Both the player's swings and friendly-fire debris go through here. A lethal
-/// hit does not despawn the boss: it starts the death clip via [`Dying`], and
+/// The player's swings are the only source of boss damage. A lethal hit does not
+/// despawn the boss: it starts the death clip via [`Dying`], and
 /// [`tick_dying_bosses`] announces the defeat once that clip finishes.
 pub fn apply_boss_damage(
     mut commands: Commands,

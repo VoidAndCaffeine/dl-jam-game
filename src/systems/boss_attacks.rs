@@ -2,7 +2,7 @@ use crate::components::boss::{AttackKind, Boss, BossAttack, BossEncounterEntity,
 use crate::components::effect_sprite::EffectSprite;
 use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
 use crate::constants::*;
-use crate::events::{DamageDealt, PlaySfx, PlayerDied, Sfx};
+use crate::events::{PlaySfx, PlayerDied, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::player_status::PlayerStatus;
 use crate::systems::combat::{hurt_player, swing_hits};
@@ -131,7 +131,6 @@ pub fn tick_boss_attacks(
     mut attacks: Query<(Entity, &mut BossAttack, &mut Transform), (Without<Player>, Without<Boss>)>,
     boss_transforms: Query<(Entity, &Transform), (With<Boss>, Without<Player>)>,
     mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
-    mut damage_events: MessageWriter<DamageDealt>,
     mut sfx: MessageWriter<PlaySfx>,
     mut died: MessageWriter<PlayerDied>,
 ) {
@@ -262,13 +261,6 @@ pub fn tick_boss_attacks(
                             &mut sfx,
                             &mut died,
                         );
-                    }
-                    if let Some(owner) = attack.owner {
-                        damage_events.write(DamageDealt {
-                            target: owner,
-                            amount: attack.damage,
-                            raw: attack.damage,
-                        });
                     }
                     sfx.write(PlaySfx(Sfx::DebrisImpact));
                     if attack.phase >= 2 {

@@ -23,6 +23,7 @@ use crate::resources::main_menu::{MainMenu, MenuFeatureFlags, NewGameRequested};
 use crate::resources::pause::PauseMenu;
 use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
+use crate::systems::scene_fade::SceneFade;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -342,7 +343,7 @@ pub struct ResetWork<'w> {
     pause: ResMut<'w, PauseMenu>,
     goals: ResMut<'w, GoalsProgress>,
     level_request: ResMut<'w, LevelRequest>,
-    next_game: ResMut<'w, NextState<GameState>>,
+    fade: ResMut<'w, SceneFade>,
 }
 
 impl ResetWork<'_> {
@@ -357,7 +358,7 @@ impl ResetWork<'_> {
         *self.goals = GoalsProgress::default();
         self.crafting.close_menu();
         self.panel.close_panel();
-        self.crop_select.close_menu();
+        self.crop_select.reset();
         self.boss_select.close_menu();
         self.pause.close_menu();
         *self.level_request = LevelRequest::default();
@@ -372,7 +373,7 @@ fn on_new_game_requested(
     for _ in requests.read() {
         work.reset();
         sfx.write(PlaySfx(Sfx::MenuConfirm));
-        work.next_game.set(GameState::Playing);
+        work.fade.begin_game(GameState::Playing);
     }
 }
 
@@ -389,6 +390,7 @@ mod tests {
                 StatesPlugin,
                 MainMenuPlugin,
                 crate::plugins::difficulty::DifficultyPlugin,
+                crate::systems::scene_fade::SceneFadePlugin,
             ))
             .init_state::<GameState>()
             .init_resource::<Inventory>()

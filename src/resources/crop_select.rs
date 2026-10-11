@@ -1,3 +1,4 @@
+use crate::components::pot::CropType;
 use bevy::prelude::*;
 
 /// Drives the crop selection panel shown when the player interacts with an empty
@@ -14,14 +15,25 @@ pub struct CropSelectMenu {
     pub hovered: Option<usize>,
     /// `Pot::index` the picker was opened for.
     pub pending_pot: usize,
+    /// The crop the picker should highlight next time it opens: the last crop
+    /// planted, or a crop that was just unlocked (until the player plants again).
+    pub last_planted: Option<CropType>,
 }
 
 impl CropSelectMenu {
     pub fn open_menu(&mut self, pending_pot: usize) {
         self.open = true;
-        self.selected = 0;
+        self.selected = self.default_index();
         self.hovered = None;
         self.pending_pot = pending_pot;
+    }
+
+    /// The row to highlight on open: the last-planted (or freshly unlocked) crop
+    /// when there is one, otherwise the first crop.
+    fn default_index(&self) -> usize {
+        self.last_planted
+            .and_then(|crop| CropType::ALL.iter().position(|c| *c == crop))
+            .unwrap_or(0)
     }
 
     pub fn close_menu(&mut self) {
@@ -29,6 +41,11 @@ impl CropSelectMenu {
         self.selected = 0;
         self.hovered = None;
         self.pending_pot = 0;
+    }
+
+    /// Clears every field, including the remembered default. Used by `New Game`.
+    pub fn reset(&mut self) {
+        *self = Self::default();
     }
 
     /// The crop the preview should show: the hovered one if the mouse is over a
@@ -61,6 +78,30 @@ mod tests {
         assert!(menu.open);
         assert_eq!(menu.selected, 0);
         assert_eq!(menu.pending_pot, 4);
+    }
+
+    #[test]
+    fn open_defaults_to_the_last_planted_crop() {
+        let mut menu = CropSelectMenu {
+            last_planted: Some(CropType::CropB),
+            ..default()
+        };
+        menu.open_menu(0);
+        assert_eq!(
+            menu.selected, 2,
+            "the picker opens on the last crop planted"
+        );
+    }
+
+    #[test]
+    fn reset_clears_the_remembered_default() {
+        let mut menu = CropSelectMenu {
+            last_planted: Some(CropType::CropA),
+            ..default()
+        };
+        menu.reset();
+        assert_eq!(menu.last_planted, None);
+        assert!(!menu.open);
     }
 
     #[test]

@@ -24,12 +24,11 @@ const TEXT_DIM: Color = Color::srgb(0.62, 0.63, 0.70);
 const FARMING_HINT: &str =
     "WASD Move   |   Space / Click Interact   |   Tab Craft   |   I Inventory";
 const BOSS_SELECT_HINT: &str = "Arrows Select   |   Enter / Space Choose   |   Esc Back";
-const BOSS_FIGHT_HINT: &str =
-    "WASD Move   |   Q / LMB Light   |   E / RMB Heavy   |   Z / X Lock   |   I Inventory";
+const BOSS_FIGHT_HINT: &str = "WASD Move   |   Q / LMB Light   |   E / RMB Heavy   |   I Inventory";
 /// Shown in place of [`BOSS_FIGHT_HINT`] while madness reverses the controls,
 /// spelling out the swapped left/right keys. ASCII only: the default font has no
 /// symbol glyphs.
-const INVERTED_HINT: &str = "CONTROLS INVERTED   |   D = Left   A = Right   |   Q / LMB Light   |   E / RMB Heavy   |   Z / X Lock   |   I Inventory";
+const INVERTED_HINT: &str = "CONTROLS INVERTED   |   D = Left   A = Right   |   Q / LMB Light   |   E / RMB Heavy   |   I Inventory";
 const RESULT_HINT: &str = "Any key to continue";
 
 /// The red the hint text flashes to while the controls are reversed. It eases

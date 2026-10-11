@@ -6,7 +6,6 @@ use crate::constants::{BOSS_HURTBOX_SCALE, DECOY_SIZE, LIGHT_WIDTH};
 use crate::events::{DamageDealt, HitConfirm, PlaySfx, Sfx};
 use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::inventory_panel::InventoryPanel;
-use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::run_data::PlayerGear;
 use crate::states::Phase;
@@ -19,10 +18,10 @@ use bevy::sprite_render::MeshMaterial2d;
 
 /// Turns light and heavy input into a swing in front of the player.
 ///
-/// The swing faces the locked-on target when there is one, otherwise the nearest
-/// targetable, and finally the last movement direction so a keyboard-only player
-/// can still aim. Damage is routed through [`crate::events::DamageDealt`] so
-/// single bosses, dual halves and decoys all resolve in one place.
+/// The swing faces the nearest targetable, and finally the last movement
+/// direction so a keyboard-only player can still aim. Damage is routed through
+/// [`crate::events::DamageDealt`] so single bosses, dual halves and decoys all
+/// resolve in one place.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn player_attack(
     mut commands: Commands,
@@ -32,7 +31,6 @@ pub fn player_attack(
     mut state: ResMut<PlayerAttackState>,
     gear: Res<PlayerGear>,
     inventory: Res<InventoryPanel>,
-    lock: Res<LockOn>,
     player: Query<(&Transform, &Movement), With<Player>>,
     targetables: Query<
         (
@@ -57,14 +55,9 @@ pub fn player_attack(
     };
     let origin = transform.translation.truncate();
 
-    // Face the locked target, then the nearest targetable, then WASD.
+    // Face the nearest targetable, then WASD.
     if phase.is_boss_fight() {
-        let locked_pos = lock
-            .target
-            .and_then(|entity| targetables.get(entity).ok())
-            .map(|(_, transform, _, _, _)| transform.translation.truncate());
-        let nearest = nearest_targetable_position(&targetables, origin);
-        if let Some(target) = locked_pos.or(nearest) {
+        if let Some(target) = nearest_targetable_position(&targetables, origin) {
             state.facing = (target - origin).normalize_or(Vec2::X);
         }
     } else if movement.input_direction != Vec2::ZERO {
@@ -284,7 +277,6 @@ mod tests {
             .init_resource::<PlayerAttackState>()
             .init_resource::<PlayerGear>()
             .init_resource::<InventoryPanel>()
-            .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
             .init_resource::<SharedBossHealth>()
             .init_resource::<crate::resources::boss_encounter::BossCoordinator>()
@@ -412,22 +404,6 @@ mod tests {
         assert_eq!(
             boss_health(&app, behind),
             Some(crate::constants::BOSS_B_HEALTH)
-        );
-    }
-
-    #[test]
-    fn a_locked_target_overrides_the_nearest() {
-        let mut app = setup_app();
-        let near = spawn_boss(&mut app, BossId::BossA, Vec2::new(300.0, 0.0));
-        let chosen = spawn_boss(&mut app, BossId::BossA, Vec2::new(-40.0, 0.0));
-        app.world_mut().resource_mut::<LockOn>().set(chosen);
-
-        press(&mut app, KeyCode::KeyQ);
-
-        assert!(boss_health(&app, chosen) < Some(crate::constants::BOSS_A_HEALTH));
-        assert_eq!(
-            boss_health(&app, near),
-            Some(crate::constants::BOSS_A_HEALTH)
         );
     }
 

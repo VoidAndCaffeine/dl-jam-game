@@ -8,10 +8,10 @@ use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::boss_encounter::{BossCoordinator, SharedBossHealth};
 use crate::resources::boss_rng::BossRng;
 use crate::resources::boss_sprite::BossSpriteAssets;
+use crate::resources::circle_art::CircleArt;
 use crate::resources::difficulty::Difficulty;
 use crate::resources::effect_sprite::EffectSpriteAssets;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
-use crate::resources::lock_on::LockOn;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
 use crate::states::{DayPhase, GameState, Phase};
@@ -25,13 +25,13 @@ use crate::systems::boss_damage::{apply_boss_damage, tick_dying_bosses};
 use crate::systems::boss_movement::boss_movement;
 use crate::systems::boss_patterns::{resolve_pending_blinks, spawn_pattern_attacks};
 use crate::systems::combat::{player_death_check, tick_combat_timers};
+use crate::systems::damage_numbers::{spawn_damage_numbers, tick_damage_numbers};
 use crate::systems::effect_sprite::{animate_effect_sprites, sync_attack_effects};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
-use crate::systems::lock_on::{cycle_lock_on, update_lock_on_visuals};
 use crate::systems::player_attack::{player_attack, tick_attack_visuals};
 use crate::systems::player_status::tick_player_status;
+use crate::systems::target_indicator::update_target_indicator;
 use bevy::asset::AssetServer;
-use bevy::input::mouse::MouseWheel;
 use bevy::prelude::*;
 use bevy::sprite_render::Material2dPlugin;
 
@@ -44,11 +44,11 @@ impl Plugin for BossPlugin {
             .init_resource::<BossCoordinator>()
             .init_resource::<SharedBossHealth>()
             .init_resource::<Difficulty>()
-            .init_resource::<LockOn>()
             .init_resource::<PlayerStatus>()
             .init_resource::<BossSpriteAssets>()
             .init_resource::<EffectSpriteAssets>()
             .init_resource::<AttackEffectAssets>()
+            .init_resource::<CircleArt>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_message::<BossPhaseChanged>()
@@ -57,7 +57,6 @@ impl Plugin for BossPlugin {
             .add_message::<BossAttackStarted>()
             .add_message::<PlaySfx>()
             .add_message::<crate::events::PlayLoopSfx>()
-            .add_message::<MouseWheel>()
             .add_systems(Update, spawn_boss.after(LevelSet::Load))
             .add_systems(
                 FixedUpdate,
@@ -79,11 +78,12 @@ impl Plugin for BossPlugin {
                     player_death_check,
                     spawn_hit_sparks,
                     tick_hit_sparks,
-                    cycle_lock_on,
-                    update_lock_on_visuals,
+                    update_target_indicator,
                     tick_boss_attacks,
                     resolve_pending_blinks,
                     sync_attack_effects,
+                    tick_damage_numbers,
+                    spawn_damage_numbers,
                 )
                     .chain(),
             )
@@ -236,12 +236,10 @@ fn despawn_boss(mut commands: Commands, bosses: Query<Entity, With<BossSpawnMark
 fn end_encounter(
     mut coordinator: ResMut<BossCoordinator>,
     mut shared: ResMut<SharedBossHealth>,
-    mut lock: ResMut<LockOn>,
     mut status: ResMut<PlayerStatus>,
 ) {
     coordinator.end();
     shared.reset();
-    lock.clear();
     status.clear();
 }
 

@@ -6,7 +6,7 @@
 // is `+X`. One material therefore serves every weapon; `theme` recolours it.
 //
 // Two shapes share the shader:
-//   * poke  - a tapered blade thrust straight ahead,
+//   * poke  - a hollow chevron thrust straight ahead,
 //   * slash - a crescent that sweeps from the character's right to their left.
 
 #import bevy_sprite::{
@@ -94,23 +94,38 @@ fn life_curve(progress: f32) -> f32 {
     return smoothstep(0.0, 0.12, progress) * (1.0 - smoothstep(0.5, 1.0, progress));
 }
 
-/// A tapered blade thrust ahead of the character, growing out then dissolving.
+/// A tapered blade thrust ahead of the character, drawn as a hollow chevron:
+/// two convex arms that meet at the tip and stay open at the base.
 fn poke_shape(q: vec2<f32>, reach: f32, width: f32, progress: f32, time: f32) -> f32 {
     let grow = ease_out_cubic(clamp(progress * 2.2, 0.0, 1.0));
     let r = reach * max(grow, 0.001);
     let t = q.x / r;
     if (t < 0.0 || t > 1.0) { return 0.0; }
 
-    // Narrow to a point at the tip, with a gentle belly so it reads as a
-    // leaf-shaped flash rather than a needle.
+    // Convex profile, kept from the old fill: widest at the base, tapering to a
+    // point, with a gentle belly so each arm curves like a parenthesis.
     let profile = width * 0.5 * (1.0 - t) + width * 0.16 * sin(t * 3.14159);
-    let body = band(abs(q.y) - profile, 2.0);
 
-    let spine_sigma = width * 0.18;
-    let spine = exp(-(q.y * q.y) / (2.0 * spine_sigma * spine_sigma));
-    let tip = smoothstep(0.55, 1.0, t);
+    // Each arm is a band around the profile curve. The outer edge keeps its
+    // short feather (the outline), but the inner edge fades all the way down to
+    // the centre line, so the inside of the V melts into transparency instead
+    // of stopping at a hard boundary.
+    let half = max(width * 0.14, 1.5) * 0.5;
+    let y = abs(q.y);
+    let outer = 1.0 - smoothstep(profile + half, profile + half + 1.2, y);
+    let inner = smoothstep(0.0, max(profile - half, 0.001), y);
+    let edge = outer * inner;
+
+    // Fade the arms in toward the base so the V has no flat bottom edge.
+    let root = smoothstep(0.0, 0.18, t);
+
+    // A second fade by distance from the character: the arms soften as they
+    // stretch toward the point, so the collapse of the inner edge up there does
+    // not read as a hard cut.
+    let tip = 1.0 - smoothstep(r * 0.78, r, length(q));
+
     let flicker = 0.85 + 0.15 * sin(time * 40.0 + q.x * 0.3);
-    return (body * (0.55 + 0.45 * spine) + body * tip * 0.5) * flicker;
+    return edge * root * tip * flicker;
 }
 
 /// A crescent that sweeps from the character's right (-Y) to their left (+Y).

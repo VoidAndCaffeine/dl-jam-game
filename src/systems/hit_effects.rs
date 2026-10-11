@@ -1,39 +1,49 @@
 use crate::components::hit_effects::HitSpark;
 use crate::constants::{
-    HIT_SPARK_CORE_SIZE, HIT_SPARK_DURATION, HIT_SPARK_FRINGE_SIZE, HIT_SPARK_Z,
+    HIT_SPARK_CORE_COLOR, HIT_SPARK_CORE_RADIUS, HIT_SPARK_DURATION, HIT_SPARK_FRINGE_COLOR,
+    HIT_SPARK_FRINGE_RADIUS, HIT_SPARK_Z,
 };
 use crate::events::HitConfirm;
+use crate::resources::circle_art::CircleAccess;
 use bevy::ecs::message::MessageReader;
 use bevy::prelude::*;
 
-/// Spawns an impact spark for every confirmed hit.
-pub fn spawn_hit_sparks(mut commands: Commands, mut hits: MessageReader<HitConfirm>) {
+/// Spawns an impact spark for every confirmed hit: a yellow circle with a red
+/// core, both drawn as procedural circles.
+pub fn spawn_hit_sparks(
+    mut commands: Commands,
+    mut hits: MessageReader<HitConfirm>,
+    mut circles: CircleAccess,
+) {
     for hit in hits.read() {
-        commands
-            .spawn((
-                HitSpark {
-                    remaining: HIT_SPARK_DURATION,
-                    total: HIT_SPARK_DURATION,
-                },
-                Sprite {
-                    color: Color::srgba(1.0, 0.88, 0.2, 0.9),
-                    custom_size: Some(Vec2::splat(HIT_SPARK_FRINGE_SIZE)),
-                    ..default()
-                },
-                Transform::from_translation(hit.position.extend(HIT_SPARK_Z)),
-                Name::new("Hit Spark"),
-            ))
-            .with_children(|parent| {
-                parent.spawn((
-                    Sprite {
-                        color: Color::srgba(1.0, 0.24, 0.2, 0.95),
-                        custom_size: Some(Vec2::splat(HIT_SPARK_CORE_SIZE)),
-                        ..default()
-                    },
-                    Transform::from_xyz(0.0, 0.0, 0.1),
-                    Name::new("Hit Spark Core"),
-                ));
-            });
+        let fringe = circles.circle(HIT_SPARK_FRINGE_COLOR);
+        let core = circles.circle(HIT_SPARK_CORE_COLOR);
+
+        let mut spark = commands.spawn((
+            HitSpark {
+                remaining: HIT_SPARK_DURATION,
+                total: HIT_SPARK_DURATION,
+            },
+            Transform::from_translation(hit.position.extend(HIT_SPARK_Z))
+                .with_scale(Vec3::splat(HIT_SPARK_FRINGE_RADIUS)),
+            Name::new("Hit Spark"),
+        ));
+        if let Some((mesh, material)) = fringe {
+            spark.insert((mesh, material));
+        }
+
+        // The core is a child of the (scaled) fringe, so its local scale has to
+        // cancel the fringe's scale to land on the wanted world radius.
+        let core_scale = HIT_SPARK_CORE_RADIUS / HIT_SPARK_FRINGE_RADIUS;
+        spark.with_children(|parent| {
+            let mut child = parent.spawn((
+                Transform::from_xyz(0.0, 0.0, 0.1).with_scale(Vec3::splat(core_scale)),
+                Name::new("Hit Spark Core"),
+            ));
+            if let Some((mesh, material)) = core {
+                child.insert((mesh, material));
+            }
+        });
     }
 }
 
@@ -55,11 +65,15 @@ pub fn tick_hit_sparks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resources::circle_art::CircleArt;
     use bevy::transform::TransformPlugin;
 
     fn setup_app() -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, TransformPlugin))
+        app.init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .init_resource::<CircleArt>()
+            .add_plugins((MinimalPlugins, TransformPlugin))
             .add_message::<HitConfirm>()
             .add_systems(Update, (spawn_hit_sparks, tick_hit_sparks).chain());
         app.update();
@@ -99,6 +113,39 @@ mod tests {
     }
 
     #[test]
+    fn a_spark_draws_as_circles_when_a_renderer_is_present() {
+        let mut app = setup_app();
+        let target = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(HitConfirm {
+            target,
+            position: Vec2::ZERO,
+        });
+        app.update();
+
+        let spark = app
+            .world_mut()
+            .query_filtered::<Entity, With<HitSpark>>()
+            .iter(app.world())
+            .next()
+            .unwrap();
+        assert!(
+            app.world().get::<Mesh2d>(spark).is_some(),
+            "the fringe is a circle mesh"
+        );
+        let core = app
+            .world()
+            .get::<Children>(spark)
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap();
+        assert!(
+            app.world().get::<Mesh2d>(core).is_some(),
+            "the core is a circle mesh"
+        );
+    }
+
+    #[test]
     fn a_spark_despawns_after_its_lifetime() {
         let mut app = setup_app();
         let expired = app
@@ -108,7 +155,6 @@ mod tests {
                     remaining: 0.0,
                     total: HIT_SPARK_DURATION,
                 },
-                Sprite::default(),
                 Transform::default(),
             ))
             .id();
