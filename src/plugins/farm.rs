@@ -352,10 +352,14 @@ fn attach_mound_visuals(
     }
 }
 
+/// Despawns farm pots on leaving play. Pots and their growth text are tagged
+/// [`LevelEntity`] by the level loader, which already tears them down; this only
+/// handles any that are not level-owned, so nothing is despawned twice (which
+/// Bevy logs as a command error).
 fn despawn_pots(
     mut commands: Commands,
-    pots: Query<Entity, With<Pot>>,
-    texts: Query<Entity, With<GrowthTimerText>>,
+    pots: Query<Entity, (With<Pot>, Without<LevelEntity>)>,
+    texts: Query<Entity, (With<GrowthTimerText>, Without<LevelEntity>)>,
 ) {
     for entity in pots.iter() {
         commands.entity(entity).despawn();
@@ -835,6 +839,39 @@ mod tests {
         assert_eq!(
             pot_indices(&mut app),
             (0..POT_COUNT).collect::<Vec<usize>>()
+        );
+    }
+
+    #[test]
+    fn despawn_pots_leaves_level_owned_entities_to_the_level() {
+        let mut app = App::new();
+        app.add_systems(Update, despawn_pots);
+        let tag = LevelEntity::of(LevelId::Farm);
+        let owned = app.world_mut().spawn((Pot::new(0), tag)).id();
+        let owned_text = app
+            .world_mut()
+            .spawn((GrowthTimerText { pot_index: 0 }, tag))
+            .id();
+        let stray = app.world_mut().spawn(Pot::new(1)).id();
+        let stray_text = app.world_mut().spawn(GrowthTimerText { pot_index: 1 }).id();
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(owned).is_ok(),
+            "a level-owned pot is despawned by the level, not here"
+        );
+        assert!(
+            app.world().get_entity(owned_text).is_ok(),
+            "a level-owned growth text is left alone"
+        );
+        assert!(
+            app.world().get_entity(stray).is_err(),
+            "a pot with no level tag is still cleaned up"
+        );
+        assert!(
+            app.world().get_entity(stray_text).is_err(),
+            "an untagged growth text is still cleaned up"
         );
     }
 

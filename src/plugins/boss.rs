@@ -28,6 +28,7 @@ use crate::systems::combat::{player_death_check, tick_combat_timers};
 use crate::systems::damage_numbers::{spawn_damage_numbers, tick_damage_numbers};
 use crate::systems::effect_sprite::{animate_effect_sprites, sync_attack_effects};
 use crate::systems::hit_effects::{spawn_hit_sparks, tick_hit_sparks};
+use crate::systems::hit_pause::world_unfrozen;
 use crate::systems::player_attack::{player_attack, tick_attack_visuals};
 use crate::systems::player_status::tick_player_status;
 use crate::systems::target_indicator::update_target_indicator;
@@ -66,7 +67,8 @@ impl Plugin for BossPlugin {
                     tick_surge_chargers,
                     boss_movement,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(world_unfrozen),
             )
             .add_systems(
                 Update,

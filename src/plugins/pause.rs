@@ -6,10 +6,12 @@
 //! the one selected on open; `Return to Main Menu` sits below it and a
 //! `Difficulty` slot is reserved (hidden) for later.
 
+use crate::plugins::confirm::ConfirmSet;
 use crate::plugins::difficulty::DifficultySet;
 use crate::plugins::ui_theme::{
     self as theme, ButtonSpec, MenuArt, MenuButtonFlash, MenuButtonSelected,
 };
+use crate::resources::confirm::{ConfirmDialog, ConfirmKind, ConfirmResolved};
 use crate::resources::difficulty::Difficulty;
 use crate::resources::difficulty_menu::DifficultySelectMenu;
 use crate::resources::goals::{GOAL_TIERS, GoalsProgress};
@@ -52,6 +54,9 @@ impl Plugin for PausePlugin {
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
             .init_resource::<GoalsProgress>()
+            .init_resource::<ConfirmDialog>()
+            .add_message::<ConfirmResolved>()
+            .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::Playing), ensure_unpaused)
             .add_systems(OnExit(GameState::Playing), (leave_pause, despawn_pause_ui))
             // `Esc` is read by every panel, so pause claims it first: a panel
@@ -65,7 +70,8 @@ impl Plugin for PausePlugin {
                     .before(crate::systems::inventory::InventoryPanelSet::Panel)
                     .before(crate::systems::crop_select::CropSelectSet::Menu)
                     .before(crate::systems::boss_select::BossSelectSet::Menu)
-                    .before(DifficultySet),
+                    .before(DifficultySet)
+                    .before(ConfirmSet),
             )
             .add_systems(
                 Update,
@@ -75,9 +81,11 @@ impl Plugin for PausePlugin {
                     drive_virtual_time,
                     sync_pause_ui,
                     refresh_pause_ui,
+                    resolve_quit_confirm,
                 )
                     .chain()
-                    .before(DifficultySet),
+                    .before(DifficultySet)
+                    .before(ConfirmSet),
             );
     }
 }
@@ -108,14 +116,15 @@ struct OtherPanels<'w> {
 fn toggle_pause(
     keys: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseMenu>,
+    confirm: Res<ConfirmDialog>,
     panels: OtherPanels,
     phase: Phase,
 ) {
     if !pause_allowed(&phase) || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    // The difficulty picker owns `Esc` while it is open.
-    if panels.difficulty.open {
+    // The difficulty picker and the confirm dialog own `Esc` while they are open.
+    if panels.difficulty.open || confirm.open {
         return;
     }
     if pause.open {
@@ -130,15 +139,25 @@ fn toggle_pause(
 }
 
 /// Keyboard navigation and activation for the pause buttons.
+/// The difficulty picker, the modal, and the transition a pause button drives,
+/// bundled so the pause input systems stay within the argument limit.
+#[derive(bevy::ecs::system::SystemParam)]
+struct PauseWork<'w> {
+    difficulty_menu: Res<'w, DifficultySelectMenu>,
+    difficulty: Res<'w, Difficulty>,
+    confirm: ResMut<'w, ConfirmDialog>,
+    next_game: ResMut<'w, NextState<GameState>>,
+    sfx: MessageWriter<'w, crate::events::PlaySfx>,
+}
+
 fn pause_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseMenu>,
-    difficulty_menu: Res<DifficultySelectMenu>,
-    mut next_game: ResMut<NextState<GameState>>,
+    mut work: PauseWork,
     buttons: Query<(&PauseButton, &theme::MenuButton)>,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) || difficulty_menu.open {
+    if !pause.open || !pause_allowed(&phase) || work.difficulty_menu.open || work.confirm.open {
         return;
     }
 
@@ -160,18 +179,15 @@ fn pause_keyboard(
         pause.selected = theme::step_enabled(&enabled, pause.selected, 1);
     }
 
-    let confirm = keys.just_pressed(KeyCode::Enter)
+    let confirm_key = keys.just_pressed(KeyCode::Enter)
         || keys.just_pressed(KeyCode::Space)
         || keys.just_pressed(KeyCode::KeyE);
-    if !confirm {
+    if !confirm_key {
         return;
     }
     match pause.selected {
         BUTTON_RESUME => pause.close_menu(),
-        BUTTON_MAIN_MENU => {
-            pause.close_menu();
-            next_game.set(GameState::MainMenu);
-        }
+        BUTTON_MAIN_MENU => request_return_to_menu(&phase, &mut pause, &mut work),
         // The difficulty picker watches for this itself (`open_from_pause`), so
         // the button opens it even though pause does not act on the confirm.
         _ => {}
@@ -182,11 +198,10 @@ fn pause_button_on_click(
     buttons: Query<(Entity, &PauseButton), Changed<Interaction>>,
     interactions: Query<&Interaction>,
     mut pause: ResMut<PauseMenu>,
-    mut next_game: ResMut<NextState<GameState>>,
-    difficulty_menu: Res<DifficultySelectMenu>,
+    mut work: PauseWork,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) || difficulty_menu.open {
+    if !pause.open || !pause_allowed(&phase) || work.difficulty_menu.open || work.confirm.open {
         return;
     }
     for (entity, button) in buttons.iter() {
@@ -195,12 +210,48 @@ fn pause_button_on_click(
         }
         match button.action {
             PauseAction::Resume => pause.close_menu(),
-            PauseAction::ReturnToMainMenu => {
-                pause.close_menu();
-                next_game.set(GameState::MainMenu);
-            }
+            PauseAction::ReturnToMainMenu => request_return_to_menu(&phase, &mut pause, &mut work),
             // The difficulty picker handles its own button (`open_from_pause`).
             PauseAction::Difficulty => {}
+        }
+    }
+}
+
+/// Handles the pause overlay's `Return to Main Menu`.
+///
+/// Normally this just leaves. On Permadeath, quitting *during a boss fight*
+/// would dodge a death that should have ended the run, so it asks first and
+/// steps the run down to Apocalypse on confirmation.
+fn request_return_to_menu(phase: &Phase, pause: &mut PauseMenu, work: &mut PauseWork) {
+    if *work.difficulty == Difficulty::Permadeath && phase.is_boss_fight() {
+        work.confirm.open(
+            ConfirmKind::QuitFightToMenu,
+            "Quit the Fight?",
+            "You are in a boss fight on Permadeath. Leaving now steps this run \
+             down to Apocalypse so it can continue. This cannot be undone.",
+            vec!["Stay".to_string(), "Step down & quit".to_string()],
+        );
+        work.sfx
+            .write(crate::events::PlaySfx(crate::events::Sfx::MenuOpen));
+        return;
+    }
+    pause.close_menu();
+    work.next_game.set(GameState::MainMenu);
+}
+
+/// Acts on the quit confirmation: "Step down & quit" demotes to Apocalypse and
+/// leaves for the main menu.
+fn resolve_quit_confirm(
+    mut resolved: MessageReader<ConfirmResolved>,
+    mut difficulty: ResMut<Difficulty>,
+    mut pause: ResMut<PauseMenu>,
+    mut next_game: ResMut<NextState<GameState>>,
+) {
+    for event in resolved.read() {
+        if event.kind == ConfirmKind::QuitFightToMenu && event.choice == 1 {
+            *difficulty = Difficulty::Apocalypse;
+            pause.close_menu();
+            next_game.set(GameState::MainMenu);
         }
     }
 }
@@ -457,7 +508,12 @@ mod tests {
             .init_resource::<InventoryPanel>()
             .init_resource::<CropSelectMenu>()
             .init_resource::<crate::resources::boss_select::BossSelectMenu>()
-            .add_plugins((MinimalPlugins, StatesPlugin, PausePlugin))
+            .add_plugins((
+                MinimalPlugins,
+                StatesPlugin,
+                PausePlugin,
+                crate::plugins::ConfirmPlugin,
+            ))
             .init_state::<GameState>()
             .init_state::<crate::states::DayPhase>();
         app
@@ -561,6 +617,79 @@ mod tests {
 
         assert_eq!(game_state(&app), GameState::MainMenu);
         assert!(!app.world().resource::<Time<Virtual>>().is_paused());
+    }
+
+    /// Enters a Permadeath boss fight with the pause overlay open on
+    /// `Return to Main Menu`.
+    fn permadeath_fight_at_return_button(app: &mut App) {
+        *app.world_mut().resource_mut::<Difficulty>() = Difficulty::Permadeath;
+        start_playing(app);
+        app.world_mut()
+            .resource_mut::<NextState<crate::states::DayPhase>>()
+            .set(crate::states::DayPhase::BossFight);
+        app.update();
+        tap(app, KeyCode::Escape);
+        app.world_mut().resource_mut::<PauseMenu>().selected = 1;
+    }
+
+    #[test]
+    fn quitting_a_permadeath_fight_asks_first_and_does_not_demote_yet() {
+        let mut app = setup_app();
+        permadeath_fight_at_return_button(&mut app);
+
+        tap(&mut app, KeyCode::Enter);
+
+        assert_eq!(
+            game_state(&app),
+            GameState::Playing,
+            "still in play while the confirm is up"
+        );
+        assert!(app.world().resource::<ConfirmDialog>().open);
+        assert_eq!(
+            app.world().resource::<Difficulty>(),
+            &Difficulty::Permadeath,
+            "the run is only stepped down once confirmed"
+        );
+    }
+
+    #[test]
+    fn confirming_the_quit_demotes_to_apocalypse_and_leaves() {
+        let mut app = setup_app();
+        permadeath_fight_at_return_button(&mut app);
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<ConfirmDialog>().open);
+
+        // Highlight "Step down & quit" and confirm.
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+        for _ in 0..3 {
+            app.update();
+        }
+
+        assert_eq!(
+            app.world().resource::<Difficulty>(),
+            &Difficulty::Apocalypse
+        );
+        assert_eq!(game_state(&app), GameState::MainMenu);
+    }
+
+    #[test]
+    fn the_quit_confirm_can_be_cancelled() {
+        let mut app = setup_app();
+        permadeath_fight_at_return_button(&mut app);
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.world().resource::<ConfirmDialog>().open);
+
+        tap(&mut app, KeyCode::Escape);
+
+        assert!(!app.world().resource::<ConfirmDialog>().open);
+        assert_eq!(game_state(&app), GameState::Playing);
+        assert_eq!(
+            app.world().resource::<Difficulty>(),
+            &Difficulty::Permadeath,
+            "cancelling leaves Permadeath intact"
+        );
+        assert!(pause(&app).open, "the pause overlay is still up");
     }
 
     #[test]

@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 
 use crate::plugins::{
-    AudioPlugin, BossPlugin, DayCyclePlugin, DifficultyPlugin, FarmPlugin, GearPlugin, GoalsPlugin,
-    HudPlugin, InteractionPlugin, LevelPlugin, LoadingPlugin, MainMenuPlugin, PausePlugin,
-    PersistencePlugin, PropPlugin, UIPlugin,
+    AudioPlugin, BossPlugin, ConfirmPlugin, DayCyclePlugin, DifficultyPlugin, FarmPlugin,
+    GearPlugin, GoalsPlugin, HudPlugin, InteractionPlugin, LevelPlugin, LoadingPlugin,
+    MainMenuPlugin, PausePlugin, PersistencePlugin, PropPlugin, UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
@@ -17,11 +17,14 @@ use crate::resources::run_data::PlayerGear;
 use crate::states::{DayPhase, GameState};
 use crate::systems::boss_select::BossSelectPlugin;
 use crate::systems::camera_follow::camera_follow;
+use crate::systems::camera_shake::CameraShakePlugin;
 use crate::systems::crop_notice::CropNoticePlugin;
 use crate::systems::crop_select::CropSelectPlugin;
 use crate::systems::debug_overlay::{debug_aabb_overlay, toggle_debug_overlay};
+use crate::systems::hit_pause::{HitPausePlugin, world_unfrozen};
 use crate::systems::level_movement::grid_movement;
 use crate::systems::movement_input::movement_input;
+use crate::systems::particles::ParticlePlugin;
 use crate::systems::player_sprite::{
     animate_player_sprite, collect_player_actions, update_player_look,
 };
@@ -61,7 +64,11 @@ impl Plugin for GamePlugin {
             .add_plugins(HudPlugin)
             .add_plugins(GoalsPlugin)
             .add_plugins(AudioPlugin)
+            .add_plugins(ConfirmPlugin)
             .add_plugins(PersistencePlugin)
+            .add_plugins(CameraShakePlugin)
+            .add_plugins(HitPausePlugin)
+            .add_plugins(ParticlePlugin)
             .insert_resource(Time::<Fixed>::from_hz(60.0))
             .add_systems(Update, toggle_debug_overlay)
             .add_systems(
@@ -80,7 +87,10 @@ impl Plugin for GamePlugin {
                     .after(LevelSet::Load),
             )
             .add_systems(FixedUpdate, movement_input)
-            .add_systems(FixedUpdate, grid_movement.after(movement_input))
+            .add_systems(
+                FixedUpdate,
+                grid_movement.after(movement_input).run_if(world_unfrozen),
+            )
             .add_systems(FixedUpdate, camera_follow);
 
         // Gizmos only exist under a renderer; skip the overlay in headless tests.

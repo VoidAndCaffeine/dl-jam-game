@@ -2,10 +2,10 @@ use crate::components::boss::{AttackKind, Boss, BossAttack, BossEncounterEntity,
 use crate::components::effect_sprite::EffectSprite;
 use crate::components::player::{Health, Movement, PLAYER_SIZE, Player};
 use crate::constants::*;
-use crate::events::{PlaySfx, PlayerDied, Sfx};
+use crate::events::{DamageDealt, PlaySfx, PlayerDied, Sfx};
 use crate::levels::grid::SolidGrid;
 use crate::resources::player_status::PlayerStatus;
-use crate::systems::combat::{hurt_player, swing_hits};
+use crate::systems::combat::{damage_after_armor, hurt_player, swing_hits};
 use crate::utils::targeting::circles_overlap;
 use bevy::ecs::message::MessageWriter;
 use bevy::prelude::*;
@@ -38,20 +38,33 @@ pub fn spawn_attack(commands: &mut Commands, attack: BossAttack, angle: f32) -> 
         .id()
 }
 
-/// Applies a hit to the player if it lands, reporting the sound and any death.
+/// Applies a hit to the player if it lands, reporting the damage number, the
+/// sound and any death.
+#[allow(clippy::too_many_arguments)]
 fn damage_player(
     health: &mut Health,
     movement: &mut Movement,
     source: Vec2,
     target: Vec2,
     damage: f32,
+    player_entity: Entity,
+    damage_events: &mut MessageWriter<DamageDealt>,
     sfx: &mut MessageWriter<PlaySfx>,
     died: &mut MessageWriter<PlayerDied>,
 ) {
     if health.is_invulnerable() {
         return;
     }
+    let amount = damage_after_armor(damage, health.armor_reduction);
     let lethal = hurt_player(health, movement, damage, source, target);
+    // Route the hit through `DamageDealt` so the floating numbers (and, later,
+    // any feedback keyed off the event) see the player's side of the exchange
+    // too, not just boss damage.
+    damage_events.write(DamageDealt {
+        target: player_entity,
+        amount,
+        raw: damage,
+    });
     sfx.write(PlaySfx(Sfx::PlayerHit));
     if lethal {
         died.write(PlayerDied);
@@ -130,12 +143,14 @@ pub fn tick_boss_attacks(
     mut status: ResMut<PlayerStatus>,
     mut attacks: Query<(Entity, &mut BossAttack, &mut Transform), (Without<Player>, Without<Boss>)>,
     boss_transforms: Query<(Entity, &Transform), (With<Boss>, Without<Player>)>,
-    mut player: Query<(&Transform, &mut Health, &mut Movement), With<Player>>,
+    mut player: Query<(Entity, &Transform, &mut Health, &mut Movement), With<Player>>,
+    mut damage: MessageWriter<DamageDealt>,
     mut sfx: MessageWriter<PlaySfx>,
     mut died: MessageWriter<PlayerDied>,
 ) {
     let dt = time.delta_secs();
-    let Ok((player_transform, mut health, mut movement)) = player.single_mut() else {
+    let Ok((player_entity, player_transform, mut health, mut movement)) = player.single_mut()
+    else {
         return;
     };
     let player_pos = player_transform.translation.truncate();
@@ -204,6 +219,8 @@ pub fn tick_boss_attacks(
                             attack.position,
                             player_pos,
                             attack.damage * attack.multiplier,
+                            player_entity,
+                            &mut damage,
                             &mut sfx,
                             &mut died,
                         );
@@ -235,6 +252,8 @@ pub fn tick_boss_attacks(
                         attack.position,
                         player_pos,
                         attack.damage * attack.multiplier,
+                        player_entity,
+                        &mut damage,
                         &mut sfx,
                         &mut died,
                     );
@@ -258,6 +277,8 @@ pub fn tick_boss_attacks(
                             attack.target,
                             player_pos,
                             attack.damage * attack.multiplier,
+                            player_entity,
+                            &mut damage,
                             &mut sfx,
                             &mut died,
                         );
@@ -308,6 +329,8 @@ pub fn tick_boss_attacks(
                         attack.position,
                         player_pos,
                         attack.damage * attack.multiplier,
+                        player_entity,
+                        &mut damage,
                         &mut sfx,
                         &mut died,
                     );
@@ -349,6 +372,8 @@ pub fn tick_boss_attacks(
                         attack.position,
                         player_pos,
                         attack.damage * attack.multiplier,
+                        player_entity,
+                        &mut damage,
                         &mut sfx,
                         &mut died,
                     );
@@ -384,6 +409,8 @@ pub fn tick_boss_attacks(
                             attack.position,
                             player_pos,
                             attack.damage * attack.multiplier,
+                            player_entity,
+                            &mut damage,
                             &mut sfx,
                             &mut died,
                         );

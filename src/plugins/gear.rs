@@ -1,6 +1,7 @@
 use crate::components::collider::Collider;
 use crate::plugins::interaction::{CraftingStation, Interactable};
 use crate::plugins::prop::PropArt;
+use crate::resources::level::LevelEntity;
 use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
 use crate::systems::crafting::{
@@ -58,9 +59,12 @@ pub fn spawn_crafting_station(commands: &mut Commands, position: Vec2) -> Entity
         .id()
 }
 
+/// Despawns the crafting station. The level loader already tears down anything
+/// it tagged [`LevelEntity`] (the station is one), so this only clears a station
+/// that is not level-owned, avoiding a double despawn.
 fn despawn_crafting_station(
     mut commands: Commands,
-    stations: Query<Entity, With<CraftingStation>>,
+    stations: Query<Entity, (With<CraftingStation>, Without<LevelEntity>)>,
 ) {
     for entity in stations.iter() {
         commands.entity(entity).despawn();
@@ -177,6 +181,26 @@ mod tests {
     #[test]
     fn gear_plugin_exists() {
         let _plugin = GearPlugin;
+    }
+
+    #[test]
+    fn despawn_crafting_station_leaves_level_owned_stations_to_the_level() {
+        let mut app = App::new();
+        app.add_systems(Update, despawn_crafting_station);
+        let tag = LevelEntity::of(crate::levels::LevelId::Farm);
+        let owned = app.world_mut().spawn((CraftingStation, tag)).id();
+        let stray = app.world_mut().spawn(CraftingStation).id();
+
+        app.update();
+
+        assert!(
+            app.world().get_entity(owned).is_ok(),
+            "a level-owned station is despawned by the level, not here"
+        );
+        assert!(
+            app.world().get_entity(stray).is_err(),
+            "a station with no level tag is still cleaned up"
+        );
     }
 
     #[test]

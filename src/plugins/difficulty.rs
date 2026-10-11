@@ -50,6 +50,7 @@ impl Plugin for DifficultyPlugin {
         app.init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
             .init_resource::<theme::MenuArt>()
+            .init_resource::<crate::resources::confirm::ConfirmDialog>()
             .add_message::<NewGameRequested>()
             .add_message::<PlaySfx>()
             .add_systems(
@@ -79,10 +80,11 @@ fn open_from_pause(
     mut menu: ResMut<DifficultySelectMenu>,
     difficulty: Res<Difficulty>,
     pause: Res<PauseMenu>,
+    confirm: Res<crate::resources::confirm::ConfirmDialog>,
     mut clicks: Query<(&Interaction, &PauseButton, &mut MenuButtonFlash), Changed<Interaction>>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if menu.open || !pause.open {
+    if menu.open || !pause.open || confirm.open {
         return;
     }
 

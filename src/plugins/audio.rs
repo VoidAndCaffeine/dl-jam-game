@@ -15,6 +15,7 @@
 use crate::components::boss::{Boss, BossId, DualRole, SurgeCharger};
 use crate::events::{CropPlanted, PlayLoopSfx, PlaySfx, Sfx};
 use crate::levels::LevelId;
+use crate::resources::audio_settings::AudioSettings;
 use crate::resources::boss_select::BossSelectMenu;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
@@ -84,6 +85,7 @@ impl Plugin for AudioPlugin {
             .add_message::<CropPlanted>()
             .add_message::<crate::events::PlayerDied>()
             .init_resource::<AudioAssets>()
+            .init_resource::<AudioSettings>()
             .init_resource::<SwingAlternator>()
             .init_resource::<CraftRng>()
             .init_resource::<MenuWatch>()
@@ -251,6 +253,7 @@ fn resolve_loop_sfx(
     mut assets: ResMut<AudioAssets>,
     mut cues: MessageReader<PlayLoopSfx>,
     menus: MenuOpenFlags,
+    settings: Res<AudioSettings>,
 ) {
     let Some(server) = server else {
         for _ in cues.read() {}
@@ -263,6 +266,7 @@ fn resolve_loop_sfx(
     }
     for cue in cues.read() {
         let (files, volume) = loop_plan(cue.sfx);
+        let volume = volume * settings.sfx_gain();
         for file in files {
             let handle = assets.handle(&server, file);
             commands.spawn((
@@ -375,6 +379,7 @@ fn drive_surge_sizzle(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
     mut assets: ResMut<AudioAssets>,
+    settings: Res<AudioSettings>,
     mut bosses: SurgeBosses,
 ) {
     let Some(server) = server else {
@@ -400,7 +405,7 @@ fn drive_surge_sizzle(
                     GameAudio,
                     LoopVoice,
                     AudioPlayer::new(handle),
-                    PlaybackSettings::LOOP.with_volume(Volume::Linear(QUIET)),
+                    PlaybackSettings::LOOP.with_volume(Volume::Linear(QUIET * settings.sfx_gain())),
                 ))
                 .id();
             commands.entity(entity).add_child(voice);
@@ -429,6 +434,7 @@ fn drive_water_fades(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
     mut assets: ResMut<AudioAssets>,
+    settings: Res<AudioSettings>,
     mut voices: Query<(Entity, &mut WaterFade, &mut AudioSink)>,
 ) {
     let Some(server) = server else {
@@ -452,7 +458,7 @@ fn drive_water_fades(
                 Name::new("Water Splash"),
                 GameAudio,
                 AudioPlayer::new(handle),
-                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(NORMAL)),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(NORMAL * settings.sfx_gain())),
             ));
         }
 
@@ -483,6 +489,7 @@ fn drive_boss_engines(
     server: Option<Res<AssetServer>>,
     mut assets: ResMut<AudioAssets>,
     phase: Phase,
+    settings: Res<AudioSettings>,
     mut bosses: Query<(Entity, &Boss, Option<&DualRole>, Option<&mut BossEngine>)>,
 ) {
     let Some(server) = server else {
@@ -522,7 +529,7 @@ fn drive_boss_engines(
                     GameAudio,
                     LoopVoice,
                     AudioPlayer::new(handle),
-                    PlaybackSettings::LOOP.with_volume(Volume::Linear(QUIET)),
+                    PlaybackSettings::LOOP.with_volume(Volume::Linear(QUIET * settings.sfx_gain())),
                 ))
                 .id();
             commands.entity(entity).add_child(voice);
@@ -582,6 +589,7 @@ fn desired_track(
 /// Crossfades to the track the current context wants. A context change fades the
 /// old track out and the new one in; opening a menu does not change the context,
 /// so music simply keeps playing under menus.
+#[allow(clippy::too_many_arguments)]
 fn drive_music(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -589,6 +597,7 @@ fn drive_music(
     state: Option<Res<State<GameState>>>,
     day_phase: Option<Res<State<DayPhase>>>,
     active: Option<Res<ActiveLevel>>,
+    settings: Res<AudioSettings>,
     mut director: ResMut<MusicDirector>,
 ) {
     let Some(server) = server else {
@@ -599,10 +608,11 @@ fn drive_music(
         return;
     }
 
+    let music_volume = MUSIC_VOLUME * settings.music_gain();
     if let Some(voice) = director.voice.take() {
         commands.entity(voice).insert(MusicFadeOut {
             remaining: MUSIC_FADE_OUT,
-            from: MUSIC_VOLUME,
+            from: music_volume,
         });
     }
     director.current = desired;
@@ -612,7 +622,7 @@ fn drive_music(
             .spawn((
                 Name::new("Music"),
                 MusicVoice {
-                    target: MUSIC_VOLUME,
+                    target: music_volume,
                     level: 0.0,
                     fade_in: MUSIC_FADE_IN,
                 },
@@ -669,6 +679,7 @@ fn resolve_player_death(
 
 /// One-shot / sequence / random resolution. Stateful cues (swings, crafts) are
 /// handled here so the caller never has to.
+#[allow(clippy::too_many_arguments)]
 fn resolve_sfx_cues(
     mut commands: Commands,
     server: Option<Res<AssetServer>>,
@@ -677,11 +688,13 @@ fn resolve_sfx_cues(
     mut swing: ResMut<SwingAlternator>,
     mut craft: ResMut<CraftRng>,
     menus: MenuOpenFlags,
+    settings: Res<AudioSettings>,
 ) {
     let Some(server) = server else {
         for _ in cues.read() {}
         return;
     };
+    let sfx_gain = settings.sfx_gain();
     for cue in cues.read() {
         // A world sound never starts while a menu owns the screen; a menu sound
         // always may. (Menu === MenuOpenFlags; music is handled separately.)
@@ -691,15 +704,36 @@ fn resolve_sfx_cues(
         match cue.0 {
             Sfx::PlayerSwingLight => {
                 let file = swing.next(true);
-                spawn_sequence(&mut commands, &mut assets, &server, &[file], NORMAL, false);
+                spawn_sequence(
+                    &mut commands,
+                    &mut assets,
+                    &server,
+                    &[file],
+                    NORMAL * sfx_gain,
+                    false,
+                );
             }
             Sfx::PlayerSwingHeavy => {
                 let file = swing.next(false);
-                spawn_sequence(&mut commands, &mut assets, &server, &[file], NORMAL, false);
+                spawn_sequence(
+                    &mut commands,
+                    &mut assets,
+                    &server,
+                    &[file],
+                    NORMAL * sfx_gain,
+                    false,
+                );
             }
             Sfx::GearCraft => {
                 let files = craft.craft_sequence();
-                spawn_sequence(&mut commands, &mut assets, &server, &files, NORMAL, true);
+                spawn_sequence(
+                    &mut commands,
+                    &mut assets,
+                    &server,
+                    &files,
+                    NORMAL * sfx_gain,
+                    true,
+                );
             }
             Sfx::CropWaterStart => {
                 let handle = assets.handle(&server, "loop_water_03.ogg");
@@ -708,12 +742,12 @@ fn resolve_sfx_cues(
                     GameAudio,
                     LoopVoice,
                     AudioPlayer::new(handle),
-                    PlaybackSettings::LOOP.with_volume(Volume::Linear(NORMAL)),
+                    PlaybackSettings::LOOP.with_volume(Volume::Linear(NORMAL * sfx_gain)),
                     WaterFade {
                         elapsed: 0.0,
                         fading: false,
                         splash: false,
-                        volume: NORMAL,
+                        volume: NORMAL * sfx_gain,
                     },
                 ));
             }
@@ -724,7 +758,7 @@ fn resolve_sfx_cues(
                     &mut assets,
                     &server,
                     &files,
-                    volume,
+                    volume * sfx_gain,
                     is_menu_sfx(other),
                 );
             }

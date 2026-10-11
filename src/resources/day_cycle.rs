@@ -38,6 +38,32 @@ impl DayCycle {
     }
 }
 
+/// Set when play is entered by *loading a save* rather than starting fresh.
+///
+/// [`crate::plugins::day_cycle`] ticks the first day over on entering play (day
+/// 0 → day 1). A resumed run already has a day, so that boot advance must be
+/// skipped. Persistence sets this just before the load fades into `Playing`; the
+/// first-day system consumes it.
+#[derive(Resource, Reflect, Default, Debug, Clone, Copy)]
+pub struct ResumeRun(pub bool);
+
+/// True while a boss fight is live inside `Playing`.
+///
+/// Captured into the save so a force-quit mid-fight can be told apart from a
+/// normal quit: a Permadeath run whose save was written mid-fight is invalidated
+/// when it is next loaded. Cleared when the player is back on the farm.
+#[derive(Resource, Reflect, Default, Debug, Clone, Copy)]
+pub struct InBossfight(pub bool);
+
+/// True once a Permadeath run has ended (the player died).
+///
+/// The run cannot be resumed: no save is written while this holds, any existing
+/// save is dropped, and the title screen's `Continue` disappears. The run-over
+/// screen's own "Continue in Apocalypse" clears it, which is the one way the run
+/// carries on (stepped down).
+#[derive(Resource, Reflect, Default, Debug, Clone, Copy)]
+pub struct RunOver(pub bool);
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,7 +4,7 @@ use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
 use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
-use crate::resources::day_cycle::{DayCycle, Outcome};
+use crate::resources::day_cycle::{DayCycle, InBossfight, Outcome, ResumeRun, RunOver};
 use crate::resources::difficulty::Difficulty;
 use crate::resources::drop_rng::DropRng;
 use crate::resources::farm::CropUnlocks;
@@ -21,6 +21,9 @@ pub struct DayCyclePlugin;
 impl Plugin for DayCyclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DayCycle>()
+            .init_resource::<ResumeRun>()
+            .init_resource::<InBossfight>()
+            .init_resource::<RunOver>()
             .init_resource::<BossProgress>()
             .init_resource::<DropRng>()
             .init_resource::<Difficulty>()
@@ -56,7 +59,14 @@ impl Plugin for DayCyclePlugin {
 }
 
 /// The first day works like any other: one pending advance when play starts.
-fn begin_first_day(mut day_cycle: ResMut<DayCycle>) {
+///
+/// Skipped when play is resumed from a save, whose day is already set: see
+/// [`ResumeRun`].
+fn begin_first_day(mut day_cycle: ResMut<DayCycle>, mut resume: ResMut<ResumeRun>) {
+    if resume.0 {
+        resume.0 = false;
+        return;
+    }
     day_cycle.request_advance();
 }
 
@@ -424,6 +434,7 @@ fn victory_keyboard(
     mut difficulty: ResMut<Difficulty>,
     mut fade: ResMut<SceneFade>,
     mut day_cycle: ResMut<DayCycle>,
+    mut run_over: ResMut<RunOver>,
 ) {
     let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
     let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
@@ -444,7 +455,13 @@ fn victory_keyboard(
             VictoryMode::PermadeathDefeat => VictoryAction::ContinueInApocalypse,
             _ => VictoryAction::ContinuePlaying,
         };
-        apply_victory_action(action, &mut difficulty, &mut fade, &mut day_cycle);
+        apply_victory_action(
+            action,
+            &mut difficulty,
+            &mut fade,
+            &mut day_cycle,
+            &mut run_over,
+        );
     } else {
         fade.begin_game(GameState::MainMenu);
     }
@@ -457,32 +474,43 @@ fn victory_click(
     mut difficulty: ResMut<Difficulty>,
     mut fade: ResMut<SceneFade>,
     mut day_cycle: ResMut<DayCycle>,
+    mut run_over: ResMut<RunOver>,
 ) {
     for (entity, button) in buttons.iter() {
         if interactions.get(entity) != Ok(&Interaction::Pressed) {
             continue;
         }
         selection.selected = button.index;
-        apply_victory_action(button.action, &mut difficulty, &mut fade, &mut day_cycle);
+        apply_victory_action(
+            button.action,
+            &mut difficulty,
+            &mut fade,
+            &mut day_cycle,
+            &mut run_over,
+        );
     }
 }
 
 /// Runs a victory button: the permadeath "continue" steps the difficulty down
-/// to Apocalypse, the rest simply resume or leave.
+/// to Apocalypse, the rest simply resume or leave. Continuing re-opens a run
+/// that a Permadeath death had closed, so it also lifts [`RunOver`].
 fn apply_victory_action(
     action: VictoryAction,
     difficulty: &mut Difficulty,
     fade: &mut SceneFade,
     day_cycle: &mut DayCycle,
+    run_over: &mut RunOver,
 ) {
     match action {
         VictoryAction::ContinuePlaying => {
             day_cycle.run_complete = false;
+            run_over.0 = false;
             fade.begin_game(GameState::Playing);
         }
         VictoryAction::ContinueInApocalypse => {
             *difficulty = Difficulty::Apocalypse;
             day_cycle.run_complete = false;
+            run_over.0 = false;
             fade.begin_game(GameState::Playing);
         }
         VictoryAction::ReturnToMainMenu => fade.begin_game(GameState::MainMenu),
@@ -616,6 +644,51 @@ mod tests {
     #[test]
     fn the_same_seed_repeats_the_drop_amounts() {
         assert_eq!(boss_a_drops_for_seed(7), boss_a_drops_for_seed(7));
+    }
+
+    #[test]
+    fn the_first_day_advance_is_skipped_when_resuming() {
+        let mut app = App::new();
+        app.init_resource::<DayCycle>()
+            .init_resource::<ResumeRun>()
+            .add_systems(Update, begin_first_day);
+
+        // A fresh start requests the day-0 → day-1 advance.
+        app.update();
+        assert!(day_cycle(&app).pending_advance);
+
+        // A resumed run leaves the saved day alone and consumes the flag.
+        app.world_mut().resource_mut::<DayCycle>().pending_advance = false;
+        app.world_mut().resource_mut::<ResumeRun>().0 = true;
+        app.update();
+        assert!(
+            !day_cycle(&app).pending_advance,
+            "resuming must not tick the day over"
+        );
+        assert!(!app.world().resource::<ResumeRun>().0, "flag is consumed");
+    }
+
+    #[test]
+    fn continuing_in_apocalypse_reopens_a_run_closed_by_a_permadeath_death() {
+        let mut difficulty = Difficulty::Permadeath;
+        let mut fade = SceneFade::default();
+        let mut day_cycle = DayCycle {
+            run_complete: true,
+            ..Default::default()
+        };
+        let mut run_over = RunOver(true);
+
+        apply_victory_action(
+            VictoryAction::ContinueInApocalypse,
+            &mut difficulty,
+            &mut fade,
+            &mut day_cycle,
+            &mut run_over,
+        );
+
+        assert_eq!(difficulty, Difficulty::Apocalypse);
+        assert!(!run_over.0, "the run is reopened, stepped down");
+        assert!(!day_cycle.run_complete);
     }
 
     #[test]

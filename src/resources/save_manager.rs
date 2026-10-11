@@ -20,13 +20,14 @@ pub const SAVE_KEY: &str = "run";
 
 /// Bumped when the payload's shape changes. Old saves are discarded rather than
 /// migrated, which is fine while the schema is still moving.
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 /// A complete run, ready to be serialized.
 ///
 /// The field set is exactly what a resume needs. Transient session state
 /// (the current day phase, panel open flags, the fade) is deliberately absent:
-/// a load always resumes into a fresh farming day.
+/// a load always resumes into a fresh farming day. The one exception is
+/// [`Self::in_bossfight`], which is a deliberate breadcrumb rather than state.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SaveData {
     pub version: u32,
@@ -38,6 +39,10 @@ pub struct SaveData {
     pub bosses: BossProgress,
     pub goals: GoalsProgress,
     pub difficulty: Difficulty,
+    /// True when the save was written while a boss fight was live. A Permadeath
+    /// save that still carries this on load was force-quit mid-fight and is
+    /// invalidated (see the persistence plugin).
+    pub in_bossfight: bool,
 }
 
 impl SaveData {
@@ -53,6 +58,7 @@ impl SaveData {
         bosses: &BossProgress,
         goals: &GoalsProgress,
         difficulty: Difficulty,
+        in_bossfight: bool,
     ) -> Self {
         Self {
             version: SAVE_VERSION,
@@ -64,6 +70,7 @@ impl SaveData {
             bosses: bosses.clone(),
             goals: goals.clone(),
             difficulty,
+            in_bossfight,
         }
     }
 }
@@ -160,6 +167,7 @@ mod tests {
             &bosses,
             &goals,
             Difficulty::Hard,
+            false,
         )
     }
 

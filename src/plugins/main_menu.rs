@@ -84,6 +84,7 @@ impl Plugin for MainMenuPlugin {
             .init_resource::<MenuFeatureFlags>()
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
+            .init_resource::<crate::resources::confirm::ConfirmDialog>()
             .add_message::<NewGameRequested>()
             .add_message::<ContinueRequested>()
             .add_message::<crate::events::PlaySfx>()
@@ -235,16 +236,24 @@ fn despawn_main_menu(mut commands: Commands, roots: Query<Entity, With<MainMenuR
     }
 }
 
+/// The modal state the title screen has to consult, bundled so the input
+/// systems stay within the argument limit.
+#[derive(SystemParam)]
+struct MenuContext<'w> {
+    difficulty_menu: ResMut<'w, DifficultySelectMenu>,
+    difficulty: Res<'w, Difficulty>,
+    confirm: Res<'w, crate::resources::confirm::ConfirmDialog>,
+}
+
 fn main_menu_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<MainMenu>,
-    mut difficulty_menu: ResMut<DifficultySelectMenu>,
-    difficulty: Res<Difficulty>,
+    mut context: MenuContext,
     buttons: Query<(&MainMenuButton, &theme::MenuButton)>,
     mut sfx: MessageWriter<PlaySfx>,
     mut continue_req: MessageWriter<ContinueRequested>,
 ) {
-    if difficulty_menu.open {
+    if context.difficulty_menu.open || context.confirm.open {
         return;
     }
     let enabled: Vec<usize> = enabled_indices(buttons.iter());
@@ -263,8 +272,8 @@ fn main_menu_keyboard(
     if confirm && let Some(action) = action_for_selection(menu.selected, buttons.iter()) {
         activate(
             action,
-            *difficulty,
-            &mut difficulty_menu,
+            *context.difficulty,
+            &mut context.difficulty_menu,
             &mut sfx,
             &mut continue_req,
         );
@@ -275,12 +284,11 @@ fn main_menu_click(
     buttons: Query<(Entity, &MainMenuButton), Changed<Interaction>>,
     all_buttons: Query<&theme::MenuButton>,
     interactions: Query<&Interaction>,
-    mut difficulty_menu: ResMut<DifficultySelectMenu>,
-    difficulty: Res<Difficulty>,
+    mut context: MenuContext,
     mut sfx: MessageWriter<PlaySfx>,
     mut continue_req: MessageWriter<ContinueRequested>,
 ) {
-    if difficulty_menu.open {
+    if context.difficulty_menu.open || context.confirm.open {
         return;
     }
     for (entity, button) in buttons.iter() {
@@ -290,8 +298,8 @@ fn main_menu_click(
         if interactions.get(entity) == Ok(&Interaction::Pressed) {
             activate(
                 button.action,
-                *difficulty,
-                &mut difficulty_menu,
+                *context.difficulty,
+                &mut context.difficulty_menu,
                 &mut sfx,
                 &mut continue_req,
             );

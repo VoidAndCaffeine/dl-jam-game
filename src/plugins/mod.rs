@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod boss;
+pub mod confirm;
 pub mod day_cycle;
 pub mod difficulty;
 pub mod farm;
@@ -18,6 +19,7 @@ pub mod ui_theme;
 
 pub use audio::AudioPlugin;
 pub use boss::BossPlugin;
+pub use confirm::{ConfirmPlugin, ConfirmSet};
 pub use day_cycle::DayCyclePlugin;
 pub use difficulty::{DifficultyPlugin, DifficultySet};
 pub use farm::FarmPlugin;
