@@ -42,6 +42,7 @@ any `Playing` phase and freezes the world by pausing `Time<Virtual>`.
 | `UIPlugin` | Forge, inventory, boss select and planting panels (presentation only) |
 | `ui_theme` | Shared menu widgets: skinnable buttons, panes, animated previews |
 | `HudPlugin` | Player/boss health bars, day counter, phase input hints |
+| `GoalsPlugin` | Objective checklist: goal tracking, the HUD goal list + exit animation, pause objectives |
 | `AudioPlugin` | Music/SFX management |
 
 ### Menu system
@@ -119,6 +120,12 @@ struct CropSelectMenu {
     selected: usize,     // index into CropType::ALL
     pending_pot: usize,  // Pot::index the picker was opened for
 }
+
+#[derive(Resource, Reflect, Serialize, Deserialize, Default)]
+struct GoalsProgress {
+    completed: Vec<GoalId>,  // goals already ticked off
+    tier: usize,             // index of the active (highest revealed) tier
+}
 ```
 
 ### Components (all `#[derive(Component, Reflect, Serialize, Deserialize)]`)
@@ -165,6 +172,33 @@ auto-equips when crafted.
 | **Boss A** | Imediate         | 3 patterns, 2 phases | Boss A Material 1 ×0-2 + Boss A Material 2 ×1-3 (rolled), unlocks Boss A Crop |
 | **Boss B** | Imediate         | 3 patterns, 2 phases | Boss B Material 1 ×0-2 + Boss B Material 2 ×1-3 (rolled), unlocks Boss B Crop |
 | **Dual Boss** | After A+B beaten | Combined patterns, shared HP | Victory |
+
+## 4b. Goals Checklist
+
+`GoalsPlugin` drives a per-run objective checklist. Goals are grouped into
+ordered **tiers**; only one tier is active at a time and finishing every goal in
+it silently unlocks the next (`-->` in the design notes).
+
+| Tier | Goals |
+|------|-------|
+| First Sprout | Plant a Quicksilver Reed |
+| Tools of the Trade | Harvest a Quicksilver Reed · Craft a Full Gear Set (any set) · Beat The Excavator |
+| Beyond the Farm | Harvest a Cinder Cap · Beat Mercurial |
+| DreamLayer Mastery | Craft the Full DreamLayer Set (Dreaming Spearblade + Layered Aegis) · Beat the Dual Bossfight |
+
+- `GoalsProgress` (`resources/goals.rs`) holds `completed` + the active `tier`;
+  `GOAL_TIERS` is the static definition and `goal_for_*` map game messages to ids.
+- `track_goals` reads the existing `CropPlanted`/`CropHarvested`/`GearCrafted`/
+  `BossDefeated` messages; no gameplay system needs to know about goals.
+- The HUD list (top-right, below day/difficulty) shows the active tier's
+  outstanding goals. A completed goal is struck through, fades, then collapses so
+  the rows below slide up (`GoalRowAnim`: `Idle → Striking → Fading → Collapsing`).
+- The pause overlay lists every **revealed** tier (completed tiers + the active
+  one) with `[x]`/`[ ]` markers; later tiers are hidden so nothing is spoiled.
+- `GoalsProgress` resets on `New Game` and is `Serialize/Deserialize + Reflect`,
+  ready for save/load.
+- `resources::goals::side_objectives` is an unused skeleton for future
+  non-gating objectives.
 
 ## 5. Development Workflow
 
@@ -316,13 +350,14 @@ src/
 │   ├── level.rs            # LevelPlugin — load rooms, spawn TilemapChunk + props
 │   ├── loading.rs          # LoadingPlugin — scene preload + progress bar
 │   ├── main_menu.rs        # MainMenuPlugin — title screen + New Game reset
-│   ├── pause.rs            # PausePlugin — overlay, virtual-time pause
+│   ├── pause.rs            # PausePlugin — overlay, virtual-time pause, objectives list
 │   ├── boss.rs
 │   ├── day_cycle.rs
 │   ├── persistence.rs
 │   ├── ui.rs               # forge / inventory / boss select / planting panels
 │   ├── ui_theme.rs         # shared skinnable buttons, panes, animated previews
 │   ├── hud.rs              # HudPlugin — player/boss health bars, day counter, input hints
+│   ├── goals.rs            # GoalsPlugin — objective tracking + HUD checklist animation
 │   └── audio.rs
 ├── components/
 │   ├── player.rs
@@ -335,6 +370,7 @@ src/
 │   ├── inventory.rs
 │   ├── crop_select.rs      # CropSelectMenu — crop picker state + target pot
 │   ├── crafting_menu.rs    # CraftingMenu — forge state + notice
+│   ├── goals.rs            # GoalsProgress + GoalId/GoalTierDef — the objective checklist
 │   ├── boss_select.rs      # BossSelectMenu — boss list + confirmation
 │   ├── inventory_panel.rs  # InventoryPanel — inventory state + notice
 │   ├── main_menu.rs        # MainMenu, MenuFeatureFlags, NewGameRequested

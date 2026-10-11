@@ -14,6 +14,7 @@ pub mod difficulty_menu;
 pub mod drop_rng;
 pub mod effect_sprite;
 pub mod farm;
+pub mod goals;
 pub mod inventory;
 pub mod inventory_panel;
 pub mod level;

@@ -12,6 +12,7 @@ use crate::plugins::ui_theme::{
 };
 use crate::resources::difficulty::Difficulty;
 use crate::resources::difficulty_menu::DifficultySelectMenu;
+use crate::resources::goals::{GOAL_TIERS, GoalsProgress};
 use crate::resources::main_menu::MenuFeatureFlags;
 use crate::resources::pause::PauseMenu;
 use crate::states::{GameState, Phase};
@@ -50,6 +51,7 @@ impl Plugin for PausePlugin {
             .init_resource::<MenuFeatureFlags>()
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
+            .init_resource::<GoalsProgress>()
             .add_systems(OnEnter(GameState::Playing), ensure_unpaused)
             .add_systems(OnExit(GameState::Playing), (leave_pause, despawn_pause_ui))
             // `Esc` is read by every panel, so pause claims it first: a panel
@@ -219,13 +221,20 @@ fn sync_pause_ui(
     mut commands: Commands,
     pause: Res<PauseMenu>,
     difficulty: Res<Difficulty>,
+    goals: Res<GoalsProgress>,
     mut art: ResMut<MenuArt>,
     server: Option<Res<AssetServer>>,
     roots: Query<Entity, With<PauseRoot>>,
 ) {
     let present = !roots.is_empty();
     if pause.open && !present {
-        spawn_pause(&mut commands, &mut art, *difficulty, server.as_deref());
+        spawn_pause(
+            &mut commands,
+            &mut art,
+            *difficulty,
+            &goals,
+            server.as_deref(),
+        );
     } else if !pause.open && present {
         for entity in roots.iter() {
             commands.entity(entity).despawn();
@@ -237,6 +246,7 @@ fn spawn_pause(
     commands: &mut Commands,
     art: &mut MenuArt,
     current: Difficulty,
+    goals: &GoalsProgress,
     server: Option<&AssetServer>,
 ) {
     commands
@@ -303,6 +313,8 @@ fn spawn_pause(
                         "Difficulty",
                     );
 
+                    spawn_pause_goals(panel, goals);
+
                     panel.spawn((
                         Name::new("Hint"),
                         PauseHint,
@@ -313,6 +325,44 @@ fn spawn_pause(
                         ),
                     ));
                 });
+        });
+}
+
+/// The revealed checklist: completed tiers plus the active one. Later tiers are
+/// never shown, so the overlay cannot spoil what is still to come.
+fn spawn_pause_goals(panel: &mut ChildSpawnerCommands, goals: &GoalsProgress) {
+    panel.spawn((
+        Name::new("Objectives Title"),
+        theme::label("OBJECTIVES", 16.0, theme::TEXT_DIM),
+    ));
+    panel
+        .spawn((
+            Name::new("Objectives List"),
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(2.0),
+                ..default()
+            },
+        ))
+        .with_children(|list| {
+            for def in GOAL_TIERS.iter().take(goals.active_tier() + 1) {
+                list.spawn(theme::label(def.title, 13.0, theme::TEXT_DIM));
+                for goal in def.goals {
+                    let done = goals.is_completed(goal.id);
+                    let marker = if done { "[x]" } else { "[ ]" };
+                    let color = if done {
+                        theme::TEXT_DIM
+                    } else {
+                        theme::TEXT_PRIMARY
+                    };
+                    list.spawn(theme::label(
+                        format!("{marker} {}", goal.description),
+                        15.0,
+                        color,
+                    ));
+                }
+            }
         });
 }
 

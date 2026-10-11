@@ -4,6 +4,7 @@ pub mod day_cycle;
 pub mod difficulty;
 pub mod farm;
 pub mod gear;
+pub mod goals;
 pub mod hud;
 pub mod interaction;
 pub mod level;
@@ -20,6 +21,7 @@ pub use day_cycle::DayCyclePlugin;
 pub use difficulty::{DifficultyPlugin, DifficultySet};
 pub use farm::FarmPlugin;
 pub use gear::GearPlugin;
+pub use goals::GoalsPlugin;
 pub use hud::HudPlugin;
 pub use interaction::InteractionPlugin;
 pub use interaction::{

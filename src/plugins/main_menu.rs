@@ -15,6 +15,7 @@ use crate::resources::day_cycle::DayCycle;
 use crate::resources::difficulty::Difficulty;
 use crate::resources::difficulty_menu::{DifficultyMenuMode, DifficultySelectMenu};
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
+use crate::resources::goals::GoalsProgress;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelRequest;
@@ -339,6 +340,7 @@ pub struct ResetWork<'w> {
     crop_select: ResMut<'w, CropSelectMenu>,
     boss_select: ResMut<'w, BossSelectMenu>,
     pause: ResMut<'w, PauseMenu>,
+    goals: ResMut<'w, GoalsProgress>,
     level_request: ResMut<'w, LevelRequest>,
     next_game: ResMut<'w, NextState<GameState>>,
 }
@@ -352,6 +354,7 @@ impl ResetWork<'_> {
         *self.day = DayCounter::default();
         *self.cycle = DayCycle::default();
         *self.farm = FarmState::default();
+        *self.goals = GoalsProgress::default();
         self.crafting.close_menu();
         self.panel.close_panel();
         self.crop_select.close_menu();
@@ -395,6 +398,7 @@ mod tests {
             .init_resource::<DayCounter>()
             .init_resource::<DayCycle>()
             .init_resource::<FarmState>()
+            .init_resource::<GoalsProgress>()
             .init_resource::<CraftingMenu>()
             .init_resource::<InventoryPanel>()
             .init_resource::<CropSelectMenu>()
