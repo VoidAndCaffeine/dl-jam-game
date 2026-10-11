@@ -13,12 +13,12 @@ impl DayCounter {
 
 /// The farm's pots, kept across room swaps so planted crops survive boss
 /// fights. Indexed by [`Pot::index`].
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct FarmState {
     pub pots: Vec<Pot>,
 }
 
-#[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CropUnlocks {
     pub starter: bool,
     pub crop_a: bool,

@@ -31,7 +31,7 @@ impl PlayerStats {
     }
 }
 
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct PlayerGear {
     pub weapon: Option<GearPiece>,
     pub armor: Option<GearPiece>,

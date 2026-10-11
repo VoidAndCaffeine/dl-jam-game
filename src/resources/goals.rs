@@ -131,7 +131,7 @@ pub fn description_for(id: GoalId) -> &'static str {
 ///
 /// `completed` is the set of finished goals; `tier` is the index of the active
 /// (highest revealed) tier. Both survive a save.
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct GoalsProgress {
     pub completed: Vec<GoalId>,
     pub tier: usize,

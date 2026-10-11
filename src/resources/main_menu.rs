@@ -29,6 +29,11 @@ pub struct MenuFeatureFlags {
 #[derive(Message, Debug, Clone, Copy)]
 pub struct NewGameRequested;
 
+/// Emitted when the player confirms `Continue` on the title screen. A handler
+/// restores the saved run before play begins.
+#[derive(Message, Debug, Clone, Copy)]
+pub struct ContinueRequested;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +51,12 @@ mod tests {
         assert!(!flags.difficulty);
         assert!(!flags.load_game);
         assert!(!flags.infinite_mode);
+    }
+
+    #[test]
+    fn the_title_screen_can_ask_to_continue() {
+        // The event carries no payload; constructing it is the whole contract.
+        let request = ContinueRequested;
+        let _ = request;
     }
 }

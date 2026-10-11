@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 /// What the run knows about the bosses so far.
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct BossProgress {
     pub boss_a: bool,
     pub boss_b: bool,

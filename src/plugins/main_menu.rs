@@ -19,7 +19,9 @@ use crate::resources::goals::GoalsProgress;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelRequest;
-use crate::resources::main_menu::{MainMenu, MenuFeatureFlags, NewGameRequested};
+use crate::resources::main_menu::{
+    ContinueRequested, MainMenu, MenuFeatureFlags, NewGameRequested,
+};
 use crate::resources::pause::PauseMenu;
 use crate::resources::run_data::PlayerGear;
 use crate::states::GameState;
@@ -83,6 +85,7 @@ impl Plugin for MainMenuPlugin {
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
             .add_message::<NewGameRequested>()
+            .add_message::<ContinueRequested>()
             .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
@@ -100,6 +103,7 @@ impl Plugin for MainMenuPlugin {
 fn spawn_main_menu(
     mut commands: Commands,
     mut art: ResMut<MenuArt>,
+    flags: Res<MenuFeatureFlags>,
     server: Option<Res<AssetServer>>,
 ) {
     commands
@@ -167,16 +171,18 @@ fn spawn_main_menu(
                         MainMenuAction::NewGame,
                         BUTTON_NEW_GAME,
                         "New Game",
+                        true,
                     );
-                    // Reserved slot, hidden until Load Game lands. Choosing a
-                    // difficulty lives in the New Game prompt, not here.
+                    // Continue appears only when a save exists; the slot keeps
+                    // its layout room either way.
                     spawn_button(
                         column,
                         &mut art,
                         server.as_deref(),
                         MainMenuAction::LoadGame,
                         BUTTON_LOAD_GAME,
-                        "Load Game",
+                        "Continue",
+                        flags.load_game,
                     );
 
                     column.spawn((
@@ -202,14 +208,15 @@ fn spawn_button(
     action: MainMenuAction,
     index: usize,
     label: &str,
+    enabled: bool,
 ) {
     let skin = match action {
         MainMenuAction::NewGame => "new_game",
         MainMenuAction::LoadGame => "load_game",
     };
     let mut spec = ButtonSpec::new(index, label).label_size(22.0).skin(skin);
-    // Load Game stays reserved.
-    if action == MainMenuAction::LoadGame {
+    // Continue keeps its layout room but stays hidden until a save exists.
+    if !enabled {
         spec = spec.hidden();
     }
     let visuals = art.resolve(&spec, server);
@@ -235,6 +242,7 @@ fn main_menu_keyboard(
     difficulty: Res<Difficulty>,
     buttons: Query<(&MainMenuButton, &theme::MenuButton)>,
     mut sfx: MessageWriter<PlaySfx>,
+    mut continue_req: MessageWriter<ContinueRequested>,
 ) {
     if difficulty_menu.open {
         return;
@@ -253,7 +261,13 @@ fn main_menu_keyboard(
         || keys.just_pressed(KeyCode::Space)
         || keys.just_pressed(KeyCode::KeyE);
     if confirm && let Some(action) = action_for_selection(menu.selected, buttons.iter()) {
-        activate(action, *difficulty, &mut difficulty_menu, &mut sfx);
+        activate(
+            action,
+            *difficulty,
+            &mut difficulty_menu,
+            &mut sfx,
+            &mut continue_req,
+        );
     }
 }
 
@@ -264,6 +278,7 @@ fn main_menu_click(
     mut difficulty_menu: ResMut<DifficultySelectMenu>,
     difficulty: Res<Difficulty>,
     mut sfx: MessageWriter<PlaySfx>,
+    mut continue_req: MessageWriter<ContinueRequested>,
 ) {
     if difficulty_menu.open {
         return;
@@ -273,24 +288,36 @@ fn main_menu_click(
             continue;
         }
         if interactions.get(entity) == Ok(&Interaction::Pressed) {
-            activate(button.action, *difficulty, &mut difficulty_menu, &mut sfx);
+            activate(
+                button.action,
+                *difficulty,
+                &mut difficulty_menu,
+                &mut sfx,
+                &mut continue_req,
+            );
         }
     }
 }
 
-/// Opens the picker for the action, if it is one that opens it.
+/// Runs the action: `New Game` asks for a difficulty first, `Continue` restores
+/// the saved run.
 fn activate(
     action: MainMenuAction,
     difficulty: Difficulty,
     menu: &mut DifficultySelectMenu,
     sfx: &mut MessageWriter<PlaySfx>,
+    continue_req: &mut MessageWriter<ContinueRequested>,
 ) {
-    let mode = match action {
-        MainMenuAction::NewGame => DifficultyMenuMode::NewGame,
-        MainMenuAction::LoadGame => return,
-    };
-    menu.open_menu(mode, difficulty);
-    sfx.write(PlaySfx(Sfx::MenuOpen));
+    match action {
+        MainMenuAction::NewGame => {
+            menu.open_menu(DifficultyMenuMode::NewGame, difficulty);
+            sfx.write(PlaySfx(Sfx::MenuOpen));
+        }
+        MainMenuAction::LoadGame => {
+            continue_req.write(ContinueRequested);
+            sfx.write(PlaySfx(Sfx::MenuConfirm));
+        }
+    }
 }
 
 /// The sorted indices of the buttons a player can navigate to.
@@ -467,7 +494,33 @@ mod tests {
         let rows = buttons(&mut app);
         assert_eq!(rows.len(), 2, "new game plus one reserved slot");
         assert!(rows[0].1, "new game is enabled");
-        assert!(!rows[1].1, "the load-game slot is still reserved");
+        assert!(!rows[1].1, "continue stays hidden until a save exists");
+    }
+
+    #[test]
+    fn continue_is_revealed_when_a_save_exists() {
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<MenuFeatureFlags>().load_game = true;
+        enter_menu(&mut app);
+
+        let rows = buttons(&mut app);
+        assert!(rows[1].1, "continue is enabled once a save exists");
+    }
+
+    #[test]
+    fn confirming_continue_does_not_open_the_difficulty_picker() {
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<MenuFeatureFlags>().load_game = true;
+        enter_menu(&mut app);
+
+        // Move off New Game onto Continue, then confirm.
+        tap(&mut app, KeyCode::ArrowDown);
+        tap(&mut app, KeyCode::Enter);
+
+        assert!(
+            !app.world().resource::<DifficultySelectMenu>().open,
+            "continue restores a run instead of asking for a difficulty"
+        );
     }
 
     #[test]

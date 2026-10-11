@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Resource, Reflect, Serialize, Deserialize, Default, Debug, Clone, PartialEq)]
 pub struct Inventory {
     pub crops: HashMap<CropType, u32>,
     pub materials: HashMap<MaterialType, u32>,

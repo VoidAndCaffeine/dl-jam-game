@@ -26,4 +26,5 @@ pub mod player_attack_state;
 pub mod player_sprite;
 pub mod player_status;
 pub mod run_data;
+pub mod save_manager;
 pub mod scene_assets;
