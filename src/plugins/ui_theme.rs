@@ -32,6 +32,55 @@ pub const ROW_BORDER_LOCKED: Color = Color::srgb(1.0, 0.25, 0.25);
 /// How long the refusal flash stays lit.
 pub const FLASH_SECONDS: f32 = 0.45;
 
+/// The semantic UI colours, remapped as a group for colour-vision presets. The
+/// base values are the constants above; a preset swaps only the ones a player
+/// with that colour vision would struggle to tell apart.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Palette {
+    pub craftable: Color,
+    pub blocked: Color,
+    pub locked: Color,
+    pub selected_border: Color,
+    pub locked_border: Color,
+}
+
+impl Palette {
+    /// The untouched palette, equal to the constants above.
+    pub const fn base() -> Self {
+        Self {
+            craftable: TEXT_CRAFTABLE,
+            blocked: TEXT_BLOCKED,
+            locked: TEXT_LOCKED,
+            selected_border: ROW_BORDER_SELECTED,
+            locked_border: ROW_BORDER_LOCKED,
+        }
+    }
+}
+
+/// The palette for a colour-vision preset. Red-green presets move the greens to
+/// blue and the reds to violet; the blue-yellow preset moves the yellows to
+/// pink and keeps the greens.
+pub fn palette(mode: crate::resources::settings::ColorblindMode) -> Palette {
+    use crate::resources::settings::ColorblindMode;
+    match mode {
+        ColorblindMode::Off => Palette::base(),
+        ColorblindMode::Protanopia | ColorblindMode::Deuteranopia => Palette {
+            craftable: Color::srgb(0.35, 0.65, 1.0),
+            blocked: Color::srgb(1.0, 0.9, 0.3),
+            locked: Color::srgb(0.85, 0.5, 1.0),
+            selected_border: Color::srgb(0.4, 0.85, 1.0),
+            locked_border: Color::srgb(0.85, 0.5, 1.0),
+        },
+        ColorblindMode::Tritanopia => Palette {
+            craftable: Color::srgb(0.4, 0.9, 0.5),
+            blocked: Color::srgb(1.0, 0.5, 0.7),
+            locked: Color::srgb(1.0, 0.35, 0.35),
+            selected_border: Color::srgb(0.95, 0.95, 0.95),
+            locked_border: Color::srgb(1.0, 0.35, 0.35),
+        },
+    }
+}
+
 pub const PANEL_WIDTH: f32 = 1040.0;
 pub const ROW_HEIGHT: f32 = 44.0;
 
@@ -499,8 +548,15 @@ impl AnimatedPreview {
     }
 }
 
-fn animate_previews(time: Res<Time>, mut previews: Query<(&mut AnimatedPreview, &mut ImageNode)>) {
+fn animate_previews(
+    settings: Option<Res<crate::resources::settings::Settings>>,
+    time: Res<Time>,
+    mut previews: Query<(&mut AnimatedPreview, &mut ImageNode)>,
+) {
     let dt = time.delta_secs();
+    let reduced = settings
+        .as_ref()
+        .is_some_and(|settings| settings.accessibility.reduced_motion);
     for (mut preview, mut image) in previews.iter_mut() {
         if preview.clips.is_empty() {
             continue;
@@ -513,7 +569,9 @@ fn animate_previews(time: Res<Time>, mut previews: Query<(&mut AnimatedPreview, 
             layout,
             index: preview.frame.min(preview.frames_per_clip.saturating_sub(1)),
         });
-        step_preview(&mut preview, dt);
+        if !reduced {
+            step_preview(&mut preview, dt);
+        }
     }
 }
 

@@ -10,6 +10,7 @@ use crate::components::boss::PatternType;
 use crate::components::player::Player;
 use crate::events::{BossAttackStarted, BossDefeated, DamageDealt, HitConfirm, PlayerDied};
 use crate::resources::camera_shake::{CameraShake, TRAUMA_DECAY, shake_offset};
+use crate::resources::settings::Settings;
 use crate::systems::camera_follow::camera_follow;
 use bevy::prelude::*;
 use bevy::time::Fixed;
@@ -75,7 +76,9 @@ pub fn trauma_for_pattern(pattern: PatternType) -> f32 {
 }
 
 /// Turns combat events into trauma.
+#[allow(clippy::too_many_arguments)]
 fn accumulate_camera_trauma(
+    settings: Option<Res<Settings>>,
     mut shake: ResMut<CameraShake>,
     mut hits: MessageReader<HitConfirm>,
     mut attacks: MessageReader<BossAttackStarted>,
@@ -84,25 +87,36 @@ fn accumulate_camera_trauma(
     mut damage: MessageReader<DamageDealt>,
     players: Query<(), With<Player>>,
 ) {
-    for _ in hits.read() {
-        shake.add(HIT_TRAUMA);
+    // Reduced motion drains the events but never shakes the screen.
+    let reduced = settings
+        .as_ref()
+        .is_some_and(|settings| settings.accessibility.reduced_motion);
+
+    let mut trauma = 0.0f32;
+    if hits.read().count() > 0 {
+        trauma += HIT_TRAUMA;
     }
     for attack in attacks.read() {
-        shake.add(trauma_for_pattern(attack.pattern));
+        trauma += trauma_for_pattern(attack.pattern);
     }
-    for _ in defeated.read() {
-        shake.add(DEFEAT_TRAUMA);
+    if defeated.read().count() > 0 {
+        trauma += DEFEAT_TRAUMA;
     }
-    for _ in died.read() {
-        shake.add(DEATH_TRAUMA);
+    if died.read().count() > 0 {
+        trauma += DEATH_TRAUMA;
     }
     // Boss damage also flows through `DamageDealt`; only the player's side shakes
     // here (landing one is already covered by the hit confirm above).
     for hit in damage.read() {
         if players.contains(hit.target) {
-            shake.add(PLAYER_HIT_TRAUMA);
+            trauma += PLAYER_HIT_TRAUMA;
         }
     }
+
+    if reduced || trauma <= 0.0 {
+        return;
+    }
+    shake.add(trauma);
 }
 
 /// Peels the offset baked in last step back off the camera.

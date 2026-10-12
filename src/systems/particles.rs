@@ -7,6 +7,7 @@
 
 use crate::components::player::Player;
 use crate::events::{CropHarvested, GearCrafted, HitConfirm};
+use crate::resources::settings::Settings;
 use bevy::prelude::*;
 use rand::rngs::SmallRng;
 use rand::{RngExt, SeedableRng};
@@ -138,11 +139,16 @@ fn spawn_burst(commands: &mut Commands, rng: &mut ParticleRng, origin: Vec2, bur
 
 /// Sparks where a swing lands.
 fn spawn_hit_particles(
+    settings: Option<Res<Settings>>,
     mut commands: Commands,
     mut rng: ResMut<ParticleRng>,
     mut hits: MessageReader<HitConfirm>,
 ) {
+    let reduced = reduced_motion(&settings);
     for hit in hits.read() {
+        if reduced {
+            continue;
+        }
         spawn_burst(
             &mut commands,
             &mut rng,
@@ -160,11 +166,16 @@ fn spawn_hit_particles(
 
 /// A puff of leaves rising from the pot a crop came out of.
 fn spawn_harvest_particles(
+    settings: Option<Res<Settings>>,
     mut commands: Commands,
     mut rng: ResMut<ParticleRng>,
     mut harvested: MessageReader<CropHarvested>,
 ) {
+    let reduced = reduced_motion(&settings);
     for event in harvested.read() {
+        if reduced {
+            continue;
+        }
         spawn_burst(
             &mut commands,
             &mut rng,
@@ -182,13 +193,18 @@ fn spawn_harvest_particles(
 
 /// A shower of sparks over the farmer on a craft.
 fn spawn_craft_particles(
+    settings: Option<Res<Settings>>,
     mut commands: Commands,
     mut rng: ResMut<ParticleRng>,
     mut crafted: MessageReader<GearCrafted>,
     players: Query<&Transform, With<Player>>,
 ) {
+    let reduced = reduced_motion(&settings);
     let origin = players.single().ok().map(|t| t.translation.truncate());
     for _ in crafted.read() {
+        if reduced {
+            continue;
+        }
         if let Some(origin) = origin {
             spawn_burst(
                 &mut commands,
@@ -204,6 +220,14 @@ fn spawn_craft_particles(
             );
         }
     }
+}
+
+/// Whether the player has asked for reduced motion. Absent the resource (a
+/// system wired up alone in a test), motion is not reduced.
+fn reduced_motion(settings: &Option<Res<Settings>>) -> bool {
+    settings
+        .as_ref()
+        .is_some_and(|settings| settings.accessibility.reduced_motion)
 }
 
 /// Flies, falls and fades every live particle, despawning it at the end of its

@@ -11,6 +11,7 @@ use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::goals::GoalsProgress;
 use crate::resources::inventory::Inventory;
 use crate::resources::run_data::PlayerGear;
+use crate::resources::settings::{SETTINGS_KEY, Settings};
 use crate::utils::save_backend::{SaveBackend, SaveError, platform_backend};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -128,6 +129,22 @@ impl SaveManager {
     pub fn delete(&self) -> Result<(), SaveError> {
         self.backend.delete(SAVE_KEY)
     }
+
+    /// Serializes and stores the player's settings in their own slot, separate
+    /// from the run.
+    pub fn save_settings(&self, settings: &Settings) -> Result<(), SaveError> {
+        let bytes = settings.encode().map_err(SaveError::Encode)?;
+        self.backend.save(SETTINGS_KEY, &bytes)
+    }
+
+    /// Loads the player's settings. A missing or unreadable slot yields the
+    /// defaults, so the game always has a usable set of preferences.
+    pub fn load_settings(&self) -> Settings {
+        match self.backend.load(SETTINGS_KEY) {
+            Ok(bytes) => Settings::decode(&bytes),
+            Err(_) => Settings::default(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -227,5 +244,33 @@ mod tests {
         manager.backend.save(SAVE_KEY, &bytes).unwrap();
 
         assert!(matches!(manager.load(), Err(SaveError::Encode(_))));
+    }
+
+    #[test]
+    fn settings_live_in_their_own_slot() {
+        let manager = manager();
+        let mut settings = Settings::default();
+        settings.audio.music = 0.2;
+        settings.display.text_scale = 1.25;
+        manager.save_settings(&settings).unwrap();
+
+        assert_eq!(manager.load_settings(), settings);
+        assert!(
+            !manager.has_save(),
+            "saving settings does not create a run save"
+        );
+
+        manager.save(&sample()).unwrap();
+        assert_eq!(
+            manager.load_settings(),
+            settings,
+            "writing a run leaves the settings untouched"
+        );
+    }
+
+    #[test]
+    fn loading_settings_without_a_slot_yields_defaults() {
+        let manager = manager();
+        assert_eq!(manager.load_settings(), Settings::default());
     }
 }

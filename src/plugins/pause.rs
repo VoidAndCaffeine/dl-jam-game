@@ -17,6 +17,7 @@ use crate::resources::difficulty_menu::DifficultySelectMenu;
 use crate::resources::goals::{GOAL_TIERS, GoalsProgress};
 use crate::resources::main_menu::MenuFeatureFlags;
 use crate::resources::pause::PauseMenu;
+use crate::resources::settings_menu::SettingsMenu;
 use crate::states::{GameState, Phase};
 use bevy::prelude::*;
 use bevy::time::Virtual;
@@ -29,6 +30,7 @@ pub enum PauseAction {
     Resume,
     ReturnToMainMenu,
     Difficulty,
+    Settings,
 }
 
 #[derive(Component, Reflect, Debug, Clone, Copy)]
@@ -43,6 +45,7 @@ pub struct PauseHint;
 const BUTTON_RESUME: usize = 0;
 const BUTTON_MAIN_MENU: usize = 1;
 pub const BUTTON_DIFFICULTY: usize = 2;
+pub const BUTTON_SETTINGS: usize = 3;
 
 pub struct PausePlugin;
 
@@ -54,6 +57,7 @@ impl Plugin for PausePlugin {
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
             .init_resource::<GoalsProgress>()
+            .init_resource::<SettingsMenu>()
             .init_resource::<ConfirmDialog>()
             .add_message::<ConfirmResolved>()
             .add_message::<crate::events::PlaySfx>()
@@ -61,8 +65,9 @@ impl Plugin for PausePlugin {
             .add_systems(OnExit(GameState::Playing), (leave_pause, despawn_pause_ui))
             // `Esc` is read by every panel, so pause claims it first: a panel
             // that is already open keeps the press, and pause only opens when
-            // nothing else does. The difficulty picker is ordered after pause so
-            // the `Esc`/confirm that opens or closes it never also reaches pause.
+            // nothing else does. The difficulty picker and the settings overlay
+            // are ordered after pause so the `Esc`/confirm that opens or closes
+            // them never also reaches pause.
             .add_systems(
                 Update,
                 toggle_pause
@@ -71,6 +76,7 @@ impl Plugin for PausePlugin {
                     .before(crate::systems::crop_select::CropSelectSet::Menu)
                     .before(crate::systems::boss_select::BossSelectSet::Menu)
                     .before(DifficultySet)
+                    .before(crate::plugins::settings_menu::SettingsSet)
                     .before(ConfirmSet),
             )
             .add_systems(
@@ -85,6 +91,7 @@ impl Plugin for PausePlugin {
                 )
                     .chain()
                     .before(DifficultySet)
+                    .before(crate::plugins::settings_menu::SettingsSet)
                     .before(ConfirmSet),
             );
     }
@@ -105,6 +112,7 @@ struct OtherPanels<'w> {
     crop_select: Res<'w, crate::resources::crop_select::CropSelectMenu>,
     boss_select: Res<'w, crate::resources::boss_select::BossSelectMenu>,
     difficulty: Res<'w, DifficultySelectMenu>,
+    settings: Res<'w, SettingsMenu>,
 }
 
 /// `Esc` opens the pause menu when nothing else is open, and closes it when it
@@ -123,8 +131,9 @@ fn toggle_pause(
     if !pause_allowed(&phase) || !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    // The difficulty picker and the confirm dialog own `Esc` while they are open.
-    if panels.difficulty.open || confirm.open {
+    // The difficulty picker, the confirm dialog and the settings overlay own
+    // `Esc` while they are open.
+    if panels.difficulty.open || panels.settings.open || confirm.open {
         return;
     }
     if pause.open {
@@ -145,6 +154,7 @@ fn toggle_pause(
 struct PauseWork<'w> {
     difficulty_menu: Res<'w, DifficultySelectMenu>,
     difficulty: Res<'w, Difficulty>,
+    settings: Res<'w, SettingsMenu>,
     confirm: ResMut<'w, ConfirmDialog>,
     next_game: ResMut<'w, NextState<GameState>>,
     sfx: MessageWriter<'w, crate::events::PlaySfx>,
@@ -157,7 +167,12 @@ fn pause_keyboard(
     buttons: Query<(&PauseButton, &theme::MenuButton)>,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) || work.difficulty_menu.open || work.confirm.open {
+    if !pause.open
+        || !pause_allowed(&phase)
+        || work.difficulty_menu.open
+        || work.settings.open
+        || work.confirm.open
+    {
         return;
     }
 
@@ -201,7 +216,12 @@ fn pause_button_on_click(
     mut work: PauseWork,
     phase: Phase,
 ) {
-    if !pause.open || !pause_allowed(&phase) || work.difficulty_menu.open || work.confirm.open {
+    if !pause.open
+        || !pause_allowed(&phase)
+        || work.difficulty_menu.open
+        || work.settings.open
+        || work.confirm.open
+    {
         return;
     }
     for (entity, button) in buttons.iter() {
@@ -213,6 +233,8 @@ fn pause_button_on_click(
             PauseAction::ReturnToMainMenu => request_return_to_menu(&phase, &mut pause, &mut work),
             // The difficulty picker handles its own button (`open_from_pause`).
             PauseAction::Difficulty => {}
+            // The settings overlay handles its own button (`open_from_pause`).
+            PauseAction::Settings => {}
         }
     }
 }
@@ -363,6 +385,15 @@ fn spawn_pause(
                         BUTTON_DIFFICULTY,
                         "Difficulty",
                     );
+                    spawn_button(
+                        panel,
+                        art,
+                        server,
+                        current,
+                        PauseAction::Settings,
+                        BUTTON_SETTINGS,
+                        "Settings",
+                    );
 
                     spawn_pause_goals(panel, goals);
 
@@ -430,6 +461,7 @@ fn spawn_button(
         PauseAction::Resume => "resume",
         PauseAction::ReturnToMainMenu => "return_to_main_menu",
         PauseAction::Difficulty => "difficulty",
+        PauseAction::Settings => "settings",
     };
     let mut spec = ButtonSpec::new(index, label).label_size(20.0).skin(skin);
     if action == PauseAction::Difficulty && current == Difficulty::Permadeath {
@@ -701,9 +733,13 @@ mod tests {
         tap(&mut app, KeyCode::ArrowDown);
         assert_eq!(pause(&app).selected, 1);
         tap(&mut app, KeyCode::ArrowDown);
-        assert_eq!(pause(&app).selected, 2, "difficulty is reachable now");
+        assert_eq!(pause(&app).selected, 2, "difficulty is reachable");
         tap(&mut app, KeyCode::ArrowDown);
-        assert_eq!(pause(&app).selected, 2, "clamps at the last button");
+        assert_eq!(pause(&app).selected, 3, "settings is reachable");
+        tap(&mut app, KeyCode::ArrowDown);
+        assert_eq!(pause(&app).selected, 3, "clamps at the last button");
+        tap(&mut app, KeyCode::ArrowUp);
+        assert_eq!(pause(&app).selected, 2);
         tap(&mut app, KeyCode::ArrowUp);
         assert_eq!(pause(&app).selected, 1);
         tap(&mut app, KeyCode::ArrowUp);

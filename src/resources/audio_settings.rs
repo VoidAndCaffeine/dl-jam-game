@@ -1,11 +1,12 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 /// Per-bus volume, as linear gains.
 ///
 /// The audio layer multiplies every cue by the matching bus, so a settings menu
 /// can drive these later without touching a single cue id. The defaults are
 /// neutral (unity gain), which leaves today's mix exactly as authored.
-#[derive(Resource, Reflect, Debug, Clone, Copy, PartialEq)]
+#[derive(Resource, Reflect, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AudioSettings {
     pub master: f32,
     pub music: f32,

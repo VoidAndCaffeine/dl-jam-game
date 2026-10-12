@@ -7,6 +7,7 @@
 
 use crate::events::{BossDefeated, HitConfirm};
 use crate::resources::hit_pause::HitPause;
+use crate::resources::settings::Settings;
 use crate::systems::boss_ai::boss_ai;
 use crate::systems::level_movement::grid_movement;
 use bevy::prelude::*;
@@ -36,14 +37,24 @@ impl Plugin for HitPausePlugin {
 
 /// Turns impacts into a freeze request.
 fn trigger_hit_pause(
+    settings: Option<Res<Settings>>,
     mut pause: ResMut<HitPause>,
     mut hits: MessageReader<HitConfirm>,
     mut defeated: MessageReader<BossDefeated>,
 ) {
-    for _ in hits.read() {
+    // Reduced motion drains the events without freezing the world.
+    let reduced = settings
+        .as_ref()
+        .is_some_and(|settings| settings.accessibility.reduced_motion);
+    let hits = hits.read().count();
+    let defeated = defeated.read().count();
+    if reduced {
+        return;
+    }
+    if hits > 0 {
         pause.trigger(HIT_PAUSE_HIT);
     }
-    for _ in defeated.read() {
+    if defeated > 0 {
         pause.trigger(HIT_PAUSE_DEFEAT);
     }
 }

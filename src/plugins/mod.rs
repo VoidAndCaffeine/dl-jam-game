@@ -14,6 +14,7 @@ pub mod main_menu;
 pub mod pause;
 pub mod persistence;
 pub mod prop;
+pub mod settings_menu;
 pub mod ui;
 pub mod ui_theme;
 
@@ -36,5 +37,6 @@ pub use main_menu::MainMenuPlugin;
 pub use pause::PausePlugin;
 pub use persistence::PersistencePlugin;
 pub use prop::{PropArt, PropPlugin};
+pub use settings_menu::SettingsMenuPlugin;
 pub use ui::UIPlugin;
 pub use ui_theme as theme;

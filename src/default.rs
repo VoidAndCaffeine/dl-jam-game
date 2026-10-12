@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::plugins::{
     AudioPlugin, BossPlugin, ConfirmPlugin, DayCyclePlugin, DifficultyPlugin, FarmPlugin,
     GearPlugin, GoalsPlugin, HudPlugin, InteractionPlugin, LevelPlugin, LoadingPlugin,
-    MainMenuPlugin, PausePlugin, PersistencePlugin, PropPlugin, UIPlugin,
+    MainMenuPlugin, PausePlugin, PersistencePlugin, PropPlugin, SettingsMenuPlugin, UIPlugin,
 };
 use crate::resources::camera::CameraFollowConfig;
 use crate::resources::crafting_menu::CraftingMenu;
@@ -66,6 +66,7 @@ impl Plugin for GamePlugin {
             .add_plugins(AudioPlugin)
             .add_plugins(ConfirmPlugin)
             .add_plugins(PersistencePlugin)
+            .add_plugins(SettingsMenuPlugin)
             .add_plugins(CameraShakePlugin)
             .add_plugins(HitPausePlugin)
             .add_plugins(ParticlePlugin)

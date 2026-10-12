@@ -85,10 +85,10 @@ impl SaveBackend for MemoryBackend {
     }
 }
 
-/// Native saves: a single file, written whole each time.
+/// Native saves: one file per slot, written whole each time.
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FileBackend {
-    path: std::path::PathBuf,
+    dir: std::path::PathBuf,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -97,8 +97,17 @@ impl FileBackend {
     /// shipped build is the browser one, which uses `localStorage`.
     pub fn new() -> Self {
         let dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        Self {
-            path: dir.join("save.dat"),
+        Self { dir }
+    }
+
+    /// The file backing one slot. The run keeps the historical `save.dat`; every
+    /// other slot (settings) gets its own `<key>.dat`, so two slots can never
+    /// overwrite one another.
+    fn path(&self, key: &str) -> std::path::PathBuf {
+        if key == crate::resources::save_manager::SAVE_KEY {
+            self.dir.join("save.dat")
+        } else {
+            self.dir.join(format!("{key}.dat"))
         }
     }
 }
@@ -112,23 +121,23 @@ impl Default for FileBackend {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl SaveBackend for FileBackend {
-    fn save(&self, _key: &str, data: &[u8]) -> Result<(), SaveError> {
-        std::fs::write(&self.path, data).map_err(|error| SaveError::Backend(error.to_string()))
+    fn save(&self, key: &str, data: &[u8]) -> Result<(), SaveError> {
+        std::fs::write(self.path(key), data).map_err(|error| SaveError::Backend(error.to_string()))
     }
 
-    fn load(&self, _key: &str) -> Result<Vec<u8>, SaveError> {
-        std::fs::read(&self.path).map_err(|error| match error.kind() {
+    fn load(&self, key: &str) -> Result<Vec<u8>, SaveError> {
+        std::fs::read(self.path(key)).map_err(|error| match error.kind() {
             std::io::ErrorKind::NotFound => SaveError::NotFound,
             _ => SaveError::Backend(error.to_string()),
         })
     }
 
-    fn exists(&self, _key: &str) -> bool {
-        self.path.exists()
+    fn exists(&self, key: &str) -> bool {
+        self.path(key).exists()
     }
 
-    fn delete(&self, _key: &str) -> Result<(), SaveError> {
-        match std::fs::remove_file(&self.path) {
+    fn delete(&self, key: &str) -> Result<(), SaveError> {
+        match std::fs::remove_file(self.path(key)) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(SaveError::Backend(error.to_string())),
@@ -318,6 +327,22 @@ mod tests {
         backend.save("b", &[2]).unwrap();
         assert_eq!(backend.load("a").unwrap(), vec![1]);
         assert_eq!(backend.load("b").unwrap(), vec![2]);
+    }
+
+    /// The native backend must not put two slots in one file: a settings write
+    /// would otherwise clobber the run save.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_file_backend_gives_each_slot_its_own_file() {
+        let backend = FileBackend::new();
+        let run = backend.path(crate::resources::save_manager::SAVE_KEY);
+        let settings = backend.path(crate::resources::settings::SETTINGS_KEY);
+        assert!(
+            run.ends_with("save.dat"),
+            "the run keeps its historical file"
+        );
+        assert!(settings.ends_with("settings.dat"));
+        assert_ne!(run, settings);
     }
 
     #[test]

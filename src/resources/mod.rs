@@ -32,3 +32,5 @@ pub mod player_status;
 pub mod run_data;
 pub mod save_manager;
 pub mod scene_assets;
+pub mod settings;
+pub mod settings_menu;

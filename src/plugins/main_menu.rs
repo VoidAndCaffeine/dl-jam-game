@@ -24,6 +24,7 @@ use crate::resources::main_menu::{
 };
 use crate::resources::pause::PauseMenu;
 use crate::resources::run_data::PlayerGear;
+use crate::resources::settings_menu::{SettingsMenu, SettingsRequested};
 use crate::states::GameState;
 use crate::systems::scene_fade::SceneFade;
 use bevy::ecs::system::SystemParam;
@@ -64,6 +65,7 @@ pub struct MainMenuColumn;
 pub enum MainMenuAction {
     NewGame,
     LoadGame,
+    Settings,
 }
 
 #[derive(Component, Reflect, Debug, Clone, Copy)]
@@ -74,6 +76,7 @@ pub struct MainMenuButton {
 
 const BUTTON_NEW_GAME: usize = 0;
 const BUTTON_LOAD_GAME: usize = 1;
+const BUTTON_SETTINGS: usize = 2;
 
 pub struct MainMenuPlugin;
 
@@ -84,9 +87,11 @@ impl Plugin for MainMenuPlugin {
             .init_resource::<MenuFeatureFlags>()
             .init_resource::<Difficulty>()
             .init_resource::<DifficultySelectMenu>()
+            .init_resource::<SettingsMenu>()
             .init_resource::<crate::resources::confirm::ConfirmDialog>()
             .add_message::<NewGameRequested>()
             .add_message::<ContinueRequested>()
+            .add_message::<SettingsRequested>()
             .add_message::<crate::events::PlaySfx>()
             .add_systems(OnEnter(GameState::MainMenu), spawn_main_menu)
             .add_systems(OnExit(GameState::MainMenu), despawn_main_menu)
@@ -95,7 +100,8 @@ impl Plugin for MainMenuPlugin {
                 (main_menu_keyboard, main_menu_click, refresh_main_menu)
                     .chain()
                     .run_if(in_state(GameState::MainMenu))
-                    .before(DifficultySet),
+                    .before(DifficultySet)
+                    .before(crate::plugins::settings_menu::SettingsSet),
             )
             .add_systems(Update, on_new_game_requested);
     }
@@ -185,6 +191,15 @@ fn spawn_main_menu(
                         "Continue",
                         flags.load_game,
                     );
+                    spawn_button(
+                        column,
+                        &mut art,
+                        server.as_deref(),
+                        MainMenuAction::Settings,
+                        BUTTON_SETTINGS,
+                        "Settings",
+                        true,
+                    );
 
                     column.spawn((
                         Name::new("Hint"),
@@ -214,6 +229,7 @@ fn spawn_button(
     let skin = match action {
         MainMenuAction::NewGame => "new_game",
         MainMenuAction::LoadGame => "load_game",
+        MainMenuAction::Settings => "settings",
     };
     let mut spec = ButtonSpec::new(index, label).label_size(22.0).skin(skin);
     // Continue keeps its layout room but stays hidden until a save exists.
@@ -243,6 +259,7 @@ struct MenuContext<'w> {
     difficulty_menu: ResMut<'w, DifficultySelectMenu>,
     difficulty: Res<'w, Difficulty>,
     confirm: Res<'w, crate::resources::confirm::ConfirmDialog>,
+    settings: Res<'w, SettingsMenu>,
 }
 
 fn main_menu_keyboard(
@@ -252,8 +269,9 @@ fn main_menu_keyboard(
     buttons: Query<(&MainMenuButton, &theme::MenuButton)>,
     mut sfx: MessageWriter<PlaySfx>,
     mut continue_req: MessageWriter<ContinueRequested>,
+    mut settings_req: MessageWriter<SettingsRequested>,
 ) {
-    if context.difficulty_menu.open || context.confirm.open {
+    if context.difficulty_menu.open || context.confirm.open || context.settings.open {
         return;
     }
     let enabled: Vec<usize> = enabled_indices(buttons.iter());
@@ -276,6 +294,7 @@ fn main_menu_keyboard(
             &mut context.difficulty_menu,
             &mut sfx,
             &mut continue_req,
+            &mut settings_req,
         );
     }
 }
@@ -287,8 +306,9 @@ fn main_menu_click(
     mut context: MenuContext,
     mut sfx: MessageWriter<PlaySfx>,
     mut continue_req: MessageWriter<ContinueRequested>,
+    mut settings_req: MessageWriter<SettingsRequested>,
 ) {
-    if context.difficulty_menu.open || context.confirm.open {
+    if context.difficulty_menu.open || context.confirm.open || context.settings.open {
         return;
     }
     for (entity, button) in buttons.iter() {
@@ -302,19 +322,21 @@ fn main_menu_click(
                 &mut context.difficulty_menu,
                 &mut sfx,
                 &mut continue_req,
+                &mut settings_req,
             );
         }
     }
 }
 
 /// Runs the action: `New Game` asks for a difficulty first, `Continue` restores
-/// the saved run.
+/// the saved run, `Settings` opens the shared settings overlay.
 fn activate(
     action: MainMenuAction,
     difficulty: Difficulty,
     menu: &mut DifficultySelectMenu,
     sfx: &mut MessageWriter<PlaySfx>,
     continue_req: &mut MessageWriter<ContinueRequested>,
+    settings_req: &mut MessageWriter<SettingsRequested>,
 ) {
     match action {
         MainMenuAction::NewGame => {
@@ -324,6 +346,9 @@ fn activate(
         MainMenuAction::LoadGame => {
             continue_req.write(ContinueRequested);
             sfx.write(PlaySfx(Sfx::MenuConfirm));
+        }
+        MainMenuAction::Settings => {
+            settings_req.write(SettingsRequested);
         }
     }
 }
@@ -500,9 +525,10 @@ mod tests {
         assert_eq!(backgrounds(&mut app), 1, "the title art backs the menu");
 
         let rows = buttons(&mut app);
-        assert_eq!(rows.len(), 2, "new game plus one reserved slot");
+        assert_eq!(rows.len(), 3, "new game, continue, and settings");
         assert!(rows[0].1, "new game is enabled");
         assert!(!rows[1].1, "continue stays hidden until a save exists");
+        assert!(rows[2].1, "settings is always available");
     }
 
     #[test]
