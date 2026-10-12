@@ -196,13 +196,16 @@ fn crop_name_color(crop: CropType, unlocks: &CropUnlocks) -> Color {
 /// Status line for a boss row: locked rows explain how to open them.
 fn boss_status(id: BossId, progress: &BossProgress) -> (String, Color) {
     if !progress.is_unlocked(id) {
-        return (
-            "LOCKED  -  Beat The Excavator & Mercurial".to_string(),
-            TEXT_BLOCKED,
-        );
+        let hint = match id {
+            BossId::Infinite => "Beat the dual boss",
+            _ => "Beat The Excavator & Mercurial",
+        };
+        return (format!("LOCKED  -  {hint}"), TEXT_BLOCKED);
     }
     if progress.is_beaten(id) {
         ("BEATEN".to_string(), TEXT_CRAFTABLE)
+    } else if id == BossId::Infinite {
+        ("ENDLESS".to_string(), TEXT_PRIMARY)
     } else {
         ("AVAILABLE".to_string(), TEXT_PRIMARY)
     }
@@ -220,8 +223,9 @@ fn boss_concept_path(id: BossId) -> &'static str {
     match id {
         BossId::BossA => BOSS_A_CONCEPT,
         BossId::BossB => BOSS_B_CONCEPT,
-        // The dual fight shows both halves; this is only the fallback.
-        BossId::Dual => BOSS_A_CONCEPT,
+        // The dual fight (and Infinite Mode) shows both halves; this is only
+        // the fallback.
+        BossId::Dual | BossId::Infinite => BOSS_A_CONCEPT,
     }
 }
 
@@ -250,6 +254,7 @@ fn boss_skin(id: BossId) -> &'static str {
         BossId::BossA => "boss_a",
         BossId::BossB => "boss_b",
         BossId::Dual => "dual_boss",
+        BossId::Infinite => "infinite_mode",
     }
 }
 
@@ -1147,14 +1152,6 @@ fn spawn_boss_select(
                                         let visuals = art.resolve(&spec, server);
                                         spawn_boss_option_row(list, index, *id, progress, visuals);
                                     }
-                                    // Reserved slot for a future infinite mode.
-                                    let spec =
-                                        theme::ButtonSpec::new(BossId::ALL.len(), "Infinite Mode")
-                                            .label_size(20.0)
-                                            .skin("infinite_mode")
-                                            .hidden();
-                                    let visuals = art.resolve(&spec, server);
-                                    theme::spawn_menu_button(list, spec, visuals, (), |_| {});
                                 });
                         });
                     panel.spawn((
@@ -1289,7 +1286,7 @@ fn update_boss_concept(
     let Some(selected) = BossId::ALL.get(menu.preview_index()).copied() else {
         return;
     };
-    let dual = selected == BossId::Dual;
+    let dual = matches!(selected, BossId::Dual | BossId::Infinite);
     for (slot, mut preview, mut visibility) in slots.iter_mut() {
         let show = dual || slot.boss == selected;
         *visibility = if show {

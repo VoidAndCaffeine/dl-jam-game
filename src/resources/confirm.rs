@@ -17,6 +17,9 @@ pub enum ConfirmKind {
     QuitFightToMenu,
     /// A tainted Permadeath save was invalidated on load. Choice 0 acknowledges.
     TaintNotice,
+    /// The post-game systems (points and Infinite Mode) first unlocked. Choice 0
+    /// acknowledges.
+    UnlockNotice,
 }
 
 /// The modal's state. An overlay: pause is a menu, this sits above it.

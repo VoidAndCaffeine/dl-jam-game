@@ -23,7 +23,7 @@ impl BossPack {
     /// overridden per half via [`BossPack::from_role`].
     pub fn from_id(id: BossId) -> Self {
         match id {
-            BossId::BossA | BossId::Dual => BossPack::Excavator,
+            BossId::BossA | BossId::Dual | BossId::Infinite => BossPack::Excavator,
             BossId::BossB => BossPack::Mercuril,
         }
     }

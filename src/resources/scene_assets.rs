@@ -31,7 +31,7 @@ impl LoadTarget {
         match id {
             BossId::BossA => LoadTarget::ArenaA,
             BossId::BossB => LoadTarget::ArenaB,
-            BossId::Dual => LoadTarget::ArenaDual,
+            BossId::Dual | BossId::Infinite => LoadTarget::ArenaDual,
         }
     }
 
@@ -520,6 +520,11 @@ mod tests {
         assert_eq!(LoadTarget::for_boss(BossId::BossA), LoadTarget::ArenaA);
         assert_eq!(LoadTarget::for_boss(BossId::BossB), LoadTarget::ArenaB);
         assert_eq!(LoadTarget::for_boss(BossId::Dual), LoadTarget::ArenaDual);
+        assert_eq!(
+            LoadTarget::for_boss(BossId::Infinite),
+            LoadTarget::ArenaDual,
+            "Infinite Mode reuses the dual arena"
+        );
     }
 
     #[test]

@@ -60,6 +60,9 @@ pub struct OpenPanels<'w> {
     inventory: Res<'w, InventoryPanel>,
     crop_select: Res<'w, CropSelectMenu>,
     pause: Option<Res<'w, crate::resources::pause::PauseMenu>>,
+    /// A modal (e.g. the post-game unlock notice) also freezes the world while
+    /// it is up, so a key press cannot also act on the farm behind it.
+    confirm: Option<Res<'w, crate::resources::confirm::ConfirmDialog>>,
 }
 
 impl OpenPanels<'_> {
@@ -68,12 +71,16 @@ impl OpenPanels<'_> {
             || self.inventory.open
             || self.crop_select.open
             || self.pause.as_ref().is_some_and(|pause| pause.open)
+            || self.confirm.as_ref().is_some_and(|confirm| confirm.open)
     }
 
     /// True when a panel other than the pause overlay is open. Used so `Esc`
     /// opens the pause menu only when nothing else has focus.
     pub fn any_open_except_pause(&self) -> bool {
-        self.menu.open || self.inventory.open || self.crop_select.open
+        self.menu.open
+            || self.inventory.open
+            || self.crop_select.open
+            || self.confirm.as_ref().is_some_and(|confirm| confirm.open)
     }
 }
 

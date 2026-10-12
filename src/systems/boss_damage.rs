@@ -127,7 +127,7 @@ pub fn tick_dying_bosses(
         sfx.write(PlaySfx(match id {
             BossId::BossA => Sfx::BossADeath,
             BossId::BossB => Sfx::BossBDeath,
-            BossId::Dual => Sfx::BossADeath,
+            BossId::Dual | BossId::Infinite => Sfx::BossADeath,
         }));
         sfx.write(PlaySfx(Sfx::BossDefeated));
     }

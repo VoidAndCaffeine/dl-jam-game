@@ -40,6 +40,16 @@ impl CropType {
             CropType::CropB => "Tailings Potato",
         }
     }
+
+    /// Points a harvest of this crop is worth. Later crops are worth more,
+    /// matching how much longer they take to grow.
+    pub fn points(&self) -> u32 {
+        match self {
+            CropType::Starter => 1,
+            CropType::CropA => 2,
+            CropType::CropB => 3,
+        }
+    }
 }
 
 #[derive(Component, Reflect, Serialize, Deserialize, Clone, Copy, PartialEq, Default, Debug)]
@@ -125,6 +135,13 @@ mod tests {
         assert_eq!(pot.state, PotState::Empty);
         assert_eq!(pot.days_remaining, 0);
         assert!(!pot.watered_today);
+    }
+
+    #[test]
+    fn crops_are_worth_more_points_the_longer_they_take() {
+        assert_eq!(CropType::Starter.points(), 1);
+        assert_eq!(CropType::CropA.points(), 2);
+        assert_eq!(CropType::CropB.points(), 3);
     }
 
     #[test]

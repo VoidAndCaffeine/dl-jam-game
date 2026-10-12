@@ -19,16 +19,21 @@ pub enum BossId {
     BossA,
     BossB,
     Dual,
+    /// A boss-select entry rather than a boss entity: the post-game endurance
+    /// fight. It reuses the dual arena but spawns the Excavator and the
+    /// Quicksilver as independent singles with separate health.
+    Infinite,
 }
 
 impl BossId {
-    pub const ALL: [BossId; 3] = [BossId::BossA, BossId::BossB, BossId::Dual];
+    pub const ALL: [BossId; 4] = [BossId::BossA, BossId::BossB, BossId::Dual, BossId::Infinite];
 
     pub fn label(self) -> &'static str {
         match self {
             BossId::BossA => "The Excavator",
             BossId::BossB => "Mercurial",
             BossId::Dual => "The Excavator & Mercurial",
+            BossId::Infinite => "Infinite Mode",
         }
     }
 
@@ -37,7 +42,7 @@ impl BossId {
         match self {
             BossId::BossA => LevelId::ArenaA,
             BossId::BossB => LevelId::ArenaB,
-            BossId::Dual => LevelId::ArenaDual,
+            BossId::Dual | BossId::Infinite => LevelId::ArenaDual,
         }
     }
 
@@ -46,6 +51,7 @@ impl BossId {
             BossId::BossA => Color::srgb(0.85, 0.25, 0.25),
             BossId::BossB => Color::srgb(0.25, 0.5, 0.85),
             BossId::Dual => Color::srgb(0.60, 0.25, 0.75),
+            BossId::Infinite => Color::srgb(0.20, 0.72, 0.62),
         }
     }
 
@@ -54,7 +60,7 @@ impl BossId {
         match self {
             BossId::BossA => BOSS_A_SIZE,
             BossId::BossB => BOSS_B_SIZE,
-            BossId::Dual => BOSS_A_SIZE,
+            BossId::Dual | BossId::Infinite => BOSS_A_SIZE,
         }
     }
 
@@ -72,6 +78,7 @@ impl BossId {
             BossId::BossA => BOSS_A_HEALTH,
             BossId::BossB => BOSS_B_HEALTH,
             BossId::Dual => DUAL_BOSS_HEALTH,
+            BossId::Infinite => BOSS_A_HEALTH,
         }
     }
 
@@ -81,7 +88,7 @@ impl BossId {
         match self {
             BossId::BossA => &[(MaterialType::BossA1, 0..=2), (MaterialType::BossA2, 1..=3)],
             BossId::BossB => &[(MaterialType::BossB1, 0..=2), (MaterialType::BossB2, 1..=3)],
-            BossId::Dual => &[],
+            BossId::Dual | BossId::Infinite => &[],
         }
     }
 }
@@ -235,6 +242,13 @@ impl PatternType {
                 PatternType::MadnessSpray,
             ],
             BossId::Dual => &[
+                PatternType::TailingsSurge,
+                PatternType::ExcavatorSlam,
+                PatternType::DebrisRain,
+            ],
+            // The Infinite Mode entry never drives a boss entity; the two
+            // bosses it spawns each use their own kit.
+            BossId::Infinite => &[
                 PatternType::TailingsSurge,
                 PatternType::ExcavatorSlam,
                 PatternType::DebrisRain,
@@ -553,13 +567,17 @@ mod tests {
 
     #[test]
     fn every_boss_has_its_own_arena_and_label() {
+        // The Infinite Mode entry deliberately reuses the dual arena, so only
+        // the three real bosses need distinct rooms.
         let mut arenas: Vec<LevelId> = Vec::new();
-        for id in BossId::ALL {
+        for id in [BossId::BossA, BossId::BossB, BossId::Dual] {
             assert!(!id.label().is_empty());
             assert!(!arenas.contains(&id.arena()), "duplicate arena");
             arenas.push(id.arena());
         }
         assert_eq!(arenas.len(), 3);
+        assert_eq!(BossId::Infinite.arena(), LevelId::ArenaDual);
+        assert_eq!(BossId::Infinite.label(), "Infinite Mode");
     }
 
     #[test]

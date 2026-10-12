@@ -1,4 +1,4 @@
-use crate::components::boss::{Boss, BossBrain, BossSpawnMarker, DualRole, boss_for_level};
+use crate::components::boss::{Boss, BossBrain, BossId, BossSpawnMarker, DualRole, boss_for_level};
 use crate::components::boss_animation::{BossAnimation, BossPack};
 use crate::components::targetable::Targetable;
 use crate::events::{
@@ -10,7 +10,10 @@ use crate::resources::boss_rng::BossRng;
 use crate::resources::boss_sprite::BossSpriteAssets;
 use crate::resources::circle_art::CircleArt;
 use crate::resources::difficulty::Difficulty;
+use crate::resources::drop_rng::DropRng;
 use crate::resources::effect_sprite::EffectSpriteAssets;
+use crate::resources::infinite_mode::{InfiniteMode, RESPAWN_SECONDS};
+use crate::resources::inventory::Inventory;
 use crate::resources::level::{ActiveLevel, BossSpawn, LevelSet};
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
@@ -44,6 +47,11 @@ impl Plugin for BossPlugin {
             .init_resource::<BossRng>()
             .init_resource::<BossCoordinator>()
             .init_resource::<SharedBossHealth>()
+            .init_resource::<InfiniteMode>()
+            // The Infinite Mode death handler touches these; initialising them
+            // here keeps BossPlugin runnable on its own (e.g. in unit tests).
+            .init_resource::<Inventory>()
+            .init_resource::<DropRng>()
             .init_resource::<Difficulty>()
             .init_resource::<PlayerStatus>()
             .init_resource::<BossSpriteAssets>()
@@ -99,6 +107,13 @@ impl Plugin for BossPlugin {
             .add_systems(Update, animate_effect_sprites.after(sync_attack_effects))
             .add_systems(Update, tick_dying_bosses.after(apply_boss_damage))
             .add_systems(
+                Update,
+                track_infinite_deaths
+                    .after(tick_dying_bosses)
+                    .after(spawn_boss),
+            )
+            .add_systems(Update, tick_infinite_respawn.after(track_infinite_deaths))
+            .add_systems(
                 OnExit(DayPhase::BossFight),
                 (despawn_boss, cleanup_boss_encounter, end_encounter),
             )
@@ -139,18 +154,59 @@ fn spawn_boss(
     bosses: Query<(), With<Boss>>,
     mut shared: ResMut<SharedBossHealth>,
     mut coordinator: ResMut<BossCoordinator>,
+    mut infinite: ResMut<InfiniteMode>,
 ) {
-    if !phase.is_boss_fight() || !bosses.is_empty() {
+    if !phase.is_boss_fight() {
         return;
     }
-    let Some(id) = boss_for_level(context.active.id) else {
-        return;
-    };
 
     let health_multiplier = context.difficulty.boss_health_multiplier();
     let damage_multiplier = context.difficulty.boss_damage_multiplier();
 
-    if id == crate::components::boss::BossId::Dual {
+    if infinite.active {
+        // Only the opening pair is set up here; the respawn timers own the
+        // bosses afterwards, so a frame where both happen to be down does not
+        // re-field them on top of their scheduled returns.
+        if infinite.spawned {
+            return;
+        }
+        infinite.spawned = true;
+        // Infinite Mode reuses the dual arena but fields the Excavator and the
+        // Quicksilver as independent singles: no shared pool, no coordination.
+        coordinator.end();
+        shared.reset();
+        let mut spots = context.spawn.all();
+        if spots.len() < 2 {
+            spots.push(spots.first().copied().unwrap_or(Vec2::ZERO) + Vec2::new(96.0, 0.0));
+        }
+        for (role, position) in [DualRole::Excavator, DualRole::Quicksilver]
+            .into_iter()
+            .zip(spots.iter().copied())
+        {
+            let id = role.id();
+            spawn_one(
+                &mut commands,
+                id,
+                id.size(),
+                id.color(),
+                position,
+                None,
+                health_multiplier * infinite.health_multiplier(role),
+                damage_multiplier,
+            );
+        }
+        return;
+    }
+
+    if !bosses.is_empty() {
+        return;
+    }
+
+    let Some(id) = boss_for_level(context.active.id) else {
+        return;
+    };
+
+    if id == BossId::Dual {
         shared.reset_scaled(health_multiplier);
         coordinator.begin();
         let mut spots = context.spawn.all();
@@ -239,10 +295,81 @@ fn end_encounter(
     mut coordinator: ResMut<BossCoordinator>,
     mut shared: ResMut<SharedBossHealth>,
     mut status: ResMut<PlayerStatus>,
+    mut infinite: ResMut<InfiniteMode>,
 ) {
     coordinator.end();
     shared.reset();
     status.clear();
+    infinite.end();
+}
+
+/// In Infinite Mode a felled boss drops its materials and starts its respawn
+/// timer. Its kill points come from the shared [`crate::plugins::points`]
+/// system, which reads the same defeat message in every mode.
+fn track_infinite_deaths(
+    mut events: MessageReader<BossDefeated>,
+    mut infinite: ResMut<InfiniteMode>,
+    mut inventory: ResMut<Inventory>,
+    mut drop_rng: ResMut<DropRng>,
+) {
+    if !infinite.active {
+        return;
+    }
+    for event in events.read() {
+        let role = match event.0 {
+            BossId::BossA => DualRole::Excavator,
+            BossId::BossB => DualRole::Quicksilver,
+            _ => continue,
+        };
+        for (material, range) in event.0.material_drops() {
+            let amount = drop_rng.roll(range.clone());
+            inventory.add_material(*material, amount);
+        }
+        infinite.record_death(role);
+        infinite.set_timer(role, Some(RESPAWN_SECONDS));
+    }
+}
+
+/// Counts down each downed Infinite Mode boss's respawn timer and brings it back
+/// at full health, tougher for every fall it has already taken.
+fn tick_infinite_respawn(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut infinite: ResMut<InfiniteMode>,
+    context: BossSpawnContext,
+    phase: Phase,
+) {
+    if !infinite.active || !phase.is_boss_fight() {
+        return;
+    }
+    let dt = time.delta_secs();
+    let spots = context.spawn.all();
+    for (role, index) in [
+        (DualRole::Excavator, 0usize),
+        (DualRole::Quicksilver, 1usize),
+    ] {
+        let Some(mut remaining) = infinite.timer(role) else {
+            continue;
+        };
+        remaining -= dt;
+        if remaining > 0.0 {
+            infinite.set_timer(role, Some(remaining));
+            continue;
+        }
+        let id = role.id();
+        let position = spots.get(index).copied().unwrap_or(context.spawn.position);
+        spawn_one(
+            &mut commands,
+            id,
+            id.size(),
+            id.color(),
+            position,
+            None,
+            context.difficulty.boss_health_multiplier() * infinite.health_multiplier(role),
+            context.difficulty.boss_damage_multiplier(),
+        );
+        infinite.set_timer(role, None);
+    }
 }
 
 #[cfg(test)]
@@ -514,5 +641,100 @@ mod tests {
                 .is_none(),
             "the boss is swept when play ends, however it ends"
         );
+    }
+
+    #[test]
+    fn infinite_mode_spawns_two_independent_bosses() {
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<InfiniteMode>().begin();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaDual);
+
+        let ids: Vec<BossId> = app
+            .world_mut()
+            .query_filtered::<&Boss, With<Boss>>()
+            .iter(app.world())
+            .map(|boss| boss.id)
+            .collect();
+        assert_eq!(ids.len(), 2, "both bosses are fielded");
+        assert!(ids.contains(&BossId::BossA));
+        assert!(ids.contains(&BossId::BossB));
+        assert!(
+            !app.world().resource::<BossCoordinator>().active,
+            "endurance fights are not coordinated"
+        );
+
+        // Each boss carries its own full health, not a shared pool.
+        let healths: Vec<f32> = app
+            .world_mut()
+            .query_filtered::<&Boss, With<Boss>>()
+            .iter(app.world())
+            .map(|boss| boss.health)
+            .collect();
+        assert!(healths.iter().all(|health| *health > 0.0));
+        assert_ne!(healths[0], healths[1], "the bosses differ in health");
+    }
+
+    #[test]
+    fn a_felled_infinite_boss_schedules_a_tougher_respawn() {
+        use crate::components::boss::Dying;
+
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<InfiniteMode>().begin();
+        enter_fight(&mut app, crate::levels::LevelId::ArenaDual);
+
+        let excavator = app
+            .world_mut()
+            .query_filtered::<Entity, With<Boss>>()
+            .iter(app.world())
+            .find(|entity| app.world().get::<Boss>(*entity).unwrap().id == BossId::BossA)
+            .expect("the excavator is spawned");
+
+        app.world_mut().write_message(DamageDealt {
+            target: excavator,
+            amount: 1_000_000.0,
+            raw: 1_000_000.0,
+        });
+        for _ in 0..3 {
+            app.update();
+        }
+        if let Some(mut dying) = app.world_mut().get_mut::<Dying>(excavator) {
+            dying.remaining = 0.0;
+        }
+        for _ in 0..3 {
+            app.update();
+        }
+
+        assert!(
+            app.world().get::<Boss>(excavator).is_none(),
+            "the felled boss leaves the arena"
+        );
+        let infinite = *app.world().resource::<InfiniteMode>();
+        assert_eq!(infinite.deaths(DualRole::Excavator), 1);
+        assert!(
+            infinite.timer(DualRole::Excavator).is_some(),
+            "a respawn is scheduled"
+        );
+
+        // Fast-forward the timer and let the respawn run.
+        app.world_mut()
+            .resource_mut::<InfiniteMode>()
+            .set_timer(DualRole::Excavator, Some(0.0));
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let returned = app
+            .world_mut()
+            .query_filtered::<&Boss, With<Boss>>()
+            .iter(app.world())
+            .find(|boss| boss.id == BossId::BossA)
+            .expect("the boss climbs back up");
+        let base = BossId::BossA.max_health();
+        assert!(
+            returned.max_health > base,
+            "the return is tougher: {} vs {base}",
+            returned.max_health
+        );
+        assert_eq!(returned.health, returned.max_health, "back at full health");
     }
 }

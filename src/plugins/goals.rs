@@ -22,7 +22,9 @@ use bevy::ui::FocusPolicy;
 
 // --- Layout (authored at the UI reference height; `UiScale` handles the rest) --
 const GOALS_RIGHT: f32 = 12.0;
-const GOALS_TOP: f32 = 62.0;
+/// Sits below the HUD's top-right status column (day, difficulty, points), so
+/// the points tally never overlaps the goal list.
+const GOALS_TOP: f32 = 88.0;
 const GOALS_HEADING_FONT: f32 = 19.5;
 const GOAL_FONT: f32 = 15.0;
 const GOAL_ROW_HEIGHT: f32 = 22.0;

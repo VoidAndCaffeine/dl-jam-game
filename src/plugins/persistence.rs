@@ -24,7 +24,7 @@
 //! Permadeath run is invalidated: the difficulty steps down to Apocalypse and
 //! the player is told, with a single button to acknowledge.
 
-use crate::events::{BossDefeated, DayAdvanced, GearCrafted, PlayerDied};
+use crate::events::{BossDefeated, CropHarvested, DayAdvanced, GearCrafted, PlayerDied};
 use crate::plugins::day_cycle::VictoryMode;
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::confirm::{ConfirmDialog, ConfirmKind, ConfirmResolved};
@@ -34,6 +34,7 @@ use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::goals::GoalsProgress;
 use crate::resources::inventory::Inventory;
 use crate::resources::main_menu::{ContinueRequested, MenuFeatureFlags, NewGameRequested};
+use crate::resources::points::RunPoints;
 use crate::resources::run_data::PlayerGear;
 use crate::resources::save_manager::{SaveData, SaveManager};
 use crate::states::{DayPhase, GameState};
@@ -56,6 +57,7 @@ impl Plugin for PersistencePlugin {
             .init_resource::<DayCycle>()
             .init_resource::<ConfirmDialog>()
             .init_resource::<VictoryMode>()
+            .init_resource::<RunPoints>()
             .add_message::<ContinueRequested>()
             .add_message::<NewGameRequested>()
             .add_message::<ConfirmResolved>()
@@ -104,6 +106,7 @@ pub struct RunState<'w> {
     pub unlocks: ResMut<'w, CropUnlocks>,
     pub bosses: ResMut<'w, BossProgress>,
     pub goals: ResMut<'w, GoalsProgress>,
+    pub points: ResMut<'w, RunPoints>,
     pub difficulty: ResMut<'w, Difficulty>,
     pub in_bossfight: ResMut<'w, InBossfight>,
     pub run_over: ResMut<'w, RunOver>,
@@ -121,6 +124,7 @@ impl RunState<'_> {
             &self.bosses,
             &self.goals,
             *self.difficulty,
+            &self.points,
             self.in_bossfight.0,
         )
     }
@@ -134,6 +138,7 @@ impl RunState<'_> {
         *self.unlocks = data.unlocks;
         *self.bosses = data.bosses;
         *self.goals = data.goals;
+        *self.points = data.points;
         *self.difficulty = data.difficulty;
         self.in_bossfight.0 = data.in_bossfight;
     }
@@ -232,11 +237,13 @@ fn autosave_on_progress(
     mut bosses: MessageReader<BossDefeated>,
     mut crafted: MessageReader<GearCrafted>,
     mut died: MessageReader<PlayerDied>,
+    mut harvested: MessageReader<CropHarvested>,
 ) {
     let progressed = day_advanced.read().count()
         + bosses.read().count()
         + crafted.read().count()
         + died.read().count()
+        + harvested.read().count()
         > 0;
     if progressed {
         write_save(&manager, &run);
@@ -248,9 +255,15 @@ fn autosave_on_exit(manager: Res<SaveManager>, run: RunState) {
     write_save(&manager, &run);
 }
 
-/// Reveals or hides the title screen's `Continue` slot to match the save slot.
-fn refresh_continue_flag(manager: Res<SaveManager>, mut flags: ResMut<MenuFeatureFlags>) {
+/// Reveals or hides the title screen's `Continue` slot to match the save slot,
+/// and mirrors the saved run's points tally onto the title screen.
+fn refresh_continue_flag(
+    manager: Res<SaveManager>,
+    mut flags: ResMut<MenuFeatureFlags>,
+    mut points: ResMut<RunPoints>,
+) {
     flags.load_game = manager.has_save();
+    *points = manager.load().map(|data| data.points).unwrap_or_default();
 }
 
 /// Starting a new game drops the previous run's save, so `Continue` cannot
@@ -373,10 +386,12 @@ mod tests {
         .init_resource::<CropUnlocks>()
         .init_resource::<BossProgress>()
         .init_resource::<GoalsProgress>()
+        .init_resource::<RunPoints>()
         .init_resource::<Difficulty>()
         .add_message::<DayAdvanced>()
         .add_message::<BossDefeated>()
         .add_message::<GearCrafted>()
+        .add_message::<CropHarvested>()
         .add_message::<PlayerDied>();
         // Keep tests off disk.
         app.insert_resource(SaveManager::with_backend(
@@ -438,6 +453,7 @@ mod tests {
                 &BossProgress::default(),
                 &GoalsProgress::default(),
                 Difficulty::Normal,
+                &RunPoints::default(),
                 false,
             ),
         );
@@ -512,6 +528,7 @@ mod tests {
                 bosses: BossProgress::default(),
                 goals: GoalsProgress::default(),
                 difficulty: Difficulty::Apocalypse,
+                points: RunPoints::default(),
                 in_bossfight: false,
             },
         );
@@ -606,6 +623,7 @@ mod tests {
             &BossProgress::default(),
             &GoalsProgress::default(),
             Difficulty::Permadeath,
+            &RunPoints::default(),
             in_bossfight,
         )
     }
@@ -793,6 +811,7 @@ mod tests {
             &BossProgress::default(),
             &GoalsProgress::default(),
             Difficulty::Normal,
+            &RunPoints::default(),
             false,
         );
         manager.save(&data).unwrap();

@@ -1,8 +1,10 @@
-use crate::components::boss::{Boss, BossSpawnMarker};
+use crate::components::boss::{Boss, BossSpawnMarker, DualRole, Dying};
 use crate::components::player::{Health, Player};
 use crate::resources::difficulty::Difficulty;
 use crate::resources::farm::DayCounter;
+use crate::resources::infinite_mode::InfiniteMode;
 use crate::resources::player_status::PlayerStatus;
+use crate::resources::points::RunPoints;
 use crate::states::{GameState, Phase};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -45,16 +47,24 @@ impl Plugin for HudPlugin {
         app.add_systems(OnEnter(GameState::Playing), spawn_hud)
             .add_systems(OnExit(GameState::Playing), despawn_hud)
             .init_resource::<Difficulty>()
+            .init_resource::<RunPoints>()
+            .init_resource::<InfiniteMode>()
             .add_systems(
                 Update,
                 (
                     update_player_health,
-                    update_boss_health,
                     update_day_text,
                     update_difficulty_text,
+                    update_points_text,
                     update_hints,
                     pulse_hints,
                 )
+                    .run_if(in_state(GameState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (update_boss_health, update_infinite_health)
+                    .chain()
                     .run_if(in_state(GameState::Playing)),
             );
     }
@@ -75,6 +85,26 @@ pub struct DayText;
 /// The difficulty under the day counter, top-right.
 #[derive(Component, Reflect, Debug, Default)]
 pub struct DifficultyText;
+
+/// The points tally under the difficulty, revealed once the system unlocks.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct PointsText;
+
+/// The Infinite Mode boss-health column: two independent bars, one per boss.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct InfiniteHealthGroup;
+
+/// One boss's name label in the Infinite Mode health column.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct InfiniteBossName {
+    pub role: DualRole,
+}
+
+/// One boss's health bar in the Infinite Mode health column.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct InfiniteBossBar {
+    pub role: DualRole,
+}
 
 #[derive(Component, Reflect, Debug, Default)]
 pub struct HintsText;
@@ -241,6 +271,45 @@ fn spawn_hud(mut commands: Commands) {
                 spawn_health_bar(group, BossHealthBar);
             });
 
+            // Infinite Mode health - two independent bars, top-center, hidden
+            // until an endurance fight is live.
+            hud.spawn((
+                Name::new("Infinite Health"),
+                InfiniteHealthGroup,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Px(HUD_PADDING),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(4.0),
+                    ..default()
+                },
+                Visibility::Hidden,
+            ))
+            .with_children(|group| {
+                for role in [DualRole::Excavator, DualRole::Quicksilver] {
+                    group
+                        .spawn((
+                            Name::new(role.label()),
+                            Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|row| {
+                            row.spawn((
+                                InfiniteBossName { role },
+                                label(role.label(), 14.0, TEXT_PRIMARY),
+                            ));
+                            spawn_health_bar(row, InfiniteBossBar { role });
+                        });
+                }
+            });
+
             // Day counter and difficulty - top-right, stacked.
             hud.spawn((
                 Name::new("Status"),
@@ -264,6 +333,13 @@ fn spawn_hud(mut commands: Commands) {
                     Name::new("Difficulty"),
                     DifficultyText,
                     label(Difficulty::default().label(), 14.0, TEXT_DIM),
+                ));
+                // Hidden until the post-game points system unlocks.
+                status.spawn((
+                    Name::new("Points"),
+                    PointsText,
+                    label("", 16.0, TEXT_PRIMARY),
+                    Visibility::Hidden,
                 ));
             });
 
@@ -371,6 +447,89 @@ fn update_difficulty_text(
     for mut text in texts.iter_mut() {
         if text.0 != value {
             text.0 = value.to_string();
+        }
+    }
+}
+
+/// Shows the points tally once the post-game system unlocks, hiding it (and its
+/// row) until then.
+fn update_points_text(
+    points: Res<RunPoints>,
+    mut texts: Query<(&mut Text, &mut Visibility), With<PointsText>>,
+) {
+    for (mut text, mut visibility) in texts.iter_mut() {
+        if points.unlocked {
+            let value = format!("POINTS {}", points.total);
+            if text.0 != value {
+                text.0 = value;
+            }
+            *visibility = Visibility::Inherited;
+        } else {
+            *visibility = Visibility::Hidden;
+        }
+    }
+}
+
+/// Paints the Infinite Mode health column: one bar and name per boss, each
+/// tracking its own health, showing a respawn countdown while a boss is down.
+///
+/// It also hides the standard (combined) boss bar while an endurance fight is
+/// live, so the two never overlap. It runs right after `update_boss_health`.
+#[allow(clippy::too_many_arguments)]
+fn update_infinite_health(
+    time: Res<Time>,
+    phase: Phase,
+    infinite: Res<InfiniteMode>,
+    bosses: Query<(&Boss, Option<&Dying>)>,
+    mut standard: Query<&mut Visibility, (With<BossHealthGroup>, Without<InfiniteHealthGroup>)>,
+    mut group: Query<&mut Visibility, (With<InfiniteHealthGroup>, Without<BossHealthGroup>)>,
+    mut names: Query<(&InfiniteBossName, &mut Text)>,
+    mut bars: Query<(&InfiniteBossBar, &mut HealthBar, &Children)>,
+    mut fills: HealthBarFills,
+) {
+    let show = phase.is_boss_fight() && infinite.active;
+    if infinite.active {
+        for mut visibility in standard.iter_mut() {
+            *visibility = Visibility::Hidden;
+        }
+    }
+    for mut visibility in group.iter_mut() {
+        *visibility = if show {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !show {
+        return;
+    }
+
+    let dt = time.delta_secs();
+    for (bar, mut health, children) in bars.iter_mut() {
+        let id = bar.role.id();
+        let fraction = bosses
+            .iter()
+            .find(|(boss, dying)| boss.id == id && dying.is_none())
+            .map(|(boss, _)| boss.health_fraction())
+            .unwrap_or(0.0);
+        apply_bar(&mut health, children, fraction, dt, &mut fills);
+    }
+
+    for (name, mut text) in names.iter_mut() {
+        let id = name.role.id();
+        let alive = bosses
+            .iter()
+            .any(|(boss, dying)| boss.id == id && dying.is_none());
+        let value = match infinite.timer(name.role).filter(|_| !alive) {
+            Some(remaining) => format!(
+                "{}  -  back in {}s",
+                name.role.label(),
+                remaining.ceil().max(0.0) as u32
+            ),
+            None => name.role.label().to_string(),
+        };
+        if text.0 != value {
+            text.0 = value;
         }
     }
 }
@@ -816,5 +975,115 @@ mod tests {
             "dims mid-pulse: {half:?}"
         );
         assert!((half.green - dim.green).abs() < 0.001);
+    }
+
+    fn points_visibility(app: &mut App) -> Visibility {
+        *app.world_mut()
+            .query_filtered::<&Visibility, With<PointsText>>()
+            .iter(app.world())
+            .next()
+            .expect("points text exists")
+    }
+
+    fn points_text(app: &mut App) -> String {
+        app.world_mut()
+            .query_filtered::<&Text, With<PointsText>>()
+            .iter(app.world())
+            .next()
+            .map(|text| text.0.clone())
+            .expect("points text exists")
+    }
+
+    fn group_visibility<M: Component>(app: &mut App) -> Visibility {
+        *app.world_mut()
+            .query_filtered::<&Visibility, With<M>>()
+            .iter(app.world())
+            .next()
+            .expect("group exists")
+    }
+
+    fn infinite_bar_widths(app: &mut App) -> Vec<(DualRole, Val)> {
+        let containers: Vec<(DualRole, Entity)> = app
+            .world_mut()
+            .query_filtered::<(Entity, &InfiniteBossBar), ()>()
+            .iter(app.world())
+            .map(|(entity, bar)| (bar.role, entity))
+            .collect();
+        containers
+            .into_iter()
+            .map(|(role, container)| {
+                let children: Vec<Entity> = app
+                    .world()
+                    .get::<Children>(container)
+                    .expect("bar has children")
+                    .iter()
+                    .collect();
+                let red = children
+                    .into_iter()
+                    .find(|child| app.world().get::<HealthBarRedFill>(*child).is_some())
+                    .map(|child| app.world().get::<Node>(child).unwrap().width)
+                    .unwrap_or(Val::Auto);
+                (role, red)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_points_tally_is_hidden_until_unlocked() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        tick(&mut app);
+        assert_eq!(points_visibility(&mut app), Visibility::Hidden);
+
+        let mut points = app.world_mut().resource_mut::<RunPoints>();
+        points.unlock();
+        points.add(7);
+        tick(&mut app);
+
+        assert_eq!(points_visibility(&mut app), Visibility::Inherited);
+        assert_eq!(points_text(&mut app), "POINTS 7");
+    }
+
+    #[test]
+    fn infinite_mode_swaps_in_two_independent_bars() {
+        let mut app = setup_app();
+        enter_playing(&mut app);
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().resource_mut::<InfiniteMode>().begin();
+
+        let mut a = Boss::new(BossId::BossA);
+        a.health = a.max_health * 0.5;
+        app.world_mut()
+            .spawn((a, BossSpawnMarker, Transform::default()));
+        app.world_mut().spawn((
+            Boss::new(BossId::BossB),
+            BossSpawnMarker,
+            Transform::default(),
+        ));
+        tick(&mut app);
+
+        assert_eq!(
+            group_visibility::<BossHealthGroup>(&mut app),
+            Visibility::Hidden,
+            "the combined bar steps aside"
+        );
+        assert_eq!(
+            group_visibility::<InfiniteHealthGroup>(&mut app),
+            Visibility::Inherited
+        );
+
+        let widths = infinite_bar_widths(&mut app);
+        let excavator = widths
+            .iter()
+            .find(|(role, _)| *role == DualRole::Excavator)
+            .map(|(_, width)| *width)
+            .unwrap();
+        let quicksilver = widths
+            .iter()
+            .find(|(role, _)| *role == DualRole::Quicksilver)
+            .map(|(_, width)| *width)
+            .unwrap();
+        assert_eq!(excavator, Val::Percent(50.0), "the wounded half shows less");
+        assert_eq!(quicksilver, Val::Percent(100.0), "the fresh half is full");
     }
 }

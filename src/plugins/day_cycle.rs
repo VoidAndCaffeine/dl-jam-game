@@ -4,12 +4,15 @@ use crate::events::{BossDefeated, PlayerDied};
 use crate::levels::LevelId;
 use crate::plugins::ui_theme::{self as theme, ButtonSpec, MenuArt, MenuButtonSelected};
 use crate::resources::boss_progress::BossProgress;
+use crate::resources::confirm::{ConfirmDialog, ConfirmKind};
 use crate::resources::day_cycle::{DayCycle, InBossfight, Outcome, ResumeRun, RunOver};
 use crate::resources::difficulty::Difficulty;
 use crate::resources::drop_rng::DropRng;
 use crate::resources::farm::CropUnlocks;
+use crate::resources::infinite_mode::InfiniteMode;
 use crate::resources::inventory::Inventory;
 use crate::resources::level::LevelRequest;
+use crate::resources::points::{DUAL_KILL_POINTS, PendingUnlockNotice, RunPoints};
 use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, GameState, Phase};
 use crate::systems::scene_fade::SceneFade;
@@ -30,11 +33,17 @@ impl Plugin for DayCyclePlugin {
             .init_resource::<VictoryMode>()
             .init_resource::<crate::plugins::ui_theme::MenuArt>()
             .init_resource::<VictorySelection>()
+            // The defeat handler reads these; initialising them here keeps
+            // DayCyclePlugin runnable on its own (e.g. in unit tests).
+            .init_resource::<RunPoints>()
+            .init_resource::<InfiniteMode>()
+            .init_resource::<ConfirmDialog>()
+            .init_resource::<PendingUnlockNotice>()
             .add_message::<BossDefeated>()
             .add_message::<PlayerDied>()
             .add_systems(
                 OnEnter(GameState::Playing),
-                (begin_first_day, seed_drop_rng),
+                (begin_first_day, seed_drop_rng, reveal_pending_unlock),
             )
             .add_systems(Update, on_boss_defeated)
             .add_systems(Update, on_player_died)
@@ -75,6 +84,25 @@ fn seed_drop_rng(mut rng: ResMut<DropRng>, time: Res<Time>) {
     *rng = DropRng::seeded(time.elapsed().as_nanos() as u64);
 }
 
+/// Shows the post-game unlock notice once the player has confirmed they want to
+/// keep playing — the next time play begins after the dual boss has fallen. It
+/// is deliberately not shown on the result or victory screens.
+fn reveal_pending_unlock(
+    mut pending: ResMut<PendingUnlockNotice>,
+    mut dialog: ResMut<ConfirmDialog>,
+) {
+    if !pending.0 {
+        return;
+    }
+    pending.0 = false;
+    dialog.open(
+        ConfirmKind::UnlockNotice,
+        UNLOCK_TITLE,
+        UNLOCK_BODY,
+        vec!["I Understand".to_string()],
+    );
+}
+
 /// The reward resources a boss defeat touches, bundled so the signature stays
 /// within the argument limit.
 #[derive(bevy::ecs::system::SystemParam)]
@@ -83,7 +111,20 @@ struct DefeatRewards<'w> {
     unlocks: ResMut<'w, CropUnlocks>,
     inventory: ResMut<'w, Inventory>,
     drop_rng: ResMut<'w, DropRng>,
+    points: ResMut<'w, RunPoints>,
+    infinite: Res<'w, InfiniteMode>,
+    pending: ResMut<'w, PendingUnlockNotice>,
 }
+
+/// The unlock notice shown the first time the post-game systems open.
+const UNLOCK_TITLE: &str = "New Systems Unlocked";
+const UNLOCK_BODY: &str = "Points and Infinite Mode are now open.\n\n\
+     POINTS: harvest crops (1 / 2 / 3 by crop) and fell bosses (+10, or +20 for \
+     the dual pair) to grow your tally. It is shown on the HUD and saved with \
+     your run.\n\n\
+     INFINITE MODE: a new boss select entry below the dual boss. Fight the \
+     Excavator and Mercurial at once, each with its own health bar; a fallen \
+     boss climbs back up tougher after 15 seconds. Survive as long as you can.";
 
 /// Grants the boss's rewards, marks progress, then shows the result.
 fn on_boss_defeated(
@@ -96,6 +137,11 @@ fn on_boss_defeated(
 ) {
     for event in events.read() {
         let id = event.0;
+        // Infinite Mode kills are an endless fight: its own handler grants the
+        // drops and schedules the respawn, and the fight never resolves.
+        if rewards.infinite.active {
+            continue;
+        }
         rewards.progress.record(id);
         match id {
             BossId::BossA => rewards.unlocks.unlock_crop_a(),
@@ -108,7 +154,17 @@ fn on_boss_defeated(
                 } else {
                     VictoryMode::Victory
                 };
+                // The post-game systems unlock together. The notice waits until
+                // the player chooses to keep playing, so it never interrupts the
+                // result or victory screens.
+                if rewards.points.unlock() {
+                    rewards.pending.0 = true;
+                }
+                // The dual kill is worth both halves; single bosses are scored by
+                // the points plugin, the dual here so the order is deterministic.
+                rewards.points.add(DUAL_KILL_POINTS);
             }
+            BossId::Infinite => {}
         }
         for (material, range) in id.material_drops() {
             let amount = rewards.drop_rng.roll(range.clone());
@@ -156,11 +212,17 @@ struct ContinueWork<'w> {
 fn result_continue(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    dialog: Res<ConfirmDialog>,
     mut day_cycle: ResMut<DayCycle>,
     mut work: ContinueWork,
     phase: Phase,
 ) {
     if !phase.is_result() {
+        return;
+    }
+    // The unlock notice (and any other modal) owns the screen until dismissed;
+    // its own confirm must not also advance the day.
+    if dialog.open {
         return;
     }
     // A fade already owns the transition; ignore further key presses so a
@@ -825,6 +887,9 @@ mod tests {
     #[test]
     fn a_dual_victory_ends_the_run() {
         let mut app = setup_app();
+        // Pre-unlock the points system so the first-win notice does not appear;
+        // this test is only about the run ending.
+        app.world_mut().resource_mut::<RunPoints>().unlock();
         set_phase(&mut app, DayPhase::BossFight);
         app.world_mut().write_message(BossDefeated(BossId::Dual));
         app.update();
@@ -839,6 +904,78 @@ mod tests {
         assert_eq!(
             app.world().resource::<State<GameState>>().get(),
             &GameState::Victory
+        );
+    }
+
+    #[test]
+    fn the_first_dual_victory_unlocks_the_post_game_without_interrupting() {
+        let mut app = setup_app();
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().write_message(BossDefeated(BossId::Dual));
+        app.update();
+
+        assert!(app.world().resource::<RunPoints>().unlocked);
+        assert_eq!(
+            app.world().resource::<RunPoints>().total,
+            20,
+            "the dual kill is worth both halves"
+        );
+        assert!(
+            app.world().resource::<PendingUnlockNotice>().0,
+            "the notice is queued for when play resumes"
+        );
+        assert!(
+            !app.world().resource::<ConfirmDialog>().open,
+            "the notice must not interrupt the result or victory screens"
+        );
+    }
+
+    #[test]
+    fn the_unlock_notice_waits_until_play_resumes() {
+        let mut app = setup_app();
+        set_phase(&mut app, DayPhase::BossFight);
+        app.world_mut().write_message(BossDefeated(BossId::Dual));
+        app.update();
+        assert!(!app.world().resource::<ConfirmDialog>().open);
+
+        // The player confirms they want to keep playing: play is entered again.
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Victory);
+        app.update();
+        app.world_mut()
+            .resource_mut::<NextState<GameState>>()
+            .set(GameState::Playing);
+        app.update();
+
+        let dialog = app.world().resource::<ConfirmDialog>();
+        assert!(dialog.open, "the notice is shown once play resumes");
+        assert_eq!(dialog.kind, ConfirmKind::UnlockNotice);
+        assert!(
+            !app.world().resource::<PendingUnlockNotice>().0,
+            "the notice is only queued once"
+        );
+    }
+
+    #[test]
+    fn an_open_dialog_blocks_the_result_continue() {
+        let mut app = setup_app();
+        set_phase(&mut app, DayPhase::Result);
+        app.world_mut().resource_mut::<ConfirmDialog>().open(
+            ConfirmKind::UnlockNotice,
+            "t",
+            "b",
+            vec!["Acknowledge".to_string()],
+        );
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        settle(&mut app);
+        assert_eq!(
+            app.world().resource::<State<GameState>>().get(),
+            &GameState::Playing,
+            "a modal holds the result screen until it is dismissed"
         );
     }
 

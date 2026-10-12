@@ -16,6 +16,7 @@ use crate::resources::difficulty::Difficulty;
 use crate::resources::difficulty_menu::{DifficultyMenuMode, DifficultySelectMenu};
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::goals::GoalsProgress;
+use crate::resources::infinite_mode::InfiniteMode;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::level::LevelRequest;
@@ -23,6 +24,7 @@ use crate::resources::main_menu::{
     ContinueRequested, MainMenu, MenuFeatureFlags, NewGameRequested,
 };
 use crate::resources::pause::PauseMenu;
+use crate::resources::points::{PendingUnlockNotice, RunPoints};
 use crate::resources::run_data::PlayerGear;
 use crate::resources::settings_menu::{SettingsMenu, SettingsRequested};
 use crate::states::GameState;
@@ -89,6 +91,9 @@ impl Plugin for MainMenuPlugin {
             .init_resource::<DifficultySelectMenu>()
             .init_resource::<SettingsMenu>()
             .init_resource::<crate::resources::confirm::ConfirmDialog>()
+            .init_resource::<RunPoints>()
+            .init_resource::<InfiniteMode>()
+            .init_resource::<PendingUnlockNotice>()
             .add_message::<NewGameRequested>()
             .add_message::<ContinueRequested>()
             .add_message::<SettingsRequested>()
@@ -111,6 +116,7 @@ fn spawn_main_menu(
     mut commands: Commands,
     mut art: ResMut<MenuArt>,
     flags: Res<MenuFeatureFlags>,
+    points: Res<RunPoints>,
     server: Option<Res<AssetServer>>,
 ) {
     commands
@@ -213,6 +219,22 @@ fn spawn_main_menu(
                             theme::TEXT_DIM,
                         ),
                     ));
+                    // The saved run's points, shown once the system has
+                    // unlocked. Hidden entirely before any run reaches them.
+                    if points.unlocked {
+                        column.spawn((
+                            Name::new("Points"),
+                            Node {
+                                margin: UiRect::top(Val::Px(6.0)),
+                                ..default()
+                            },
+                            theme::label(
+                                format!("Points: {}", points.total),
+                                16.0,
+                                theme::TEXT_PRIMARY,
+                            ),
+                        ));
+                    }
                 });
         });
 }
@@ -402,6 +424,9 @@ pub struct ResetWork<'w> {
     boss_select: ResMut<'w, BossSelectMenu>,
     pause: ResMut<'w, PauseMenu>,
     goals: ResMut<'w, GoalsProgress>,
+    points: ResMut<'w, RunPoints>,
+    pending_unlock: ResMut<'w, PendingUnlockNotice>,
+    infinite: ResMut<'w, InfiniteMode>,
     level_request: ResMut<'w, LevelRequest>,
     fade: ResMut<'w, SceneFade>,
 }
@@ -416,6 +441,9 @@ impl ResetWork<'_> {
         *self.cycle = DayCycle::default();
         *self.farm = FarmState::default();
         *self.goals = GoalsProgress::default();
+        *self.points = RunPoints::default();
+        *self.pending_unlock = PendingUnlockNotice::default();
+        *self.infinite = InfiniteMode::default();
         self.crafting.close_menu();
         self.panel.close_panel();
         self.crop_select.reset();

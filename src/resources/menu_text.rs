@@ -53,6 +53,9 @@ pub fn crop_yield(crop: CropType) -> String {
 /// `"Drops: Boss A Material 1 x0-2, Boss A Material 2 x1-3"`. The dual boss has
 /// no drops of its own, so it reports that beating it ends the run instead.
 pub fn boss_drops(id: BossId) -> String {
+    if id == BossId::Infinite {
+        return "Endless - separate health, points on every kill".to_string();
+    }
     let drops = id.material_drops();
     if drops.is_empty() {
         return "Drops: none - ends the run".to_string();
@@ -118,6 +121,13 @@ mod tests {
     fn the_dual_boss_reports_no_drops() {
         let line = boss_drops(BossId::Dual);
         assert!(!line.contains("Material"), "{line}");
+    }
+
+    #[test]
+    fn infinite_mode_reports_endless_copy() {
+        let line = boss_drops(BossId::Infinite);
+        assert!(line.contains("Endless"), "{line}");
+        assert!(!line.contains("ends the run"), "{line}");
     }
 
     #[test]

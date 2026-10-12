@@ -10,6 +10,7 @@ use crate::resources::difficulty::Difficulty;
 use crate::resources::farm::{CropUnlocks, DayCounter, FarmState};
 use crate::resources::goals::GoalsProgress;
 use crate::resources::inventory::Inventory;
+use crate::resources::points::RunPoints;
 use crate::resources::run_data::PlayerGear;
 use crate::resources::settings::{SETTINGS_KEY, Settings};
 use crate::utils::save_backend::{SaveBackend, SaveError, platform_backend};
@@ -21,7 +22,7 @@ pub const SAVE_KEY: &str = "run";
 
 /// Bumped when the payload's shape changes. Old saves are discarded rather than
 /// migrated, which is fine while the schema is still moving.
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 
 /// A complete run, ready to be serialized.
 ///
@@ -40,6 +41,8 @@ pub struct SaveData {
     pub bosses: BossProgress,
     pub goals: GoalsProgress,
     pub difficulty: Difficulty,
+    /// The post-game points tally. Locked until the dual boss first falls.
+    pub points: RunPoints,
     /// True when the save was written while a boss fight was live. A Permadeath
     /// save that still carries this on load was force-quit mid-fight and is
     /// invalidated (see the persistence plugin).
@@ -59,6 +62,7 @@ impl SaveData {
         bosses: &BossProgress,
         goals: &GoalsProgress,
         difficulty: Difficulty,
+        points: &RunPoints,
         in_bossfight: bool,
     ) -> Self {
         Self {
@@ -71,6 +75,7 @@ impl SaveData {
             bosses: bosses.clone(),
             goals: goals.clone(),
             difficulty,
+            points: points.clone(),
             in_bossfight,
         }
     }
@@ -175,6 +180,10 @@ mod tests {
         let mut goals = GoalsProgress::default();
         goals.complete(crate::resources::goals::GoalId::PlantStarter);
 
+        let mut points = RunPoints::default();
+        points.unlock();
+        points.add(12);
+
         SaveData::capture(
             &DayCounter(5),
             &gear,
@@ -184,6 +193,7 @@ mod tests {
             &bosses,
             &goals,
             Difficulty::Hard,
+            &points,
             false,
         )
     }
@@ -202,6 +212,8 @@ mod tests {
         assert_eq!(data.inventory.crop_count(CropType::Starter), 4);
         assert_eq!(data.farm.pots.len(), 1);
         assert_eq!(data.farm.pots[0].state, PotState::Planted);
+        assert!(data.points.unlocked);
+        assert_eq!(data.points.total, 12);
         assert!(
             data.gear
                 .owns(&GearPiece::new(GearSet::Starter, GearSlot::Weapon))

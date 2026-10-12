@@ -17,6 +17,8 @@ impl BossProgress {
             BossId::BossA => self.boss_a,
             BossId::BossB => self.boss_b,
             BossId::Dual => self.dual_boss_beaten,
+            // Infinite Mode is an endurance fight with no win state.
+            BossId::Infinite => false,
         }
     }
 
@@ -25,6 +27,7 @@ impl BossProgress {
         match id {
             BossId::BossA | BossId::BossB => true,
             BossId::Dual => self.dual_boss_unlocked,
+            BossId::Infinite => self.dual_boss_beaten,
         }
     }
 
@@ -34,6 +37,8 @@ impl BossProgress {
             BossId::BossA => self.boss_a = true,
             BossId::BossB => self.boss_b = true,
             BossId::Dual => self.dual_boss_beaten = true,
+            // Infinite Mode has no completion to record.
+            BossId::Infinite => {}
         }
         if self.boss_a && self.boss_b {
             self.dual_boss_unlocked = true;
@@ -70,5 +75,14 @@ mod tests {
         let mut progress = BossProgress::default();
         progress.record(BossId::Dual);
         assert!(progress.dual_boss_beaten);
+    }
+
+    #[test]
+    fn infinite_mode_unlocks_only_after_the_dual_boss_falls() {
+        let mut progress = BossProgress::default();
+        assert!(!progress.is_unlocked(BossId::Infinite));
+        progress.record(BossId::Dual);
+        assert!(progress.is_unlocked(BossId::Infinite));
+        assert!(!progress.is_beaten(BossId::Infinite), "endless has no win");
     }
 }

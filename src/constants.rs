@@ -103,6 +103,9 @@ pub const fn boss_size(id: crate::components::boss::BossId) -> f32 {
         crate::components::boss::BossId::BossB => BOSS_B_SIZE,
         // The dual halves are spawned per-role; the shared pool is 900.
         crate::components::boss::BossId::Dual => BOSS_A_SIZE,
+        // Infinite Mode spawns the Excavator and Quicksilver as singles, so this
+        // value is never used for a spawn; it just keeps the match total.
+        crate::components::boss::BossId::Infinite => BOSS_A_SIZE,
     }
 }
 

@@ -2,6 +2,7 @@ use crate::components::boss::BossId;
 use crate::events::{BossSelected, InteractionEvent, InteractionType, PlaySfx, Sfx};
 use crate::resources::boss_progress::BossProgress;
 use crate::resources::boss_select::BossSelectMenu;
+use crate::resources::infinite_mode::InfiniteMode;
 use crate::resources::level::LevelRequest;
 use crate::resources::scene_assets::{LoadTarget, LoadingContext};
 use crate::states::{DayPhase, Phase};
@@ -63,6 +64,7 @@ fn boss_select_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<BossSelectMenu>,
     progress: Res<BossProgress>,
+    mut infinite: ResMut<InfiniteMode>,
     mut context: ResMut<LoadingContext>,
     mut fade: ResMut<SceneFade>,
     mut next_phase: ResMut<NextState<DayPhase>>,
@@ -85,6 +87,13 @@ fn boss_select_keyboard(
         {
             selected_events.write(BossSelected(id));
             sfx.write(PlaySfx(Sfx::MenuConfirm));
+            // Infinite Mode reuses the dual arena but fields two independent
+            // bosses; every other choice clears it.
+            if id == BossId::Infinite {
+                infinite.begin();
+            } else {
+                infinite.end();
+            }
             request.0 = Some(id.arena());
             fade.begin_load(LoadTarget::for_boss(id), DayPhase::BossFight, &mut context);
             menu.close_menu();
@@ -214,6 +223,7 @@ mod tests {
         app.init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<BossSelectMenu>()
             .init_resource::<BossProgress>()
+            .init_resource::<InfiniteMode>()
             .init_resource::<LevelRequest>()
             .init_resource::<PlayerGear>()
             .init_resource::<PlayerSpriteAssets>()
@@ -389,6 +399,48 @@ mod tests {
         press(&mut app, KeyCode::Enter);
 
         assert_eq!(request(&app), Some(crate::levels::LevelId::ArenaB));
+    }
+
+    #[test]
+    fn selecting_infinite_mode_starts_the_endurance_fight() {
+        let mut app = setup_app();
+        {
+            let mut progress = app.world_mut().resource_mut::<BossProgress>();
+            progress.record(BossId::BossA);
+            progress.record(BossId::BossB);
+            progress.record(BossId::Dual);
+        }
+        arena_gate_interaction(&mut app);
+
+        // 0 -> 1 -> 2 -> 3, all unlocked once the dual boss falls.
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::ArrowDown);
+        press(&mut app, KeyCode::ArrowDown);
+        assert_eq!(menu(&app).selected, 3);
+
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(
+            app.world().resource::<InfiniteMode>().active,
+            "Infinite Mode is armed"
+        );
+        assert_eq!(request(&app), Some(crate::levels::LevelId::ArenaDual));
+    }
+
+    #[test]
+    fn picking_a_normal_boss_clears_infinite_mode() {
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<InfiniteMode>().begin();
+        arena_gate_interaction(&mut app);
+
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+
+        assert!(
+            !app.world().resource::<InfiniteMode>().active,
+            "a normal fight never runs in endurance mode"
+        );
     }
 
     #[test]

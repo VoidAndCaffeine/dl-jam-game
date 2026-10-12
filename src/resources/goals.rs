@@ -210,6 +210,8 @@ pub fn goal_for_boss(id: BossId) -> Option<GoalId> {
         BossId::BossA => Some(GoalId::BeatExcavator),
         BossId::BossB => Some(GoalId::BeatMercurial),
         BossId::Dual => Some(GoalId::BeatDualBoss),
+        // Infinite Mode is open-ended; it has no goal attached.
+        BossId::Infinite => None,
     }
 }
 
