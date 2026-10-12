@@ -127,7 +127,7 @@ fn difficulty_input(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) {
+    if theme::back_pressed(&keys) {
         menu.close_menu();
         sfx.write(PlaySfx(Sfx::MenuClose));
         return;
@@ -303,7 +303,7 @@ fn spawn_difficulty(
                     panel.spawn((
                         Name::new("Hint"),
                         theme::label(
-                            "Arrows select   |   Enter / click chooses   |   Esc cancels",
+                            "Arrows select   |   Enter / click chooses   |   Esc / Tab cancels",
                             13.0,
                             theme::TEXT_DIM,
                         ),

@@ -2,9 +2,11 @@
 //!
 //! One overlay serves both the title screen and the pause menu: it reads the
 //! shared [`Settings`] resource and writes it back, so there is no per-menu
-//! variant. Rows are steppers (a `-` / value / `+` cluster); the keyboard walks
-//! them with Up/Down and adjusts the highlighted one with Left/Right, while the
-//! mouse drives the `-` / `+` buttons directly.
+//! variant. It is split into tabs (Audio, Accessibility, Display, Controls).
+//! Rows are steppers (a `-` / value / `+` cluster); the keyboard walks them with
+//! Up/Down and adjusts the highlighted one with Left/Right, while the mouse
+//! drives the `-` / `+` buttons directly. The Controls tab binds a primary and a
+//! secondary key per action, with a reset entry.
 //!
 //! The settings themselves live in their own save slot and are loaded at boot
 //! (see [`crate::resources::settings`]); this plugin also fans them out to the
@@ -18,10 +20,11 @@ use crate::plugins::ui_theme::{
 };
 use crate::resources::audio_settings::AudioSettings;
 use crate::resources::save_manager::SaveManager;
-use crate::resources::settings::{ColorblindMode, SETTING_ROWS, SettingRow, Settings};
-use crate::resources::settings_menu::{SettingsMenu, SettingsRequested};
+use crate::resources::settings::{Action, ColorblindMode, KeySlot, SettingRow, Settings};
+use crate::resources::settings_menu::{SettingsItem, SettingsMenu, SettingsRequested, SettingsTab};
 use crate::states::GameState;
 use bevy::prelude::*;
+use bevy::time::Real;
 use bevy::ui::FocusPolicy;
 use log::warn;
 
@@ -29,6 +32,11 @@ use log::warn;
 /// title screen can order their own `Esc` handling before it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SettingsSet;
+
+/// How long a `-` / `+` button must be held before it starts repeating.
+const HOLD_DELAY: f32 = 0.35;
+/// How often a held `-` / `+` button repeats its coarse step.
+const HOLD_REPEAT: f32 = 0.06;
 
 pub struct SettingsMenuPlugin;
 
@@ -50,8 +58,13 @@ impl Plugin for SettingsMenuPlugin {
                 (
                     open_from_main_menu,
                     open_from_pause,
+                    settings_rebind_listen,
                     settings_input,
+                    settings_tab_click,
                     settings_step_click,
+                    settings_step_hold,
+                    settings_slot_click,
+                    settings_reset_click,
                     settings_back_click,
                     clear_open_frame,
                     sync_settings_ui,
@@ -80,11 +93,17 @@ impl Plugin for SettingsMenuPlugin {
 #[derive(Component, Reflect, Debug, Default)]
 pub struct SettingsRoot;
 
-/// A steppable settings row container.
+/// The tab the overlay was built for, so a tab change can rebuild it.
+#[derive(Component, Debug, Clone, Copy)]
+struct SpawnedTab(SettingsTab);
+
+/// A row container, highlighted when it is the current selection. Stepper rows
+/// highlight on their own index; a control row highlights when either of its two
+/// slots is selected.
 #[derive(Component, Reflect, Debug, Clone, Copy)]
-pub struct SettingRowMarker {
-    pub row: SettingRow,
-    pub index: usize,
+pub enum SettingsRowMarker {
+    Row { index: usize },
+    Control { primary: usize, secondary: usize },
 }
 
 /// A `-` / `+` button belonging to a row.
@@ -92,9 +111,54 @@ pub struct SettingRowMarker {
 pub struct SettingStep {
     pub row: SettingRow,
     pub delta: i32,
+    pub index: usize,
 }
 
-/// Text that tracks a row's value, or the selected row's hint.
+/// Tracks how long a step button has been held, so a click steps finely and a
+/// hold repeats coarsely.
+#[derive(Component, Debug, Default)]
+pub struct StepHold {
+    elapsed: f32,
+    since_repeat: f32,
+}
+
+/// How a button works out whether it is highlighted.
+#[derive(Component, Debug, Clone, Copy)]
+pub enum Selectable {
+    /// Selected while its tab is the active one.
+    Tab(SettingsTab),
+    /// Selected while the highlight is on this flat index.
+    Index(usize),
+    /// Selected while the highlight is on the Back entry.
+    Back,
+}
+
+/// A tab button in the tab bar.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct TabButton {
+    pub tab: SettingsTab,
+}
+
+/// One of an action's two key buttons.
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct SlotButton {
+    pub action: Action,
+    pub slot: KeySlot,
+    pub index: usize,
+}
+
+/// Text showing a slot's bound key (or a prompt while it is being rebound).
+#[derive(Component, Reflect, Debug, Clone, Copy)]
+pub struct SlotLabel {
+    pub action: Action,
+    pub slot: KeySlot,
+}
+
+/// The "reset keybindings" entry.
+#[derive(Component, Reflect, Debug, Default)]
+pub struct ResetButton;
+
+/// Text that tracks a row's value, or the selected entry's hint.
 #[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsText {
     Value(SettingRow),
@@ -277,6 +341,43 @@ fn open_from_pause(
 
 // --- Input -------------------------------------------------------------------
 
+/// Captures the next key for the slot being rebound, before the rest of the
+/// settings input sees it.
+fn settings_rebind_listen(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut menu: ResMut<SettingsMenu>,
+    mut settings: ResMut<Settings>,
+    mut changed: MessageWriter<SettingsChanged>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    let Some((action, slot)) = menu.listening else {
+        return;
+    };
+    if !menu.open {
+        menu.listening = None;
+        return;
+    }
+    if theme::back_pressed(&keys) {
+        menu.listening = None;
+        keys.clear_just_pressed(KeyCode::Escape);
+        keys.clear_just_pressed(KeyCode::Tab);
+        sfx.write(PlaySfx(Sfx::MenuClose));
+        return;
+    }
+    let captured = keys.get_just_pressed().next().copied();
+    let Some(code) = captured else {
+        return;
+    };
+    let name = format!("{code:?}");
+    // `set` steals the key from wherever else it was, so one key fires one action.
+    settings.input.set(action, slot, name);
+    menu.listening = None;
+    // The captured key must not also drive the menu this frame.
+    keys.clear_just_pressed(code);
+    changed.write(SettingsChanged);
+    sfx.write(PlaySfx(Sfx::MenuConfirm));
+}
+
 fn settings_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut menu: ResMut<SettingsMenu>,
@@ -284,18 +385,31 @@ fn settings_input(
     mut changed: MessageWriter<SettingsChanged>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if !menu.open || menu.just_opened {
+    if !menu.open || menu.just_opened || menu.listening.is_some() {
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) {
+    // `[` / `]` cycle pages; `Tab` and `Esc` both mean back.
+    if keys.just_pressed(KeyCode::BracketRight) {
+        menu.tab = menu.tab.next(1);
+        menu.selected = 0;
+        sfx.write(PlaySfx(Sfx::MenuNavigate));
+        return;
+    }
+    if keys.just_pressed(KeyCode::BracketLeft) {
+        menu.tab = menu.tab.next(-1);
+        menu.selected = 0;
+        sfx.write(PlaySfx(Sfx::MenuNavigate));
+        return;
+    }
+
+    if theme::back_pressed(&keys) {
         menu.close_menu();
         sfx.write(PlaySfx(Sfx::MenuClose));
         return;
     }
 
-    // Every row plus Back is selectable, so navigation is a plain clamp.
-    let enabled: Vec<usize> = (0..=SettingsMenu::BACK).collect();
+    let enabled: Vec<usize> = (0..menu.navigable_len()).collect();
     let up = keys.just_pressed(KeyCode::ArrowUp) || keys.just_pressed(KeyCode::KeyW);
     let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS);
     if up {
@@ -308,39 +422,68 @@ fn settings_input(
 
     let left = keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA);
     let right = keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD);
-    if left || right {
-        adjust_selected(
-            &mut menu,
-            &mut settings,
-            &mut changed,
-            if left { -1 } else { 1 },
-        );
+    let confirm = confirm_keys(&keys);
+
+    // On Controls, left/right walk between an action's primary and secondary
+    // buttons; there is nothing to adjust there.
+    if menu.tab == SettingsTab::Controls && (left || right) {
+        menu.selected = theme::step_enabled(&enabled, menu.selected, if left { -1 } else { 1 });
+        sfx.write(PlaySfx(Sfx::MenuNavigate));
+        return;
     }
 
-    if confirm_keys(&keys) {
-        if menu.selected == SettingsMenu::BACK {
+    let delta = if left {
+        -1
+    } else if right || confirm {
+        1
+    } else {
+        0
+    };
+    if delta == 0 {
+        return;
+    }
+
+    match menu.item(menu.selected) {
+        Some(SettingsItem::Row(row)) => {
+            row.adjust(&mut settings, delta);
+            changed.write(SettingsChanged);
+        }
+        Some(SettingsItem::Binding(action, slot)) if confirm => {
+            menu.listening = Some((action, slot));
+            sfx.write(PlaySfx(Sfx::MenuOpen));
+        }
+        Some(SettingsItem::Reset) if confirm => {
+            settings.input.reset_defaults();
+            changed.write(SettingsChanged);
+            sfx.write(PlaySfx(Sfx::MenuConfirm));
+        }
+        Some(SettingsItem::Back) if confirm => {
             menu.close_menu();
             sfx.write(PlaySfx(Sfx::MenuClose));
-        } else {
-            adjust_selected(&mut menu, &mut settings, &mut changed, 1);
+        }
+        _ => {}
+    }
+}
+
+fn settings_tab_click(
+    tabs: Query<(&Interaction, &TabButton), Changed<Interaction>>,
+    mut menu: ResMut<SettingsMenu>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if !menu.open {
+        return;
+    }
+    for (interaction, tab) in tabs.iter() {
+        if *interaction == Interaction::Pressed && menu.tab != tab.tab {
+            menu.tab = tab.tab;
+            menu.selected = 0;
+            menu.listening = None;
+            sfx.write(PlaySfx(Sfx::MenuNavigate));
         }
     }
 }
 
-/// Steps the highlighted row (a no-op on the Back row).
-fn adjust_selected(
-    menu: &mut SettingsMenu,
-    settings: &mut Settings,
-    changed: &mut MessageWriter<SettingsChanged>,
-    delta: i32,
-) {
-    let Some(row) = SETTING_ROWS.get(menu.selected).copied() else {
-        return;
-    };
-    row.adjust(settings, delta);
-    changed.write(SettingsChanged);
-}
-
+/// A single click of a `-` / `+` button applies its fine step.
 fn settings_step_click(
     mut rows: Query<(&Interaction, &SettingStep), Changed<Interaction>>,
     mut menu: ResMut<SettingsMenu>,
@@ -348,19 +491,88 @@ fn settings_step_click(
     mut changed: MessageWriter<SettingsChanged>,
     mut sfx: MessageWriter<PlaySfx>,
 ) {
-    if !menu.open || menu.just_opened {
+    if !menu.open || menu.just_opened || menu.listening.is_some() {
         return;
     }
     for (interaction, step) in rows.iter_mut() {
         if *interaction != Interaction::Pressed {
             continue;
         }
-        if let Some(index) = SETTING_ROWS.iter().position(|row| *row == step.row) {
-            menu.selected = index;
-        }
-        step.row.adjust(&mut settings, step.delta);
+        menu.selected = step.index;
+        step.row.adjust_tap(&mut settings, step.delta);
         changed.write(SettingsChanged);
         sfx.write(PlaySfx(Sfx::MenuNavigate));
+    }
+}
+
+/// Holding a volume's `-` / `+` button past the delay repeats its coarse step.
+fn settings_step_hold(
+    time: Res<Time<Real>>,
+    mut buttons: Query<(&Interaction, &SettingStep, &mut StepHold)>,
+    menu: Res<SettingsMenu>,
+    mut settings: ResMut<Settings>,
+    mut changed: MessageWriter<SettingsChanged>,
+) {
+    let dt = time.delta_secs();
+    for (interaction, step, mut hold) in buttons.iter_mut() {
+        // Only volumes repeat; a held toggle would flicker.
+        let holding = menu.open && *interaction == Interaction::Pressed && step.row.is_volume();
+        if !holding {
+            hold.elapsed = 0.0;
+            hold.since_repeat = 0.0;
+            continue;
+        }
+        hold.elapsed += dt;
+        if hold.elapsed < HOLD_DELAY {
+            continue;
+        }
+        hold.since_repeat += dt;
+        while hold.since_repeat >= HOLD_REPEAT {
+            hold.since_repeat -= HOLD_REPEAT;
+            step.row.adjust(&mut settings, step.delta);
+            changed.write(SettingsChanged);
+        }
+    }
+}
+
+/// Clicking a slot button starts rebinding that slot.
+fn settings_slot_click(
+    buttons: Query<(&Interaction, &SlotButton), Changed<Interaction>>,
+    mut menu: ResMut<SettingsMenu>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if !menu.open {
+        return;
+    }
+    for (interaction, button) in buttons.iter() {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        menu.selected = button.index;
+        menu.listening = Some((button.action, button.slot));
+        sfx.write(PlaySfx(Sfx::MenuOpen));
+    }
+}
+
+/// Clicking the reset entry restores the shipped bindings.
+fn settings_reset_click(
+    buttons: Query<&Interaction, (With<ResetButton>, Changed<Interaction>)>,
+    mut menu: ResMut<SettingsMenu>,
+    mut settings: ResMut<Settings>,
+    mut changed: MessageWriter<SettingsChanged>,
+    mut sfx: MessageWriter<PlaySfx>,
+) {
+    if !menu.open {
+        return;
+    }
+    for interaction in buttons.iter() {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        menu.selected = menu.reset_index();
+        settings.input.reset_defaults();
+        changed.write(SettingsChanged);
+        sfx.write(PlaySfx(Sfx::MenuConfirm));
     }
 }
 
@@ -405,31 +617,41 @@ fn close_settings(mut menu: ResMut<SettingsMenu>) {
 fn sync_settings_ui(
     mut commands: Commands,
     menu: Res<SettingsMenu>,
-    settings: Res<Settings>,
     mut art: ResMut<MenuArt>,
     server: Option<Res<AssetServer>>,
-    roots: Query<Entity, With<SettingsRoot>>,
+    roots: Query<(Entity, &SpawnedTab), With<SettingsRoot>>,
 ) {
-    let present = !roots.is_empty();
-    if menu.open && !present {
-        spawn_settings(&mut commands, &settings, &mut art, server.as_deref());
-    } else if !menu.open && present {
-        for entity in roots.iter() {
+    match (
+        menu.open,
+        roots.iter().next().map(|(entity, tab)| (entity, *tab)),
+    ) {
+        (true, None) => spawn_settings(&mut commands, &menu, &mut art, server.as_deref()),
+        // A tab change rebuilds the panel so only the active tab's rows exist.
+        (true, Some((entity, spawned))) if spawned.0 != menu.tab => {
+            commands.entity(entity).despawn();
+            spawn_settings(&mut commands, &menu, &mut art, server.as_deref());
+        }
+        (false, Some((entity, _))) => {
             commands.entity(entity).despawn();
         }
+        _ => {}
     }
 }
 
 fn spawn_settings(
     commands: &mut Commands,
-    _settings: &Settings,
+    menu: &SettingsMenu,
     art: &mut MenuArt,
     server: Option<&AssetServer>,
 ) {
+    let tab = menu.tab;
+    let back_index = menu.back_index();
+    let reset_index = menu.reset_index();
     commands
         .spawn((
             Name::new("Settings Root"),
             SettingsRoot,
+            SpawnedTab(tab),
             theme::screen_root_node(),
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.62)),
             GlobalZIndex(650),
@@ -463,9 +685,21 @@ fn spawn_settings(
                         theme::label("SETTINGS", 30.0, theme::TEXT_PRIMARY),
                     ));
 
-                    spawn_section(panel, "AUDIO", art, server, &SETTING_ROWS[0..3]);
-                    spawn_section(panel, "ACCESSIBILITY", art, server, &SETTING_ROWS[3..5]);
-                    spawn_section(panel, "DISPLAY", art, server, &SETTING_ROWS[5..6]);
+                    spawn_tab_bar(panel, art, server, tab);
+
+                    match tab {
+                        SettingsTab::Controls => {
+                            for (index, action) in Action::REBINDABLE.iter().enumerate() {
+                                spawn_control_row(panel, art, server, *action, index);
+                            }
+                            spawn_reset_button(panel, art, server, reset_index);
+                        }
+                        _ => {
+                            for (index, row) in menu.rows().iter().enumerate() {
+                                spawn_setting_row(panel, art, server, *row, index);
+                            }
+                        }
+                    }
 
                     panel.spawn((
                         Name::new("Row Hint"),
@@ -473,14 +707,20 @@ fn spawn_settings(
                         theme::label("", 13.0, theme::TEXT_DIM),
                     ));
 
-                    let spec = ButtonSpec::new(SettingsMenu::BACK, "Back").label_size(20.0);
+                    let spec = ButtonSpec::new(back_index, "Back").label_size(20.0);
                     let visuals = art.resolve(&spec, server);
-                    theme::spawn_menu_button(panel, spec, visuals, SettingsBackButton, |_| {});
+                    theme::spawn_menu_button(
+                        panel,
+                        spec,
+                        visuals,
+                        (SettingsBackButton, Selectable::Back),
+                        |_| {},
+                    );
 
                     panel.spawn((
                         Name::new("Hint"),
                         theme::label(
-                            "Arrows select   |   Left / Right adjust   |   Enter / click steps   |   Esc back",
+                            "[ / ] pages   |   Arrows select   |   Left / Right adjust   |   Enter / click   |   Esc / Tab back",
                             13.0,
                             theme::TEXT_DIM,
                         ),
@@ -489,22 +729,68 @@ fn spawn_settings(
         });
 }
 
-/// Spawns one titled group of setting rows.
-fn spawn_section(
+/// The row of page buttons at the top of the panel.
+fn spawn_tab_bar(
     panel: &mut ChildSpawnerCommands,
-    title: &str,
     art: &mut MenuArt,
     server: Option<&AssetServer>,
-    rows: &[SettingRow],
+    active: SettingsTab,
 ) {
-    panel.spawn((
-        Name::new(format!("{title} Section")),
-        theme::label(title, 15.0, theme::TEXT_DIM),
-    ));
-    for row in rows {
-        let index = SETTING_ROWS.iter().position(|r| r == row).unwrap_or(0);
-        spawn_setting_row(panel, art, server, *row, index);
-    }
+    panel
+        .spawn((
+            Name::new("Tab Bar"),
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(8.0),
+                ..default()
+            },
+        ))
+        .with_children(|bar| {
+            for (index, tab) in SettingsTab::ALL.iter().enumerate() {
+                spawn_tab_button(bar, art, server, *tab, index, *tab == active);
+            }
+        });
+}
+
+fn spawn_tab_button(
+    bar: &mut ChildSpawnerCommands,
+    art: &mut MenuArt,
+    server: Option<&AssetServer>,
+    tab: SettingsTab,
+    index: usize,
+    active: bool,
+) {
+    let visuals = art.shared_visuals(server);
+    bar.spawn((
+        Name::new(format!("Tab {}", tab.label())),
+        MenuButton {
+            index,
+            enabled: true,
+        },
+        MenuButtonSelected(active),
+        visuals,
+        Button,
+        Interaction::default(),
+        FocusPolicy::Block,
+        Node {
+            flex_grow: 1.0,
+            height: Val::Px(36.0),
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            border: UiRect::all(Val::Px(1.0)),
+            border_radius: BorderRadius::all(Val::Px(4.0)),
+            ..default()
+        },
+        BackgroundColor(theme::ROW_BG),
+        BorderColor::all(theme::ROW_BORDER),
+        ImageNode::default(),
+        TabButton { tab },
+        Selectable::Tab(tab),
+    ))
+    .with_children(|button| {
+        button.spawn(theme::label(tab.label(), 16.0, theme::TEXT_PRIMARY));
+    });
 }
 
 fn spawn_setting_row(
@@ -517,19 +803,8 @@ fn spawn_setting_row(
     parent
         .spawn((
             Name::new(format!("Setting {}", row.label())),
-            SettingRowMarker { row, index },
-            Node {
-                width: Val::Percent(100.0),
-                min_height: Val::Px(theme::ROW_HEIGHT),
-                padding: UiRect::px(12.0, 12.0, 6.0, 6.0),
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::SpaceBetween,
-                column_gap: Val::Px(10.0),
-                border: UiRect::all(Val::Px(1.0)),
-                border_radius: BorderRadius::all(Val::Px(4.0)),
-                ..default()
-            },
+            SettingsRowMarker::Row { index },
+            row_node(),
             BackgroundColor(theme::ROW_BG),
             BorderColor::all(theme::ROW_BORDER),
         ))
@@ -542,7 +817,7 @@ fn spawn_setting_row(
                 },
                 theme::label(row.label(), 18.0, theme::TEXT_PRIMARY),
             ));
-            spawn_step_button(node, art, server, "-", row, -1);
+            spawn_step_button(node, art, server, "-", row, -1, index);
             node.spawn((
                 SettingsText::Value(row),
                 Node {
@@ -552,8 +827,57 @@ fn spawn_setting_row(
                 },
                 theme::label("", 16.0, theme::TEXT_PRIMARY),
             ));
-            spawn_step_button(node, art, server, "+", row, 1);
+            spawn_step_button(node, art, server, "+", row, 1, index);
         });
+}
+
+/// One action's row: its name, then a button for each of its two key slots.
+fn spawn_control_row(
+    parent: &mut ChildSpawnerCommands,
+    art: &mut MenuArt,
+    server: Option<&AssetServer>,
+    action: Action,
+    action_index: usize,
+) {
+    let primary = SettingsMenu::slot_index(action, KeySlot::Primary).unwrap_or(action_index * 2);
+    let secondary =
+        SettingsMenu::slot_index(action, KeySlot::Secondary).unwrap_or(action_index * 2 + 1);
+    parent
+        .spawn((
+            Name::new(format!("Control {}", action.label())),
+            SettingsRowMarker::Control { primary, secondary },
+            row_node(),
+            BackgroundColor(theme::ROW_BG),
+            BorderColor::all(theme::ROW_BORDER),
+        ))
+        .with_children(|node| {
+            node.spawn((
+                Node {
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    ..default()
+                },
+                theme::label(action.label(), 18.0, theme::TEXT_PRIMARY),
+            ));
+            spawn_slot_button(node, art, server, action, KeySlot::Primary, primary);
+            spawn_slot_button(node, art, server, action, KeySlot::Secondary, secondary);
+        });
+}
+
+/// The shared frame of a settings row.
+fn row_node() -> Node {
+    Node {
+        width: Val::Percent(100.0),
+        min_height: Val::Px(theme::ROW_HEIGHT),
+        padding: UiRect::px(12.0, 12.0, 6.0, 6.0),
+        flex_direction: FlexDirection::Row,
+        align_items: AlignItems::Center,
+        justify_content: JustifyContent::SpaceBetween,
+        column_gap: Val::Px(10.0),
+        border: UiRect::all(Val::Px(1.0)),
+        border_radius: BorderRadius::all(Val::Px(4.0)),
+        ..default()
+    }
 }
 
 /// A small square stepper button, styled by the shared button systems.
@@ -564,6 +888,7 @@ fn spawn_step_button(
     glyph: &str,
     row: SettingRow,
     delta: i32,
+    index: usize,
 ) {
     let visuals = art.shared_visuals(server);
     parent
@@ -590,22 +915,96 @@ fn spawn_step_button(
             BackgroundColor(theme::ROW_BG),
             BorderColor::all(theme::ROW_BORDER),
             ImageNode::default(),
-            SettingStep { row, delta },
+            SettingStep { row, delta, index },
+            StepHold::default(),
         ))
         .with_children(|button| {
             button.spawn(theme::label(glyph, 20.0, theme::TEXT_PRIMARY));
         });
 }
 
+/// A key slot button: its label shows the bound key.
+fn spawn_slot_button(
+    parent: &mut ChildSpawnerCommands,
+    art: &mut MenuArt,
+    server: Option<&AssetServer>,
+    action: Action,
+    slot: KeySlot,
+    index: usize,
+) {
+    let visuals = art.shared_visuals(server);
+    parent
+        .spawn((
+            MenuButton {
+                index,
+                enabled: true,
+            },
+            MenuButtonSelected(false),
+            visuals,
+            Button,
+            Interaction::default(),
+            FocusPolicy::Block,
+            Node {
+                width: Val::Px(130.0),
+                height: Val::Px(32.0),
+                flex_shrink: 0.0,
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                border: UiRect::all(Val::Px(1.0)),
+                border_radius: BorderRadius::all(Val::Px(4.0)),
+                ..default()
+            },
+            BackgroundColor(theme::ROW_BG),
+            BorderColor::all(theme::ROW_BORDER),
+            ImageNode::default(),
+            SlotButton {
+                action,
+                slot,
+                index,
+            },
+            Selectable::Index(index),
+        ))
+        .with_children(|button| {
+            button.spawn((
+                SlotLabel { action, slot },
+                theme::label("", 15.0, theme::TEXT_PRIMARY),
+            ));
+        });
+}
+
+fn spawn_reset_button(
+    parent: &mut ChildSpawnerCommands,
+    art: &mut MenuArt,
+    server: Option<&AssetServer>,
+    index: usize,
+) {
+    let spec = ButtonSpec::new(index, "Reset Keybindings").label_size(18.0);
+    let visuals = art.resolve(&spec, server);
+    theme::spawn_menu_button(
+        parent,
+        spec,
+        visuals,
+        (ResetButton, Selectable::Index(index)),
+        |_| {},
+    );
+}
+
 fn refresh_settings_ui(
     menu: Res<SettingsMenu>,
     settings: Res<Settings>,
-    mut rows: Query<(&SettingRowMarker, &mut BackgroundColor, &mut BorderColor)>,
-    mut texts: Query<(&SettingsText, &mut Text)>,
-    mut back: Query<(&SettingsBackButton, &mut MenuButtonSelected)>,
+    mut rows: Query<(&SettingsRowMarker, &mut BackgroundColor, &mut BorderColor)>,
+    mut texts: Query<(&SettingsText, &mut Text), Without<SlotLabel>>,
+    mut slots: Query<(&SlotLabel, &mut Text), Without<SettingsText>>,
+    mut selectable: Query<(&Selectable, &mut MenuButtonSelected)>,
 ) {
     for (marker, mut background, mut border) in rows.iter_mut() {
-        let selected = menu.open && marker.index == menu.selected;
+        let selected = menu.open
+            && match marker {
+                SettingsRowMarker::Row { index } => *index == menu.selected,
+                SettingsRowMarker::Control { primary, secondary } => {
+                    menu.selected == *primary || menu.selected == *secondary
+                }
+            };
         background.0 = if selected {
             theme::ROW_BG_SELECTED
         } else {
@@ -621,23 +1020,45 @@ fn refresh_settings_ui(
     for (marker, mut text) in texts.iter_mut() {
         match marker {
             SettingsText::Value(row) => *text = Text::new(row.value(&settings)),
-            SettingsText::Hint => *text = Text::new(hint_for(menu.selected)),
+            SettingsText::Hint => *text = Text::new(hint_for(&menu)),
         }
     }
 
-    for (_, mut selected) in back.iter_mut() {
-        selected.0 = menu.open && menu.selected == SettingsMenu::BACK;
+    for (slot, mut text) in slots.iter_mut() {
+        let shown = if menu.listening == Some((slot.action, slot.slot)) {
+            "Press a key...".to_string()
+        } else {
+            settings.input.label(slot.action, slot.slot)
+        };
+        *text = Text::new(shown);
+    }
+
+    for (selectable, mut selected) in selectable.iter_mut() {
+        selected.0 = menu.open
+            && match selectable {
+                Selectable::Tab(tab) => *tab == menu.tab,
+                Selectable::Index(index) => *index == menu.selected,
+                Selectable::Back => menu.selected == menu.back_index(),
+            };
     }
 }
 
-fn hint_for(selected: usize) -> String {
-    if selected == SettingsMenu::BACK {
-        "Return to the previous menu.".to_string()
-    } else {
-        SETTING_ROWS
-            .get(selected)
-            .map(|row| row.hint().to_string())
-            .unwrap_or_default()
+fn hint_for(menu: &SettingsMenu) -> String {
+    if let Some((action, slot)) = menu.listening {
+        return format!(
+            "Press a key for {} ({}), or Esc / Tab to cancel.",
+            action.label(),
+            slot.label()
+        );
+    }
+    match menu.item(menu.selected) {
+        Some(SettingsItem::Row(row)) => row.hint().to_string(),
+        Some(SettingsItem::Binding(..)) => {
+            "Select a slot's button, then press the key you want.".to_string()
+        }
+        Some(SettingsItem::Reset) => "Restore every key to its shipped binding.".to_string(),
+        Some(SettingsItem::Back) => "Return to the previous menu.".to_string(),
+        None => String::new(),
     }
 }
 
@@ -682,6 +1103,19 @@ mod tests {
         app.update();
     }
 
+    fn open_menu(app: &mut App) {
+        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
+        app.update();
+        app.update();
+    }
+
+    fn open_controls(app: &mut App) {
+        open_menu(app);
+        app.world_mut().resource_mut::<SettingsMenu>().tab = SettingsTab::Controls;
+        app.update();
+        app.update();
+    }
+
     #[test]
     fn opening_spawns_the_overlay_and_closing_drops_it() {
         let mut app = setup_app();
@@ -704,21 +1138,39 @@ mod tests {
     }
 
     #[test]
+    fn the_pause_settings_button_opens_the_overlay() {
+        let mut app = setup_app();
+        app.world_mut().resource_mut::<PauseMenu>().open_menu();
+        app.world_mut().spawn((
+            PauseButton {
+                action: PauseAction::Settings,
+                index: BUTTON_SETTINGS,
+            },
+            Interaction::Pressed,
+        ));
+        app.update();
+        assert!(app.world().resource::<SettingsMenu>().open);
+    }
+
+    #[test]
     fn escape_closes_the_overlay() {
         let mut app = setup_app();
-        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
-        app.update();
-        // The opening frame is guarded; let it pass.
-        app.update();
-
+        open_menu(&mut app);
         tap(&mut app, KeyCode::Escape);
+        assert!(!app.world().resource::<SettingsMenu>().open);
+    }
+
+    #[test]
+    fn tab_closes_the_overlay_like_escape() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+        tap(&mut app, KeyCode::Tab);
         assert!(!app.world().resource::<SettingsMenu>().open);
     }
 
     #[test]
     fn the_opening_key_does_not_also_act() {
         let mut app = setup_app();
-        // Open via the request, then press Enter on the same frame it opens.
         app.world_mut().write_message(SettingsRequested);
         {
             let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
@@ -735,56 +1187,71 @@ mod tests {
     #[test]
     fn keyboard_adjusts_the_selected_row() {
         let mut app = setup_app();
-        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
-        app.update();
-        app.update();
-
+        open_menu(&mut app);
         tap(&mut app, KeyCode::ArrowLeft);
         assert!((app.world().resource::<Settings>().audio.master - 0.9).abs() < 1e-6);
     }
 
     #[test]
-    fn keyboard_walks_down_to_the_last_row_then_back() {
+    fn keyboard_walks_the_audio_rows_then_back() {
         let mut app = setup_app();
-        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
-        app.update();
-        app.update();
-
+        open_menu(&mut app);
         for _ in 0..20 {
             tap(&mut app, KeyCode::ArrowDown);
         }
-        assert_eq!(
-            app.world().resource::<SettingsMenu>().selected,
-            SettingsMenu::BACK,
-            "clamps at the Back button"
-        );
+        let menu = app.world().resource::<SettingsMenu>();
+        assert_eq!(menu.selected, menu.back_index(), "clamps at Back");
+        assert_eq!(menu.back_index(), 3, "three audio rows then Back");
     }
 
     #[test]
     fn confirming_back_closes_the_overlay() {
         let mut app = setup_app();
-        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
-        app.world_mut().resource_mut::<SettingsMenu>().selected = SettingsMenu::BACK;
+        open_menu(&mut app);
+        app.world_mut().resource_mut::<SettingsMenu>().selected = 3;
         app.update();
-        app.update();
-
         tap(&mut app, KeyCode::Enter);
         assert!(!app.world().resource::<SettingsMenu>().open);
     }
 
     #[test]
+    fn tab_cycles_the_page_and_resets_the_selection() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+        app.world_mut().resource_mut::<SettingsMenu>().selected = 2;
+        app.update();
+
+        tap(&mut app, KeyCode::BracketRight);
+        assert_eq!(
+            app.world().resource::<SettingsMenu>().tab,
+            SettingsTab::Accessibility
+        );
+        assert_eq!(app.world().resource::<SettingsMenu>().selected, 0);
+    }
+
+    #[test]
+    fn the_tab_stays_in_sync_with_the_rebuilt_panel() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::BracketRight);
+        }
+        assert_eq!(
+            app.world().resource::<SettingsMenu>().tab,
+            SettingsTab::Controls
+        );
+        assert_eq!(roots(&mut app), 1, "the panel is rebuilt, not stacked");
+    }
+
+    #[test]
     fn changing_a_setting_emits_a_save_request() {
         let mut app = setup_app();
-        app.world_mut().resource_mut::<SettingsMenu>().open_menu();
-        app.update();
-        app.update();
-
-        // Drain anything from opening, then change a value.
+        open_menu(&mut app);
         tap(&mut app, KeyCode::ArrowRight);
-
-        let messages = app.world().resource::<Messages<SettingsChanged>>();
         assert!(
-            !messages.is_empty(),
+            !app.world()
+                .resource::<Messages<SettingsChanged>>()
+                .is_empty(),
             "a change should queue a settings save"
         );
     }
@@ -794,11 +1261,7 @@ mod tests {
         let mut app = setup_app();
         app.world_mut().resource_mut::<Settings>().audio.music = 0.3;
         app.update();
-        assert_eq!(
-            app.world().resource::<AudioSettings>().music,
-            0.3,
-            "the audio bus mirrors the persisted mix"
-        );
+        assert_eq!(app.world().resource::<AudioSettings>().music, 0.3);
     }
 
     #[test]
@@ -828,8 +1291,7 @@ mod tests {
         app.update();
         assert_eq!(
             app.world().get::<TextFont>(text).unwrap().font_size,
-            FontSize::Px(30.0),
-            "the font grows with the scale"
+            FontSize::Px(30.0)
         );
 
         app.world_mut()
@@ -840,7 +1302,7 @@ mod tests {
         assert_eq!(
             app.world().get::<TextFont>(text).unwrap().font_size,
             FontSize::Px(15.0),
-            "and shrinks again without compounding"
+            "no compounding"
         );
     }
 
@@ -853,15 +1315,201 @@ mod tests {
             .accessibility
             .colorblind = ColorblindMode::Deuteranopia;
         app.update();
-
-        assert_ne!(
-            app.world().get::<TextColor>(text).unwrap().0,
-            theme::TEXT_CRAFTABLE,
-            "the craftable green is remapped"
-        );
         assert_eq!(
             app.world().get::<TextColor>(text).unwrap().0,
             theme::palette(ColorblindMode::Deuteranopia).craftable
+        );
+    }
+
+    /// A volume `-` button, pressed for one frame, applies the fine step.
+    fn press_step(app: &mut App, row: SettingRow, delta: i32) {
+        let visuals = app
+            .world_mut()
+            .resource_mut::<MenuArt>()
+            .shared_visuals(None);
+        let entity = app
+            .world_mut()
+            .spawn((
+                MenuButton {
+                    index: 0,
+                    enabled: true,
+                },
+                MenuButtonSelected(false),
+                visuals,
+                Interaction::Pressed,
+                BackgroundColor(theme::ROW_BG),
+                BorderColor::all(theme::ROW_BORDER),
+                ImageNode::default(),
+                SettingStep {
+                    row,
+                    delta,
+                    index: 0,
+                },
+                StepHold::default(),
+            ))
+            .id();
+        app.update();
+        app.world_mut().entity_mut(entity).despawn();
+        app.update();
+    }
+
+    #[test]
+    fn a_volume_click_steps_one_percent() {
+        let mut app = setup_app();
+        open_menu(&mut app);
+        press_step(&mut app, SettingRow::MasterVolume, -1);
+        assert!(
+            (app.world().resource::<Settings>().audio.master - 0.99).abs() < 1e-6,
+            "a single click moves one percent"
+        );
+    }
+
+    #[test]
+    fn a_held_volume_button_repeats_ten_percent() {
+        use bevy::time::TimeUpdateStrategy;
+        use std::time::Duration;
+
+        let mut app = setup_app();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        open_menu(&mut app);
+
+        let visuals = app
+            .world_mut()
+            .resource_mut::<MenuArt>()
+            .shared_visuals(None);
+        app.world_mut().spawn((
+            MenuButton {
+                index: 0,
+                enabled: true,
+            },
+            MenuButtonSelected(false),
+            visuals,
+            Interaction::Pressed,
+            BackgroundColor(theme::ROW_BG),
+            BorderColor::all(theme::ROW_BORDER),
+            ImageNode::default(),
+            SettingStep {
+                row: SettingRow::MasterVolume,
+                delta: -1,
+                index: 0,
+            },
+            StepHold::default(),
+        ));
+
+        for _ in 0..12 {
+            app.update();
+        }
+        let master = app.world().resource::<Settings>().audio.master;
+        assert!(master < 0.95, "holding pulls the volume down, got {master}");
+    }
+
+    #[test]
+    fn rebinding_an_actions_primary_slot() {
+        let mut app = setup_app();
+        open_controls(&mut app);
+        app.world_mut().resource_mut::<SettingsMenu>().selected = 0; // MoveUp primary
+        app.update();
+
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.world().resource::<SettingsMenu>().listening,
+            Some((Action::MoveUp, KeySlot::Primary))
+        );
+        tap(&mut app, KeyCode::KeyJ);
+
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyJ")
+        );
+        assert!(
+            app.world().resource::<SettingsMenu>().listening.is_none(),
+            "listening ends once a key is captured"
+        );
+    }
+
+    #[test]
+    fn the_primary_and_secondary_slots_rebind_independently() {
+        let mut app = setup_app();
+        open_controls(&mut app);
+
+        // Rebind the secondary (index 1) to KeyJ.
+        app.world_mut().resource_mut::<SettingsMenu>().selected = 1;
+        app.update();
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::KeyJ);
+
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyW"),
+            "the primary is untouched"
+        );
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Secondary),
+            Some("KeyJ")
+        );
+    }
+
+    #[test]
+    fn a_rebound_key_is_stolen_from_its_old_slot() {
+        let mut app = setup_app();
+        open_controls(&mut app);
+        // Bind MoveDown's secondary (index 3) to KeyW, MoveUp's primary.
+        app.world_mut().resource_mut::<SettingsMenu>().selected = 3;
+        app.update();
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::KeyW);
+
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Primary),
+            None,
+            "KeyW left its old slot"
+        );
+        assert_eq!(
+            settings.input.binding(Action::MoveDown, KeySlot::Secondary),
+            Some("KeyW")
+        );
+    }
+
+    #[test]
+    fn escape_cancels_a_rebind_without_closing() {
+        let mut app = setup_app();
+        open_controls(&mut app);
+        app.world_mut().resource_mut::<SettingsMenu>().listening =
+            Some((Action::Interact, KeySlot::Primary));
+        app.update();
+
+        tap(&mut app, KeyCode::Escape);
+        let menu = app.world().resource::<SettingsMenu>();
+        assert!(menu.listening.is_none(), "the rebind is cancelled");
+        assert!(menu.open, "the overlay stays open");
+    }
+
+    #[test]
+    fn the_reset_entry_restores_the_shipped_bindings() {
+        let mut app = setup_app();
+        open_controls(&mut app);
+        app.world_mut().resource_mut::<Settings>().input.set(
+            Action::MoveUp,
+            KeySlot::Primary,
+            "KeyJ".to_string(),
+        );
+        app.update();
+
+        app.world_mut().resource_mut::<SettingsMenu>().selected =
+            app.world().resource::<SettingsMenu>().reset_index();
+        app.update();
+        tap(&mut app, KeyCode::Enter);
+
+        let settings = app.world().resource::<Settings>();
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyW"),
+            "reset restores the shipped binding"
         );
     }
 }

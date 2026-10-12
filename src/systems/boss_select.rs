@@ -76,7 +76,7 @@ fn boss_select_keyboard(
     }
 
     if menu.confirmation_open {
-        if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::KeyN) {
+        if crate::plugins::ui_theme::back_pressed(&keys) || keys.just_pressed(KeyCode::KeyN) {
             menu.close_confirmation();
         } else if (keys.just_pressed(KeyCode::Enter)
             || keys.just_pressed(KeyCode::Space)
@@ -92,7 +92,7 @@ fn boss_select_keyboard(
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) {
+    if crate::plugins::ui_theme::back_pressed(&keys) {
         menu.close_menu();
         next_phase.set(DayPhase::Farming);
         return;

@@ -73,7 +73,7 @@ Focus: high-impact, low-risk work across four areas.
 - `src/plugins/ui_theme.rs` (palette lookup)
 
 ---
-
+===
 ## 4. Infinite Mode
 
 **MVP:** Endless boss waves + local high score. No new assets.

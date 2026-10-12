@@ -3,6 +3,7 @@ use crate::events::{GearCrafted, GearEquipped, InteractionEvent, InteractionType
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::inventory::Inventory;
 use crate::resources::run_data::PlayerGear;
+use crate::resources::settings::{Action, Settings, action_just_pressed};
 use crate::states::{DayPhase, GameState, Phase};
 use bevy::ecs::message::{MessageReader, MessageWriter};
 use bevy::prelude::*;
@@ -182,13 +183,16 @@ pub fn open_menu_on_station_interaction(
 
 pub fn close_menu_on_input(
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Option<Res<Settings>>,
     mut menu: ResMut<CraftingMenu>,
     phase: Phase,
 ) {
     if !menu.open || !phase.is_playing() {
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab) {
+    if crate::plugins::ui_theme::back_pressed(&keys)
+        || action_just_pressed(&settings, &keys, Action::OpenCrafting)
+    {
         menu.close_menu();
     }
 }

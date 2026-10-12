@@ -704,6 +704,16 @@ pub fn step_enabled(enabled: &[usize], current: usize, direction: i32) -> usize 
     enabled[target as usize]
 }
 
+/// Whether the player asked to go back / close the current menu this frame.
+///
+/// `Esc` and `Tab` are both accepted: on a fullscreen browser build `Esc` can be
+/// swallowed by the browser (leaving fullscreen), so `Tab` gives every menu a
+/// reliable standard back key. Panels that own input check this instead of
+/// testing `Esc` alone.
+pub fn back_pressed(keys: &ButtonInput<KeyCode>) -> bool {
+    keys.just_pressed(KeyCode::Escape) || keys.just_pressed(KeyCode::Tab)
+}
+
 /// Keeps the whole UI in proportion with the window height.
 ///
 /// `UiScale` multiplies fixed (`Val::Px` / `FontSize::Px`) values only, so this

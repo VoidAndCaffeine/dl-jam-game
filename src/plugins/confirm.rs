@@ -70,7 +70,7 @@ fn confirm_input(
     }
 
     let last = dialog.options.len().saturating_sub(1);
-    if keys.just_pressed(KeyCode::Escape) && dialog.options.len() > 1 {
+    if crate::plugins::ui_theme::back_pressed(&keys) && dialog.options.len() > 1 {
         dialog.close();
         sfx.write(PlaySfx(Sfx::MenuClose));
         return;

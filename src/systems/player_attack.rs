@@ -8,6 +8,7 @@ use crate::materials::attack_effect::AttackEffectMaterial;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::run_data::PlayerGear;
+use crate::resources::settings::{Action, Settings, action_just_pressed};
 use crate::states::Phase;
 use crate::systems::attack_effect::{AttackEffectAccess, spawn_swing};
 use crate::systems::boss_attacks::{mercury_pool, spawn_attack};
@@ -26,6 +27,8 @@ use bevy::sprite_render::MeshMaterial2d;
 pub fn player_attack(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Option<Res<Settings>>,
+    pause: Option<Res<crate::resources::pause::PauseMenu>>,
     mouse: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
     mut state: ResMut<PlayerAttackState>,
@@ -54,6 +57,7 @@ pub fn player_attack(
         return;
     };
     let origin = transform.translation.truncate();
+    let pause_open = pause.as_ref().is_some_and(|pause| pause.open);
 
     // Face the nearest targetable, then WASD.
     if phase.is_boss_fight() {
@@ -64,15 +68,17 @@ pub fn player_attack(
         state.facing = movement.input_direction.normalize();
     }
 
-    if !phase.is_boss_fight() || inventory.open {
+    if !phase.is_boss_fight() || inventory.open || pause_open {
         return;
     }
     if state.is_rooted() {
         return;
     }
 
-    let light = keys.just_pressed(KeyCode::KeyQ) || mouse.just_pressed(MouseButton::Left);
-    let heavy = keys.just_pressed(KeyCode::KeyE) || mouse.just_pressed(MouseButton::Right);
+    let light = action_just_pressed(&settings, &keys, Action::LightAttack)
+        || mouse.just_pressed(MouseButton::Left);
+    let heavy = action_just_pressed(&settings, &keys, Action::HeavyAttack)
+        || mouse.just_pressed(MouseButton::Right);
 
     let attack = if heavy && state.is_ready(AttackType::Heavy) {
         Some(AttackType::Heavy)

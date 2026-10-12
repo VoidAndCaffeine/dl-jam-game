@@ -128,7 +128,7 @@ fn toggle_pause(
     panels: OtherPanels,
     phase: Phase,
 ) {
-    if !pause_allowed(&phase) || !keys.just_pressed(KeyCode::Escape) {
+    if !pause_allowed(&phase) || !theme::back_pressed(&keys) {
         return;
     }
     // The difficulty picker, the confirm dialog and the settings overlay own
@@ -401,7 +401,7 @@ fn spawn_pause(
                         Name::new("Hint"),
                         PauseHint,
                         theme::label(
-                            "Arrows select   |   Enter / Space confirm   |   Esc resumes",
+                            "Arrows select   |   Enter / Space confirm   |   Esc / Tab resumes",
                             13.0,
                             theme::TEXT_DIM,
                         ),
@@ -600,6 +600,18 @@ mod tests {
         tap(&mut app, KeyCode::Escape);
         assert!(!pause(&app).open);
         assert_eq!(roots(&mut app), 0);
+    }
+
+    #[test]
+    fn tab_opens_and_closes_the_pause_menu_like_escape() {
+        let mut app = setup_app();
+        start_playing(&mut app);
+
+        tap(&mut app, KeyCode::Tab);
+        assert!(pause(&app).open, "tab is a standard open key");
+
+        tap(&mut app, KeyCode::Tab);
+        assert!(!pause(&app).open, "and a standard close key");
     }
 
     #[test]

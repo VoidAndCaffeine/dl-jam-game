@@ -8,6 +8,7 @@ use crate::resources::farm::CropUnlocks;
 use crate::resources::inventory::Inventory;
 use crate::resources::inventory_panel::InventoryPanel;
 use crate::resources::run_data::PlayerGear;
+use crate::resources::settings::{Action, Settings, action_just_pressed};
 use crate::states::{GameState, Phase};
 use crate::systems::crafting::{CraftOutcome, RowAction, apply};
 use bevy::ecs::message::MessageWriter;
@@ -121,6 +122,7 @@ fn panel_active(game_state: &State<GameState>, panel: &InventoryPanel) -> bool {
 /// or on leaving `GameState::Playing`.
 pub fn toggle_inventory_panel(
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Option<Res<Settings>>,
     mut panel: ResMut<InventoryPanel>,
     mut menu: ResMut<CraftingMenu>,
     pause: Option<Res<crate::resources::pause::PauseMenu>>,
@@ -133,7 +135,7 @@ pub fn toggle_inventory_panel(
     if pause.as_ref().is_some_and(|pause| pause.open) {
         return;
     }
-    if keys.just_pressed(KeyCode::KeyI) {
+    if action_just_pressed(&settings, &keys, Action::OpenInventory) {
         panel.toggle_panel();
     }
     if panel.open {
@@ -149,7 +151,7 @@ pub fn close_inventory_on_input(
     if !panel.open || !phase.blocks_world() {
         return;
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if crate::plugins::ui_theme::back_pressed(&keys) {
         panel.close_panel();
     }
 }
@@ -626,17 +628,11 @@ mod tests {
     }
 
     #[test]
-    fn tab_stays_with_the_crafting_menu() {
+    fn tab_closes_the_panel_like_escape() {
         let mut app = setup_app();
-        press(&mut app, KeyCode::Tab);
-        assert!(!panel(&app).open);
-
         open_panel(&mut app);
-        app.world_mut().resource_mut::<CraftingMenu>().open_menu();
         press(&mut app, KeyCode::Tab);
-
-        assert!(panel(&app).open, "tab must not close the inventory");
-        assert!(!menu(&app).open, "tab must still close crafting");
+        assert!(!panel(&app).open, "tab closes the inventory, like escape");
     }
 
     #[test]

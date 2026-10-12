@@ -4,6 +4,7 @@ use crate::materials::sprite_outline::SpriteOutlineMaterial;
 use crate::resources::crafting_menu::CraftingMenu;
 use crate::resources::crop_select::CropSelectMenu;
 use crate::resources::inventory_panel::InventoryPanel;
+use crate::resources::settings::{Action, Settings, action_just_pressed};
 use crate::states::Phase;
 use crate::utils::interaction_math::{
     find_closest_in_range, find_closest_to_ray, resolve_interaction_type_from_queries,
@@ -93,13 +94,14 @@ fn player_proximity_interaction(
     mut events: MessageWriter<InteractionEvent>,
     lookups: InteractableLookups,
     keys: Res<ButtonInput<KeyCode>>,
+    settings: Option<Res<Settings>>,
     panels: OpenPanels,
     phase: Phase,
 ) {
     if !phase.is_farming() || panels.any_open() {
         return;
     }
-    if !keys.just_pressed(KeyCode::Space) {
+    if !action_just_pressed(&settings, &keys, Action::Interact) {
         return;
     }
 

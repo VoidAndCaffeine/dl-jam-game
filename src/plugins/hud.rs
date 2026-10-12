@@ -22,7 +22,7 @@ const TEXT_PRIMARY: Color = Color::srgb(0.94, 0.94, 0.97);
 const TEXT_DIM: Color = Color::srgb(0.62, 0.63, 0.70);
 
 const FARMING_HINT: &str = "WASD Move   |   Space / Click Interact   |   I Inventory";
-const BOSS_SELECT_HINT: &str = "Arrows Select   |   Enter / Space Choose   |   Esc Back";
+const BOSS_SELECT_HINT: &str = "Arrows Select   |   Enter / Space Choose   |   Esc / Tab Back";
 const BOSS_FIGHT_HINT: &str = "WASD Move   |   Q / LMB Light   |   E / RMB Heavy   |   I Inventory";
 /// Shown in place of [`BOSS_FIGHT_HINT`] while madness reverses the controls,
 /// spelling out the swapped left/right keys. ASCII only: the default font has no

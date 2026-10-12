@@ -913,7 +913,7 @@ fn spawn_inventory_panel(
                     panel_node.spawn((
                         Name::new("Hint"),
                         label(
-                            "Arrows select   |   Enter / E / click equips gear   |   I or Esc closes",
+                            "Arrows select   |   Enter / E / click equips gear   |   I or Esc / Tab closes",
                             13.0,
                             TEXT_DIM,
                         ),
@@ -1439,7 +1439,7 @@ fn spawn_crop_select(
                         Name::new("Hint"),
                         CropSelectText::Hint,
                         label(
-                            "Arrows select   |   Enter / E / click plants   |   Esc cancels",
+                            "Arrows select   |   Enter / E / click plants   |   Esc / Tab cancels",
                             13.0,
                             TEXT_DIM,
                         ),

@@ -7,16 +7,18 @@
 //! [`Settings::decode`]) instead of throwing the player's preferences away.
 
 use crate::resources::audio_settings::AudioSettings;
+use bevy::input::ButtonInput;
 use bevy::prelude::*;
 use bincode::Options;
 use log::warn;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 /// The save slot settings live under. Separate from the run's `"run"` slot.
 pub const SETTINGS_KEY: &str = "settings";
 
 /// Bumped when the settings payload's shape changes. Older files are migrated.
-pub const SETTINGS_VERSION: u32 = 1;
+pub const SETTINGS_VERSION: u32 = 2;
 
 /// A rebindable action. The bindings are stored (and migrated) with the settings
 /// so a future key-rebinding UI has somewhere to write; nothing reads them yet.
@@ -49,6 +51,20 @@ impl Action {
         Action::Pause,
     ];
 
+    /// The actions shown in the controls list. Pause is excluded: its key is the
+    /// universal menu `Esc`, which every overlay relies on, so it stays fixed.
+    pub const REBINDABLE: [Action; 9] = [
+        Action::MoveUp,
+        Action::MoveDown,
+        Action::MoveLeft,
+        Action::MoveRight,
+        Action::Interact,
+        Action::LightAttack,
+        Action::HeavyAttack,
+        Action::OpenInventory,
+        Action::OpenCrafting,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Action::MoveUp => "Move Up",
@@ -65,12 +81,56 @@ impl Action {
     }
 }
 
-/// Key bindings per action, stored as stable key names (a `KeyCode`'s debug
-/// name). Names, not `KeyCode`s, so the payload never depends on Bevy's own
-/// serialization feature. The default bindings match the game's shipped scheme.
+/// Which of an action's two bindings a key goes to.
+#[derive(Reflect, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeySlot {
+    Primary,
+    Secondary,
+}
+
+impl KeySlot {
+    pub const ALL: [KeySlot; 2] = [KeySlot::Primary, KeySlot::Secondary];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            KeySlot::Primary => "Primary",
+            KeySlot::Secondary => "Secondary",
+        }
+    }
+}
+
+/// The two keys bound to one action. Either may be unset.
+///
+/// Keys are stored as stable names (a `KeyCode`'s debug name), so the payload
+/// never depends on Bevy's own serialization feature.
+#[derive(Reflect, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActionBinding {
+    pub action: Action,
+    pub primary: Option<String>,
+    pub secondary: Option<String>,
+}
+
+impl ActionBinding {
+    pub fn get(&self, slot: KeySlot) -> Option<&String> {
+        match slot {
+            KeySlot::Primary => self.primary.as_ref(),
+            KeySlot::Secondary => self.secondary.as_ref(),
+        }
+    }
+
+    fn set(&mut self, slot: KeySlot, value: Option<String>) {
+        match slot {
+            KeySlot::Primary => self.primary = value,
+            KeySlot::Secondary => self.secondary = value,
+        }
+    }
+}
+
+/// A primary and a secondary key per action. The defaults match the shipped
+/// scheme.
 #[derive(Reflect, Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputMap {
-    bindings: Vec<(Action, Vec<String>)>,
+    bindings: Vec<ActionBinding>,
 }
 
 impl Default for InputMap {
@@ -78,52 +138,212 @@ impl Default for InputMap {
         Self {
             bindings: Action::ALL
                 .iter()
-                .map(|action| (*action, default_bindings(*action)))
+                .map(|action| {
+                    let (primary, secondary) = default_binding(*action);
+                    ActionBinding {
+                        action: *action,
+                        primary: primary.map(str::to_string),
+                        secondary: secondary.map(str::to_string),
+                    }
+                })
                 .collect(),
         }
     }
 }
 
 impl InputMap {
-    /// The key names bound to `action` (empty if unknown).
-    pub fn binding_names(&self, action: Action) -> &[String] {
+    fn find(&self, action: Action) -> Option<&ActionBinding> {
         self.bindings
             .iter()
-            .find(|(bound, _)| *bound == action)
-            .map(|(_, names)| names.as_slice())
-            .unwrap_or(&[])
+            .find(|binding| binding.action == action)
     }
 
-    /// Replaces an action's bindings.
-    pub fn rebind(&mut self, action: Action, names: Vec<String>) {
-        match self.bindings.iter_mut().find(|(bound, _)| *bound == action) {
-            Some((_, slot)) => *slot = names,
-            None => self.bindings.push((action, names)),
+    fn find_mut(&mut self, action: Action) -> Option<&mut ActionBinding> {
+        self.bindings
+            .iter_mut()
+            .find(|binding| binding.action == action)
+    }
+
+    /// The key name bound to `action`'s slot, if any.
+    pub fn binding(&self, action: Action, slot: KeySlot) -> Option<&str> {
+        self.find(action)
+            .and_then(|binding| binding.get(slot))
+            .map(String::as_str)
+    }
+
+    /// The bound key rendered for the controls list (`"W"`, or `"Unbound"`).
+    pub fn label(&self, action: Action, slot: KeySlot) -> String {
+        self.binding(action, slot)
+            .map(key_label)
+            .unwrap_or_else(|| "Unbound".to_string())
+    }
+
+    /// Binds `name` to `action`'s slot, stealing it from wherever else it was so
+    /// one key never fires two actions.
+    pub fn set(&mut self, action: Action, slot: KeySlot, name: String) {
+        self.unbind_name(&name);
+        if let Some(binding) = self.find_mut(action) {
+            binding.set(slot, Some(name));
         }
     }
 
-    /// Whether `key` is bound to `action`.
+    /// Clears a slot.
+    pub fn clear(&mut self, action: Action, slot: KeySlot) {
+        if let Some(binding) = self.find_mut(action) {
+            binding.set(slot, None);
+        }
+    }
+
+    /// Removes `name` from every slot.
+    fn unbind_name(&mut self, name: &str) {
+        for binding in &mut self.bindings {
+            if binding.primary.as_deref() == Some(name) {
+                binding.primary = None;
+            }
+            if binding.secondary.as_deref() == Some(name) {
+                binding.secondary = None;
+            }
+        }
+    }
+
+    /// Restores every key to its shipped binding.
+    pub fn reset_defaults(&mut self) {
+        *self = InputMap::default();
+    }
+
+    /// Whether `key` is bound to `action` (either slot).
     pub fn is_bound(&self, action: Action, key: KeyCode) -> bool {
         let name = format!("{key:?}");
-        self.binding_names(action).contains(&name)
+        KeySlot::ALL
+            .iter()
+            .any(|slot| self.binding(action, *slot) == Some(name.as_str()))
+    }
+
+    /// Whether either of `action`'s keys is currently held.
+    pub fn pressed(&self, keys: &ButtonInput<KeyCode>, action: Action) -> bool {
+        let Some(binding) = self.find(action) else {
+            return false;
+        };
+        keys.get_pressed().any(|code| {
+            let name = format!("{code:?}");
+            binding.primary.as_deref() == Some(name.as_str())
+                || binding.secondary.as_deref() == Some(name.as_str())
+        })
+    }
+
+    /// Whether either of `action`'s keys was pressed this frame.
+    pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>, action: Action) -> bool {
+        let Some(binding) = self.find(action) else {
+            return false;
+        };
+        keys.get_just_pressed().any(|code| {
+            let name = format!("{code:?}");
+            binding.primary.as_deref() == Some(name.as_str())
+                || binding.secondary.as_deref() == Some(name.as_str())
+        })
+    }
+
+    /// Imports the v1 shape (a list of keys per action) into primary/secondary.
+    /// The first key becomes the primary, the second the secondary; an action the
+    /// old map omitted keeps its shipped binding.
+    fn from_v1(bindings: Vec<(Action, Vec<String>)>) -> Self {
+        let mut map = InputMap {
+            bindings: Vec::new(),
+        };
+        for action in Action::ALL {
+            let names = bindings
+                .iter()
+                .find(|(bound, _)| *bound == action)
+                .map(|(_, names)| names.clone())
+                .filter(|names| !names.is_empty());
+            let (primary, secondary) = match names {
+                Some(mut names) => {
+                    let primary = names.remove(0);
+                    (Some(primary), names.first().cloned())
+                }
+                None => {
+                    let (primary, secondary) = default_binding(action);
+                    (primary.map(str::to_string), secondary.map(str::to_string))
+                }
+            };
+            map.bindings.push(ActionBinding {
+                action,
+                primary,
+                secondary,
+            });
+        }
+        map
     }
 }
 
-/// The shipped bindings for one action, as key names.
-fn default_bindings(action: Action) -> Vec<String> {
-    let names: &[&str] = match action {
-        Action::MoveUp => &["KeyW", "ArrowUp"],
-        Action::MoveDown => &["KeyS", "ArrowDown"],
-        Action::MoveLeft => &["KeyA", "ArrowLeft"],
-        Action::MoveRight => &["KeyD", "ArrowRight"],
-        Action::Interact => &["Space"],
-        Action::LightAttack => &["KeyQ"],
-        Action::HeavyAttack => &["KeyE"],
-        Action::OpenInventory => &["KeyI"],
-        Action::OpenCrafting => &["Tab", "KeyC"],
-        Action::Pause => &["Escape"],
-    };
-    names.iter().map(|name| name.to_string()).collect()
+/// Whether a rebindable action is currently held. Falls back to the shipped
+/// bindings when settings are absent (a system wired up alone in a test).
+pub fn action_pressed(
+    settings: &Option<Res<Settings>>,
+    keys: &ButtonInput<KeyCode>,
+    action: Action,
+) -> bool {
+    bindings_of(settings.as_deref().map(|settings| &settings.input)).pressed(keys, action)
+}
+
+/// Whether a rebindable action was pressed this frame. See [`action_pressed`].
+pub fn action_just_pressed(
+    settings: &Option<Res<Settings>>,
+    keys: &ButtonInput<KeyCode>,
+    action: Action,
+) -> bool {
+    bindings_of(settings.as_deref().map(|settings| &settings.input)).just_pressed(keys, action)
+}
+
+/// The live input map, or the shipped one when settings are unavailable.
+fn bindings_of(map: Option<&InputMap>) -> &InputMap {
+    match map {
+        Some(map) => map,
+        None => default_input_map(),
+    }
+}
+
+/// A process-wide default input map for the no-settings fallback.
+fn default_input_map() -> &'static InputMap {
+    static FALLBACK: OnceLock<InputMap> = OnceLock::new();
+    FALLBACK.get_or_init(InputMap::default)
+}
+
+/// A key name (`"KeyW"`) rendered for the controls list (`"W"`).
+pub fn key_label(name: &str) -> String {
+    match name {
+        "ArrowUp" => "Up".to_string(),
+        "ArrowDown" => "Down".to_string(),
+        "ArrowLeft" => "Left".to_string(),
+        "ArrowRight" => "Right".to_string(),
+        "ShiftLeft" | "ShiftRight" => "Shift".to_string(),
+        "ControlLeft" | "ControlRight" => "Ctrl".to_string(),
+        "AltLeft" | "AltRight" => "Alt".to_string(),
+        other => {
+            for prefix in ["Key", "Digit", "Numpad"] {
+                if let Some(rest) = other.strip_prefix(prefix) {
+                    return rest.to_string();
+                }
+            }
+            other.to_string()
+        }
+    }
+}
+
+/// The shipped bindings for one action, as `(primary, secondary)` key names.
+fn default_binding(action: Action) -> (Option<&'static str>, Option<&'static str>) {
+    match action {
+        Action::MoveUp => (Some("KeyW"), Some("ArrowUp")),
+        Action::MoveDown => (Some("KeyS"), Some("ArrowDown")),
+        Action::MoveLeft => (Some("KeyA"), Some("ArrowLeft")),
+        Action::MoveRight => (Some("KeyD"), Some("ArrowRight")),
+        Action::Interact => (Some("Space"), None),
+        Action::LightAttack => (Some("KeyQ"), None),
+        Action::HeavyAttack => (Some("KeyE"), None),
+        Action::OpenInventory => (Some("KeyI"), None),
+        Action::OpenCrafting => (Some("KeyC"), None),
+        Action::Pause => (Some("Escape"), None),
+    }
 }
 
 /// A colour-vision preset. Each remaps the handful of semantic UI colours so
@@ -195,6 +415,11 @@ pub const TEXT_SCALE_MIN: f32 = 0.75;
 pub const TEXT_SCALE_MAX: f32 = 1.5;
 pub const TEXT_SCALE_STEP: f32 = 0.25;
 
+/// A volume's coarse step: a keyboard press, or one repeat of a held click.
+pub const VOLUME_STEP: f32 = 0.1;
+/// A volume's fine step: a single click of a `-` / `+` button.
+pub const VOLUME_TAP_STEP: f32 = 0.01;
+
 impl Default for DisplaySettings {
     fn default() -> Self {
         Self { text_scale: 1.0 }
@@ -210,7 +435,7 @@ pub struct Settings {
     pub audio: AudioSettings,
     pub accessibility: AccessibilitySettings,
     pub display: DisplaySettings,
-    /// Key bindings. Kept for a future rebinding UI; not yet read by gameplay.
+    /// Key bindings, read by gameplay and written by the controls list.
     #[reflect(ignore)]
     pub input: InputMap,
 }
@@ -238,15 +463,16 @@ pub enum SettingRow {
     TextScale,
 }
 
-/// Every steppable row, in display order.
-pub const SETTING_ROWS: [SettingRow; 6] = [
+/// The rows of the Audio tab.
+pub const AUDIO_ROWS: &[SettingRow] = &[
     SettingRow::MasterVolume,
     SettingRow::MusicVolume,
     SettingRow::SfxVolume,
-    SettingRow::ReducedMotion,
-    SettingRow::Colorblind,
-    SettingRow::TextScale,
 ];
+/// The rows of the Accessibility tab.
+pub const ACCESSIBILITY_ROWS: &[SettingRow] = &[SettingRow::ReducedMotion, SettingRow::Colorblind];
+/// The rows of the Display tab.
+pub const DISPLAY_ROWS: &[SettingRow] = &[SettingRow::TextScale];
 
 impl SettingRow {
     pub fn label(self) -> &'static str {
@@ -290,38 +516,58 @@ impl SettingRow {
         }
     }
 
-    /// Steps the row by `delta` (a mouse click uses +1).
+    /// Steps the row by `delta` of its coarse step (a keyboard press, or one
+    /// repeat of a held click).
     pub fn adjust(self, settings: &mut Settings, delta: i32) {
-        let step = delta.signum();
         match self {
-            SettingRow::MasterVolume => {
-                settings.audio.master = step_gain(settings.audio.master, step);
-            }
-            SettingRow::MusicVolume => {
-                settings.audio.music = step_gain(settings.audio.music, step);
-            }
-            SettingRow::SfxVolume => {
-                settings.audio.sfx = step_gain(settings.audio.sfx, step);
-            }
+            SettingRow::MasterVolume => set_gain(&mut settings.audio.master, delta, VOLUME_STEP),
+            SettingRow::MusicVolume => set_gain(&mut settings.audio.music, delta, VOLUME_STEP),
+            SettingRow::SfxVolume => set_gain(&mut settings.audio.sfx, delta, VOLUME_STEP),
             SettingRow::ReducedMotion => {
-                if step != 0 {
+                if delta != 0 {
                     settings.accessibility.reduced_motion = !settings.accessibility.reduced_motion;
                 }
             }
             SettingRow::Colorblind => {
-                settings.accessibility.colorblind = settings.accessibility.colorblind.next(step);
+                settings.accessibility.colorblind =
+                    settings.accessibility.colorblind.next(delta.signum());
             }
             SettingRow::TextScale => {
-                let next = settings.display.text_scale + step as f32 * TEXT_SCALE_STEP;
+                let next = settings.display.text_scale + delta.signum() as f32 * TEXT_SCALE_STEP;
                 settings.display.text_scale = next.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX);
             }
         }
     }
+
+    /// A single click's step. Volumes move finely so a tap is gentle; every other
+    /// row steps as usual.
+    pub fn adjust_tap(self, settings: &mut Settings, delta: i32) {
+        match self {
+            SettingRow::MasterVolume => {
+                set_gain(&mut settings.audio.master, delta, VOLUME_TAP_STEP);
+            }
+            SettingRow::MusicVolume => {
+                set_gain(&mut settings.audio.music, delta, VOLUME_TAP_STEP);
+            }
+            SettingRow::SfxVolume => {
+                set_gain(&mut settings.audio.sfx, delta, VOLUME_TAP_STEP);
+            }
+            other => other.adjust(settings, delta),
+        }
+    }
+
+    /// Whether the row is a volume, and so supports the click/hold stepper.
+    pub fn is_volume(self) -> bool {
+        matches!(
+            self,
+            SettingRow::MasterVolume | SettingRow::MusicVolume | SettingRow::SfxVolume
+        )
+    }
 }
 
-/// Volumes step in 10% increments and clamp to 0..=1.
-fn step_gain(current: f32, step: i32) -> f32 {
-    (current + step as f32 * 0.1).clamp(0.0, 1.0)
+/// Moves a linear gain by `delta` steps of `step`, clamped to 0..=1.
+fn set_gain(current: &mut f32, delta: i32, step: f32) {
+    *current = (*current + delta.signum() as f32 * step).clamp(0.0, 1.0);
 }
 
 /// A linear gain rendered as a whole percent.
@@ -336,6 +582,24 @@ struct SettingsV0 {
     #[allow(dead_code)]
     version: u32,
     audio: AudioSettings,
+}
+
+/// The schema from before keys were split into primary/secondary: a list of keys
+/// per action. Used to import a v1 file.
+#[derive(Deserialize)]
+struct SettingsV1 {
+    #[allow(dead_code)]
+    version: u32,
+    audio: AudioSettings,
+    accessibility: AccessibilitySettings,
+    display: DisplaySettings,
+    input: InputMapV1,
+}
+
+/// The v1 input map: a list of key names per action.
+#[derive(Deserialize)]
+struct InputMapV1 {
+    bindings: Vec<(Action, Vec<String>)>,
 }
 
 impl Settings {
@@ -399,6 +663,22 @@ fn migrate(version: u32, bytes: &[u8]) -> Settings {
                 }
             }
         }
+        1 => match bincode::deserialize::<SettingsV1>(bytes) {
+            Ok(old) => {
+                warn!("imported settings from v1; keys keep their first two bindings");
+                Settings {
+                    audio: old.audio,
+                    accessibility: old.accessibility,
+                    display: old.display,
+                    input: InputMap::from_v1(old.input.bindings),
+                    ..Settings::default()
+                }
+            }
+            Err(error) => {
+                warn!("could not import v1 settings ({error}); using defaults");
+                Settings::default()
+            }
+        },
         _ => {
             warn!("no migration from settings v{version}; using defaults");
             Settings::default()
@@ -418,7 +698,10 @@ mod tests {
         assert!(!settings.accessibility.reduced_motion);
         assert_eq!(settings.accessibility.colorblind, ColorblindMode::Off);
         assert_eq!(settings.display.text_scale, 1.0);
-        assert_eq!(settings.input.binding_names(Action::MoveUp).len(), 2);
+        assert_eq!(
+            settings.input.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyW")
+        );
     }
 
     #[test]
@@ -553,13 +836,105 @@ mod tests {
         assert!(map.is_bound(Action::Interact, KeyCode::Space));
         assert!(map.is_bound(Action::Pause, KeyCode::Escape));
         assert!(!map.is_bound(Action::Interact, KeyCode::KeyQ));
+        assert_eq!(
+            map.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyW"),
+            "W is the primary"
+        );
+        assert_eq!(
+            map.binding(Action::MoveUp, KeySlot::Secondary),
+            Some("ArrowUp"),
+            "Up is the secondary"
+        );
     }
 
     #[test]
-    fn rebinding_replaces_an_actions_keys() {
+    fn binding_sets_one_slot_without_touching_the_other() {
         let mut map = InputMap::default();
-        map.rebind(Action::LightAttack, vec!["KeyJ".to_string()]);
-        assert!(!map.is_bound(Action::LightAttack, KeyCode::KeyQ));
-        assert!(map.is_bound(Action::LightAttack, KeyCode::KeyJ));
+        map.set(Action::MoveUp, KeySlot::Secondary, "KeyJ".to_string());
+        assert_eq!(map.binding(Action::MoveUp, KeySlot::Primary), Some("KeyW"));
+        assert_eq!(
+            map.binding(Action::MoveUp, KeySlot::Secondary),
+            Some("KeyJ")
+        );
+        assert!(map.is_bound(Action::MoveUp, KeyCode::KeyJ));
+    }
+
+    #[test]
+    fn binding_a_key_steals_it_from_every_other_slot() {
+        let mut map = InputMap::default();
+        // KeyW is MoveUp's primary; hand it to MoveDown's secondary.
+        map.set(Action::MoveDown, KeySlot::Secondary, "KeyW".to_string());
+        assert_eq!(map.binding(Action::MoveUp, KeySlot::Primary), None);
+        assert_eq!(
+            map.binding(Action::MoveDown, KeySlot::Secondary),
+            Some("KeyW")
+        );
+    }
+
+    #[test]
+    fn resetting_restores_the_shipped_bindings() {
+        let mut map = InputMap::default();
+        map.set(Action::MoveUp, KeySlot::Primary, "KeyJ".to_string());
+        map.clear(Action::Interact, KeySlot::Primary);
+        map.reset_defaults();
+        assert_eq!(map, InputMap::default());
+        assert_eq!(map.binding(Action::MoveUp, KeySlot::Primary), Some("KeyW"));
+        assert_eq!(
+            map.binding(Action::Interact, KeySlot::Primary),
+            Some("Space")
+        );
+    }
+
+    #[test]
+    fn a_v1_file_imports_its_keys_as_primary_and_secondary() {
+        #[derive(Serialize)]
+        struct LegacyInput {
+            bindings: Vec<(Action, Vec<String>)>,
+        }
+        #[derive(Serialize)]
+        struct Legacy {
+            version: u32,
+            audio: AudioSettings,
+            accessibility: AccessibilitySettings,
+            display: DisplaySettings,
+            input: LegacyInput,
+        }
+        let legacy = Legacy {
+            version: 1,
+            audio: AudioSettings {
+                master: 0.7,
+                music: 0.4,
+                sfx: 0.2,
+            },
+            accessibility: AccessibilitySettings {
+                reduced_motion: true,
+                colorblind: ColorblindMode::Protanopia,
+            },
+            display: DisplaySettings { text_scale: 1.25 },
+            input: LegacyInput {
+                bindings: vec![(Action::MoveUp, vec!["KeyJ".to_string(), "KeyL".to_string()])],
+            },
+        };
+        let bytes = bincode::serialize(&legacy).unwrap();
+
+        let migrated = Settings::decode(&bytes);
+        assert_eq!(migrated.version, SETTINGS_VERSION);
+        assert_eq!(migrated.audio.master, 0.7, "audio is imported");
+        assert!(migrated.accessibility.reduced_motion);
+        assert_eq!(migrated.display.text_scale, 1.25);
+        assert_eq!(
+            migrated.input.binding(Action::MoveUp, KeySlot::Primary),
+            Some("KeyJ")
+        );
+        assert_eq!(
+            migrated.input.binding(Action::MoveUp, KeySlot::Secondary),
+            Some("KeyL")
+        );
+        assert_eq!(
+            migrated.input.binding(Action::Interact, KeySlot::Primary),
+            Some("Space"),
+            "actions missing from the old map keep their shipped binding"
+        );
     }
 }

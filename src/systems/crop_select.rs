@@ -92,7 +92,7 @@ fn crop_select_keyboard(keys: Res<ButtonInput<KeyCode>>, mut work: PlantingWork,
         return;
     }
 
-    if keys.just_pressed(KeyCode::Escape) {
+    if crate::plugins::ui_theme::back_pressed(&keys) {
         work.menu.close_menu();
         return;
     }

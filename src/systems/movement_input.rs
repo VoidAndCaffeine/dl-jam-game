@@ -3,11 +3,14 @@ use crate::components::player_sprite::PlayerAnimation;
 use crate::plugins::interaction::OpenPanels;
 use crate::resources::player_attack_state::PlayerAttackState;
 use crate::resources::player_status::PlayerStatus;
+use crate::resources::settings::{Action, Settings, action_pressed};
 use crate::states::{DayPhase, Phase};
 use bevy::prelude::*;
 
+#[allow(clippy::too_many_arguments)]
 pub fn movement_input(
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    settings: Option<Res<Settings>>,
     mut movement_query: Query<&mut Movement>,
     panels: OpenPanels,
     attack: Res<PlayerAttackState>,
@@ -30,16 +33,16 @@ pub fn movement_input(
     for mut movement in movement_query.iter_mut() {
         let mut direction = Vec2::ZERO;
 
-        if keyboard_input.pressed(KeyCode::KeyW) || keyboard_input.pressed(KeyCode::ArrowUp) {
+        if action_pressed(&settings, &keyboard_input, Action::MoveUp) {
             direction.y += 1.0;
         }
-        if keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown) {
+        if action_pressed(&settings, &keyboard_input, Action::MoveDown) {
             direction.y -= 1.0;
         }
-        if keyboard_input.pressed(KeyCode::KeyA) || keyboard_input.pressed(KeyCode::ArrowLeft) {
+        if action_pressed(&settings, &keyboard_input, Action::MoveLeft) {
             direction.x -= 1.0;
         }
-        if keyboard_input.pressed(KeyCode::KeyD) || keyboard_input.pressed(KeyCode::ArrowRight) {
+        if action_pressed(&settings, &keyboard_input, Action::MoveRight) {
             direction.x += 1.0;
         }
 
@@ -107,6 +110,36 @@ mod tests {
         app.update();
         let movement = get_movement(&mut app);
         assert_eq!(movement.input_direction, Vec2::new(1.0, 1.0).normalize());
+    }
+
+    #[test]
+    fn a_rebound_key_drives_movement_and_the_old_one_does_not() {
+        let mut app = setup_app();
+        let mut settings = Settings::default();
+        settings.input.set(
+            Action::MoveUp,
+            crate::resources::settings::KeySlot::Primary,
+            "KeyJ".to_string(),
+        );
+        app.insert_resource(settings);
+
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyJ);
+        app.update();
+        assert_eq!(get_movement(&mut app).input_direction, Vec2::Y);
+
+        {
+            let mut input = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+            input.release(KeyCode::KeyJ);
+            input.press(KeyCode::KeyW);
+        }
+        app.update();
+        assert_eq!(
+            get_movement(&mut app).input_direction,
+            Vec2::ZERO,
+            "the old key is unbound"
+        );
     }
 
     #[test]
